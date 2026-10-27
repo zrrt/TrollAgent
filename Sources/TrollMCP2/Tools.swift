@@ -64,7 +64,7 @@ final class DeviceProbeTool: MCPTool {
 final class MemoryTweakTool: MCPTool {
     let definition = ToolDefinition(
         name: "memory",
-        summary: "Game memory modification (GameGuardian/H5GG style). Actions: attach / search / refine / write / freeze / unfreeze / status / frozen / results. Params: value (search/refine/write/freeze), type (int/int64/float/double/byte/short), address (0x hex, required for write/freeze/unfreeze). Requires MemoryTweak.dylib injected into target game.",
+        summary: "Game memory modification (GameGuardian/H5GG style). Actions: attach / search / refine / write / freeze / unfreeze / status / frozen / results. Params: value (search/refine/write/freeze), type (int/int64/float/double/byte/short), address (0x hex, required for write/freeze/unfreeze). Requires MemoryTweak.dylib injected into target game. Search strategy: exact → changed → unknown → increased/decreased; too many results → play more and refine to 1-10 candidates; 0 results → value may be encrypted/hashed, try float type / search -1 / ± offsets.",
         parameters: [
             "action": "attach (confirms injected and connected; after dylib injection the service is attached, equivalent to status) / search (first scan) / refine (filter results) / write (set new value) / freeze (lock value) / unfreeze / status / frozen (list locked values)",
             "value": "Value to search/write/freeze. e.g. 1000 coins, 50 HP",
