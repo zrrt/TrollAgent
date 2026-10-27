@@ -61,10 +61,20 @@ final class ChatListGroupingTests: XCTestCase {
     }
 
     func testGroupIDStable() {
-        // 同一批消息实例多次分组 → 组 id 稳定（首条 UUID + 条数）
+        // 同一批消息实例多次分组 → 组 id 稳定（首条 UUID）
         let msgs = [toolMsg("t1"), toolMsg("t2")]
         let g1 = ChatListGrouping.group([textMsg()] + msgs)[1]
         let g2 = ChatListGrouping.group([textMsg()] + msgs)[1]
         XCTAssertEqual(g1.id, g2.id)
+    }
+
+    func testGroupIDStableAcrossWaveGrowth() {
+        // 并发波增量完成：A → A+B → A+B+C，组 id 不应随条数变化（展开状态保持）
+        let a = toolMsg("a1")
+        let b = toolMsg("b2")
+        let c = toolMsg("c3")
+        let gAB = ChatListGrouping.group([textMsg()] + [a, b])[1]
+        let gABC = ChatListGrouping.group([textMsg()] + [a, b, c])[1]
+        XCTAssertEqual(gAB.id, gABC.id)
     }
 }

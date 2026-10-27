@@ -13,7 +13,10 @@ enum ChatListGrouping {
             switch self {
             case .msg(let m): return "m-" + m.id.uuidString
             case .tools(let ms):
-                return "t-" + (ms.first?.id.uuidString ?? "") + "-" + String(ms.count)
+                // v7.2.3-fix20.1：组 id 只用首条 UUID（去掉条数）——
+                // 并发波内工具增量完成（A → A+B → A+B+C）时组 id 保持稳定，
+                // 用户已展开的组不会因条数变化而折叠回去
+                return "t-" + (ms.first?.id.uuidString ?? "")
             }
         }
 
