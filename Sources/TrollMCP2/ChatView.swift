@@ -2488,6 +2488,43 @@ struct MessageBubble: View {
         return L10n.t("i18n_244")
     }
 
+    /// v7.2.3-fix28：工具卡图标按工具族映射（OpenMinis 多彩风格）
+    private func toolCardSymbol(_ toolName: String?) -> String {
+        guard let name = toolName, !name.isEmpty else { return "wrench.and.screwdriver" }
+        if name == "shell.exec" || name == "shell_exec" { return "terminal.fill" }
+        if name.hasPrefix("web.") || name == "web_search" { return "magnifyingglass" }
+        if name.hasPrefix("browser.") { return "safari" }
+        if name.hasPrefix("knowledge.") { return "book.closed" }
+        if name.hasPrefix("device.") { return "iphone" }
+        if name.hasPrefix("app.") || name.hasPrefix("injection.") || name.hasPrefix("control.") || name.hasPrefix("container.") {
+            return "wand.and.stars"
+        }
+        if name.hasPrefix("file.") || name.hasPrefix("artifact.") { return "doc.text" }
+        if name.hasPrefix("model.") || name.hasPrefix("reminder") || name.hasPrefix("calendar") { return "calendar" }
+        return "wrench.and.screwdriver"
+    }
+
+    /// v7.2.3-fix28：图标配色（同族映射）
+    private func toolCardColor(_ toolName: String?) -> Color {
+        guard let name = toolName, !name.isEmpty else { return .gray }
+        if name == "shell.exec" || name == "shell_exec" { return .blue }
+        if name.hasPrefix("web.") || name == "web_search" { return .blue }
+        if name.hasPrefix("browser.") { return .orange }
+        if name.hasPrefix("knowledge.") { return .green }
+        if name.hasPrefix("device.") { return .teal }
+        if name.hasPrefix("app.") || name.hasPrefix("injection.") || name.hasPrefix("control.") || name.hasPrefix("container.") {
+            return .purple
+        }
+        if name.hasPrefix("model.") || name.hasPrefix("reminder") || name.hasPrefix("calendar") { return .pink }
+        return .gray
+    }
+
+    /// v7.2.3-fix28：副行族标签/工具名着色——Alpine 工具蓝色（用户要求），其余保持灰
+    private func toolFamilyTint(_ toolName: String?) -> Color {
+        if toolName == "shell.exec" || toolName == "shell_exec" { return .blue }
+        return .secondary
+    }
+
     private var toolBubble: some View {
         VStack(alignment: .leading, spacing: 6) {
             // 📝 1. 思考过程（独立橙色气泡）
@@ -2502,9 +2539,11 @@ struct MessageBubble: View {
                 VStack(alignment: .leading, spacing: 3) {
                     // v7.2.3-fix16：主行=图标+大标题；状态徽章/耗时移到副行小字
                     HStack(spacing: 6) {
-                        Image(systemName: "terminal.fill")
+                        // v7.2.3-fix28：工具卡图标按工具族映射（对齐 OpenMinis 多彩）——
+                        // 此前全部写死 terminal.fill+蓝，不同工具无法一眼区分
+                        Image(systemName: toolCardSymbol(message.toolName))
                             .font(.system(size: 13))
-                            .foregroundColor(.blue)
+                            .foregroundColor(toolCardColor(message.toolName))
                         // v3.5.13：卡片标题=机械短标签(一短,像Minis)——从工具名+关键参数提炼(如
                         // "shell.exec: ls -la" / "browser: dnf.qq.com")，简短稳定、次次一致，客观陈述跑了哪个
                         // 工具干了什么，不代表模型说话；真正的解说由单独的 assistant 气泡(一长)承载。
@@ -2530,9 +2569,12 @@ struct MessageBubble: View {
                     }
                     // v7.2.3-fix16：副行小字（括号信息）——工具族·工具名·状态·耗时
                     HStack(spacing: 5) {
+                        // v7.2.3-fix28：副行字号 10→12；Alpine 工具族标签+工具名蓝色（用户要求）
                         Text(toolFamilyLabel(for: message.toolName))
+                            .foregroundColor(toolFamilyTint(message.toolName))
                         if let tn = message.toolName, !tn.isEmpty {
                             Text(tn)
+                                .foregroundColor(toolFamilyTint(message.toolName))
                                 .textSelection(.enabled)
                         }
                         // v3.5.7：工具状态徽章（机制级：由真实执行结果渲染）——移到副行缩小
@@ -2548,7 +2590,7 @@ struct MessageBubble: View {
                             Text(String(format: "%.1fs", dur))
                         }
                     }
-                    .font(.system(size: 10))
+                    .font(.system(size: 12))
                     .foregroundColor(.secondary)
                     // v3.5.13：标题已是"工具名: 关键参数"机械短标签，无需再补一行副标题工具名。
                     // v7.2.3-fix23：渲染传参提示词默认完全隐藏（对齐用户诉求——标题已说明
