@@ -1304,24 +1304,27 @@ struct ChatView: View {
             }) {
                 HStack(spacing: 8) {
                     Image(systemName: "hammer.fill")
-                        .font(.system(size: 12))
+                        .font(.system(size: 14))
                         .foregroundColor(.secondary)
                     Text(String(format: L10n.t("i18n_1260"), msgs.count))
-                        .font(.footnote.weight(.medium))
+                        .font(.subheadline.weight(.medium))
                         .foregroundColor(.primary)
                     if let d = ChatListGrouping.Item.tools(msgs).totalDuration {
                         Text(String(format: "%.1fs", d))
-                            .font(.caption2)
+                            .font(.caption)
                             .foregroundColor(.secondary)
                     }
                     Image(systemName: toolsRunExpanded.contains(gid) ? "chevron.up" : "chevron.down")
-                        .font(.system(size: 10, weight: .semibold))
+                        .font(.system(size: 12, weight: .semibold))
                         .foregroundColor(.secondary)
                 }
                 // v7.2.3-fix26：去 Spacer——此前 HStack 内 Spacer 把 Button 撑满整行，
                 // 灰色背景条贴屏幕两端；改内容自适应宽度（对齐灰色气泡/胶囊样式）
+                // v7.2.3-fix31：纯内容宽度太窄（≈150pt）+ footnote 小字 → 加最小宽度
+                // 160pt + 字号整体放大（footnote13→subheadline15、caption2 11→caption12）
                 .padding(.horizontal, 14)
                 .padding(.vertical, 9)
+                .frame(minWidth: 160)
                 .background(Color(.systemGray5).opacity(0.6))
                 .cornerRadius(14)
             }
