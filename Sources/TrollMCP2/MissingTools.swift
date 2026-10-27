@@ -317,13 +317,21 @@ final class WebSearchTool: MCPTool {
     /// v7.2.1：崩溃加固——① URLSession.shared 回调派发主队列，改自定义后台队列 session
     /// （不依赖主线程，切后台/主线程忙碌时回调也能进）；② 响应上限 2MB，超大 HTML
     /// （百度反爬页/异常页）防内存暴涨触发 jetsam 杀进程；③ wait 加超时，杜绝永久阻塞。
+    /// v7.2.3-fix40：共享 session（此前每次抓取新建/销毁 ephemeral session，并发时是资源竞争源）
+    private static let grabSession: URLSession = {
+        let cfg = URLSessionConfiguration.ephemeral
+        cfg.timeoutIntervalForRequest = 15
+        cfg.httpMaximumConnectionsPerHost = 4
+        return URLSession(configuration: cfg, delegate: nil, delegateQueue: OperationQueue())
+    }()
+    private static let grabUA = "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36"
+
     private func fetchData(_ url: URL) -> Data? {
         var data: Data?
         let sem = DispatchSemaphore(value: 0)
-        let session = URLSession(configuration: .ephemeral, delegate: nil, delegateQueue: OperationQueue())
         var req = URLRequest(url: url, timeoutInterval: 15)
-        req.setValue("Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36", forHTTPHeaderField: "User-Agent")
-        let task = session.dataTask(with: req) { d, resp, _ in
+        req.setValue(Self.grabUA, forHTTPHeaderField: "User-Agent")
+        let task = Self.grabSession.dataTask(with: req) { d, resp, _ in
             if let d = d {
                 // 响应上限 2MB：超出丢弃（大页面对解析无增益，防内存）
                 if d.count <= 2_000_000 {
@@ -335,8 +343,8 @@ final class WebSearchTool: MCPTool {
             sem.signal()
         }
         task.resume()
-        _ = sem.wait(timeout: .now() + 20)
-        session.invalidateAndCancel()
+        _ = sem.wait(timeout: .now() + 16)
+        task.cancel()
         return data
     }
 
@@ -438,6 +446,13 @@ final class WebFetchTool: MCPTool {
     // 可合批白名单（并发），多个并发批同时 fallback 会竞争同一 WebView 崩溃/错乱。
     // 全局串行锁把 navigate+sleep+text 整段锁住（直接 fetch 成功路径不受影响）。
     private static let browserFallbackLock = NSLock()
+    /// v7.2.3-fix40：共享 session（此前每次 fetch 新建/销毁 ephemeral session，并发时是资源竞争源）
+    private static let fetchSession: URLSession = {
+        let cfg = URLSessionConfiguration.ephemeral
+        cfg.timeoutIntervalForRequest = 20
+        cfg.httpMaximumConnectionsPerHost = 4
+        return URLSession(configuration: cfg, delegate: nil, delegateQueue: OperationQueue())
+    }()
     let definition = ToolDefinition(name: "web.fetch",
         summary: "Fetch and read text content from a web page URL. Use for: read an article/webpage without opening browser, scrape page text. Don't use for: search web (use web.search), interact with page (use browser.open). Extracts main content (article/main first, noise removed); if direct fetch fails it automatically falls back to the built-in browser. Example: user says 'read this webpage content' → fetch web page.",
         parameters: ["url": "Web page URL to read", "maxChars": "Max characters to return (default 4000)"], verified: true, category: "browser")
@@ -448,8 +463,9 @@ final class WebFetchTool: MCPTool {
         let maxChars = params["maxChars"] as? Int ?? 4000
         var html: String?
         // v7.2.1：崩溃加固同 web.search——后台队列 session + 响应上限 4MB + wait 超时
+        // v7.2.3-fix40：共享 session（不再每次创建/销毁）
         let sem = DispatchSemaphore(value: 0)
-        let session = URLSession(configuration: .ephemeral, delegate: nil, delegateQueue: OperationQueue())
+        let session = Self.fetchSession
         var req = URLRequest(url: url, timeoutInterval: 20)
         req.setValue("Mozilla/5.0 (iPhone; CPU iPhone OS 16_0 like Mac OS X) AppleWebKit/605.1.15", forHTTPHeaderField: "User-Agent")
         let task = session.dataTask(with: req) { data, _, err in
@@ -458,8 +474,8 @@ final class WebFetchTool: MCPTool {
             html = String(data: data, encoding: .utf8) ?? String(data: data, encoding: .isoLatin1)?.description
         }
         task.resume()
-        _ = sem.wait(timeout: .now() + 25)
-        session.invalidateAndCancel()
+        _ = sem.wait(timeout: .now() + 22)
+        task.cancel()
         
         // v3.1.21: web.fetch failed自动 fallback 到内置浏览器
         // AI 根本不需要知道这个逻辑，直接调用 web.fetch 就能得到结果

@@ -225,6 +225,17 @@ public final class ToolRegistry: ObservableObject {
     /// 多线程同时读写，必须串行化。锁粒度小（只锁字典操作，不锁 t.invoke 工具本体），
     /// 保证工具真正并行执行、记账线程安全。
     private let stateLock = NSLock()
+    // v7.2.3-fix40：并发编排——按工具类型限流（对齐 OpenMinis in-flight cap）。
+    // 根因：web.search/web.fetch 内部用同步 semaphore 阻塞 global 线程（最坏 60s），
+    // 阻塞型工具无差别并发会占满 GCD 线程池（线程爆炸），URLSession 回调/资源竞争
+    // 触发 Data 构造/metadata trap（BPT trap，用户实测 4 次同一位置）。
+    private static let networkGate = DispatchSemaphore(value: 2)  // web.search/web.fetch 最多 2 并发
+    private static let shellGate = DispatchSemaphore(value: 3)    // shell.exec 最多 3 并发
+    private static func executionGate(for name: String) -> DispatchSemaphore? {
+        if name == "web.search" || name == "web.fetch" { return networkGate }
+        if name == "shell.exec" { return shellGate }
+        return nil
+    }
     private let disabledKey = "trollmcp2.disabled_tools"
     /// v2.9.22：会话内已授权工具 (AI 调用即自动放行，无需用户手动开 Toggle）。新会话时清空。
     private var sessionApproved: Set<String> = []
@@ -828,6 +839,9 @@ public final class ToolRegistry: ObservableObject {
             let start = CFAbsoluteTimeGetCurrent()
             let perm = Self.permissionLabel(originalName)
             do {
+                // v7.2.3-fix40：按工具类型限流（网络 2 / shell 3），防阻塞工具线程爆炸
+                if let gate = Self.executionGate(for: originalName) { gate.wait() }
+                defer { if let gate = Self.executionGate(for: originalName) { gate.signal() } }
                 // v3.0.90：记录调用次数，告诉 AI 它调了几次，让 AI 自己判断
                 let callCount = recordCall(name: originalName, params: params)
                 // v2.9.72：工作流可视化
