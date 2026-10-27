@@ -2076,17 +2076,37 @@ struct MessageBubble: View {
     private func coloredBody(_ text: String) -> AttributedString {
         var out = AttributedString()
         // v7.1.109-peers：引用角标 [N] 蓝色上标（Perplexity/Kimi 式）——优先于反引号着色
-        // 顺序：反引号 > [N] 角标 > 加粗（在 styledBody 内做 [N]）
-        let pattern = "`([^`]+)`|(\\[(\\d+)\\])"
+        // 顺序：块公式 > 行内公式 > 反引号 > [N] 角标 > 加粗（在 styledBody 内做 [N]）
+        // v7.2.3-fix21：$...$/$$...$$ 数学公式等宽着色（LaTeX 源码保留可读，
+        // 与反引号代码区分：公式紫色、代码橙色；真 KaTeX 图像渲染需 TextKit 改造，留后续）
+        let pattern = "`([^`]+)`|(\\$\\$[^$]+\\$\\$)|(\\$[^$]+\\$)|(\\[(\\d+)\\])"
         var pos = text.startIndex
         while let range = text.range(of: pattern, options: .regularExpression, range: pos..<text.endIndex) {
             let seg = text[range]
             if pos < range.lowerBound { out += styledBody(text[pos..<range.lowerBound]) }
-            if seg.hasPrefix("`") {
+            if seg.hasPrefix("$$") {
+                // 块级公式 $$...$$ —— 等宽紫色
+                var inner = seg
+                inner.removeFirst(2)
+                inner.removeLast(2)
+                var c = AttributedString(inner)
+                c.foregroundColor = .purple
+                c.font = .system(.body, design: .monospaced)
+                out += c
+            } else if seg.hasPrefix("`") {
                 let inner = text[text.index(after: range.lowerBound)..<text.index(before: range.upperBound)]
                 var c = AttributedString(inner)
                 c.foregroundColor = .orange
                 c.font = .system(.body, design: .monospaced)
+                out += c
+            } else if seg.hasPrefix("$") {
+                // 行内公式 $...$ —— 等宽蓝色斜体
+                var inner = seg
+                inner.removeFirst()
+                inner.removeLast()
+                var c = AttributedString(inner)
+                c.foregroundColor = .blue
+                c.font = .system(.body, design: .monospaced).italic()
                 out += c
             } else if seg.hasPrefix("[") {
                 // [N] → 蓝色上标
