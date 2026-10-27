@@ -2488,34 +2488,56 @@ struct MessageBubble: View {
         return L10n.t("i18n_244")
     }
 
-    /// v7.2.3-fix28：工具卡图标按工具族映射（OpenMinis 多彩风格）
+    /// v7.2.3-fix28/fix28b：工具卡图标按工具名映射（OpenMinis 风格，覆盖全部真实工具族）
+    /// 对齐 OpenMinis sfSymbol(forTool:) 表并扩展：photo/brain/bubble/lightbulb/pencil/code 等
+    /// 不再落默认灰图标。AI 只传 tool_name，图标与颜色全在客户端映射（与 OpenMinis 一致）。
     private func toolCardSymbol(_ toolName: String?) -> String {
         guard let name = toolName, !name.isEmpty else { return "wrench.and.screwdriver" }
-        if name == "shell.exec" || name == "shell_exec" { return "terminal.fill" }
+        if name == "shell.exec" || name == "shell_exec" || name == "bash" { return "terminal.fill" }
         if name.hasPrefix("web.") || name == "web_search" { return "magnifyingglass" }
         if name.hasPrefix("browser.") { return "safari" }
-        if name.hasPrefix("knowledge.") { return "book.closed" }
+        if name.hasPrefix("knowledge.") || name.hasPrefix("skills.") || name.hasPrefix("learn.") { return "book.closed" }
         if name.hasPrefix("device.") { return "iphone" }
-        if name.hasPrefix("app.") || name.hasPrefix("injection.") || name.hasPrefix("control.") || name.hasPrefix("container.") {
-            return "wand.and.stars"
-        }
-        if name.hasPrefix("file.") || name.hasPrefix("artifact.") { return "doc.text" }
-        if name.hasPrefix("model.") || name.hasPrefix("reminder") || name.hasPrefix("calendar") { return "calendar" }
+        if name.hasPrefix("app.") { return "app.badge" }
+        if name.hasPrefix("inject") { return "wand.and.stars" }
+        if name.hasPrefix("control.") { return "hand.tap" }
+        if name.hasPrefix("container.") || name.hasPrefix("package.") || name.hasPrefix("build.") { return "shippingbox" }
+        if name.hasPrefix("file.read") || name.hasPrefix("fs.read") || name.hasPrefix("file.inspect") { return "doc.text" }
+        if name.hasPrefix("file.write") || name.hasPrefix("fs.write") { return "doc.text.fill" }
+        if name.hasPrefix("file.") || name.hasPrefix("fs.") || name.hasPrefix("artifact.") || name.hasPrefix("project.") { return "folder" }
+        if name.hasPrefix("vision.") || name == "read_image" || name == "image" { return "photo" }
+        if name.hasPrefix("memory") || name.hasPrefix("subagent.") || name == "agent" { return "brain.head.profile" }
+        if name == "text" || name == "plaintext" || name.hasPrefix("model.") { return "bubble.left" }
+        if name == "think" || name == "thinking" { return "lightbulb.max" }
+        if name.hasPrefix("code") || name.hasPrefix("py3-native") || name.hasPrefix("node-native") { return "chevron.left.forwardslash.chevron.right" }
+        if name.hasPrefix("network.") { return "network" }
+        if name == "db" || name == "sqlite3" { return "cylinder.fill" }
+        if name.hasPrefix("system.") || name.hasPrefix("tools.") || name == "verify" { return "gearshape" }
+        if name.hasPrefix("cron.") || name.hasPrefix("reminder") || name.hasPrefix("calendar") { return "clock" }
+        if name.hasPrefix("location.") { return "location" }
+        if name.hasPrefix("rescue.") { return "cross.case" }
+        if name.hasPrefix("automation.") || name.hasPrefix("macro.") { return "play.circle" }
         return "wrench.and.screwdriver"
     }
 
-    /// v7.2.3-fix28：图标配色（同族映射）
+    /// v7.2.3-fix28/fix28b：图标配色（同工具名映射）
     private func toolCardColor(_ toolName: String?) -> Color {
         guard let name = toolName, !name.isEmpty else { return .gray }
-        if name == "shell.exec" || name == "shell_exec" { return .blue }
+        if name == "shell.exec" || name == "shell_exec" || name == "bash" { return .blue }
         if name.hasPrefix("web.") || name == "web_search" { return .blue }
         if name.hasPrefix("browser.") { return .orange }
-        if name.hasPrefix("knowledge.") { return .green }
-        if name.hasPrefix("device.") { return .teal }
-        if name.hasPrefix("app.") || name.hasPrefix("injection.") || name.hasPrefix("control.") || name.hasPrefix("container.") {
-            return .purple
-        }
-        if name.hasPrefix("model.") || name.hasPrefix("reminder") || name.hasPrefix("calendar") { return .pink }
+        if name.hasPrefix("knowledge.") || name.hasPrefix("skills.") || name.hasPrefix("learn.") { return .green }
+        if name.hasPrefix("device.") || name.hasPrefix("network.") || name.hasPrefix("location.") { return .teal }
+        if name.hasPrefix("app.") || name.hasPrefix("inject") || name.hasPrefix("control.") || name.hasPrefix("subagent.") || name == "agent" { return .purple }
+        if name.hasPrefix("container.") || name.hasPrefix("package.") || name.hasPrefix("build.") { return .orange }
+        if name.hasPrefix("vision.") || name == "read_image" || name == "image" { return .blue }
+        if name.hasPrefix("memory") { return .purple }
+        if name == "text" || name == "plaintext" || name.hasPrefix("model.") { return .gray }
+        if name == "think" || name == "thinking" { return .orange }
+        if name.hasPrefix("code") || name.hasPrefix("py3-native") || name.hasPrefix("node-native") || name == "db" || name == "sqlite3" { return .blue }
+        if name.hasPrefix("cron.") || name.hasPrefix("reminder") || name.hasPrefix("calendar") { return .pink }
+        if name.hasPrefix("rescue.") { return .red }
+        if name.hasPrefix("automation.") || name.hasPrefix("macro.") { return .green }
         return .gray
     }
 
