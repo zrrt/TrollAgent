@@ -2661,24 +2661,34 @@ final class ConversationStore: ObservableObject {
             // 后续请求把 [assistant(toolCalls), user] 直接发给 API → toolCalls 无配对
             // tool 结果 = 非法序列 → 中转 400 或挂起 → 表现"无论发什么 AI 都不回复"。
             // 补一条中断伪 tool 结果，恢复序列合法（对齐 OpenAI tool_calls 配对约束）。
-            var seqFixed = false
+            // v7.2.3-fix42：修复悬空 toolCalls 必须遍历全部——此前内层/外层两个 break
+            // 导致一批多个工具崩溃时（如并发 5 个、web.search 触发 BPT trap 整批结果没写盘）
+            // 只补第一个，其余悬空到下一轮请求时才被 repairDanglingToolCalls 补占位符。
+            // 仅处理"整批完全缺失"（最常见的崩溃场景）；部分配对的边缘情况由
+            // repairDanglingToolCalls 在请求时兜底。先收集再从后往前插入，避免索引位移。
+            var fullMissing: [(at: Int, tcs: [ToolCall])] = []
             for mi in convs[ci].messages.indices {
                 guard convs[ci].messages[mi].role == "assistant",
                       let tcs = convs[ci].messages[mi].toolCalls, !tcs.isEmpty else { continue }
-                for tc in tcs {
-                    let hasResult = convs[ci].messages.contains { $0.role == "tool" && $0.toolCallId == tc.id }
-                    if !hasResult {
-                        var im = ChatMessage(role: "tool",
+                let missing = tcs.filter { tc in
+                    !convs[ci].messages.contains { $0.role == "tool" && $0.toolCallId == tc.id }
+                }
+                if !missing.isEmpty && missing.count == tcs.count {
+                    fullMissing.append((mi, missing))
+                }
+            }
+            if !fullMissing.isEmpty {
+                for (at, tcs) in fullMissing.sorted(by: { $0.at > $1.at }) {
+                    // reversed 插入到 at+1，最终顺序与 toolCalls 原序一致
+                    for tc in tcs.reversed() {
+                        let im = ChatMessage(role: "tool",
                                              content: "⚠️ Tool \(tc.name) execution was interrupted by an app crash; result unavailable. You may retry this tool call.",
                                              isError: true, toolCallId: tc.id, toolName: tc.name)
-                        convs[ci].messages.insert(im, at: mi + 1)
-                        seqFixed = true
-                        break
+                        convs[ci].messages.insert(im, at: at + 1)
                     }
                 }
-                if seqFixed { break }
+                cleaned = true
             }
-            if seqFixed { cleaned = true }
         }
         conversations = convs
         selectedId = conversations.first?.id
