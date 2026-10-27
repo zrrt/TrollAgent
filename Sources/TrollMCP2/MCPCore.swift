@@ -966,8 +966,8 @@ public final class ToolRegistry: ObservableObject {
                     // 字段(strLimit)，arrLimit 固定 20：输出 1000 行数组时直接砍到 20 项 +
                     // truncated:true，传 limit=50000 也无效（用户实测根因）。
                     // 数组元素多时每项仍走 compactResult 单条压缩，总量受 strLimit 约束。
-                    data = Self.compactResult(result, strLimit: min(lim, 100_000),
-                                              arrLimit: min(lim, 1_000), keepHeadTail: true)
+                    data = Self.compactResult(result, arrLimit: min(lim, 1_000),
+                                              strLimit: min(lim, 100_000), keepHeadTail: true)
                 } else {
                     data = Self.compactResult(result)
                 }
