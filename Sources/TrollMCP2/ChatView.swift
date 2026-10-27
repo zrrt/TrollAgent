@@ -1324,7 +1324,7 @@ struct ChatView: View {
                 // 160pt + 字号整体放大（footnote13→subheadline15、caption2 11→caption12）
                 .padding(.horizontal, 14)
                 .padding(.vertical, 9)
-                .frame(minWidth: 160)
+                .frame(minWidth: 200)
                 .background(Color(.systemGray5).opacity(0.6))
                 .cornerRadius(14)
             }
@@ -1912,33 +1912,62 @@ struct MessageBubble: View {
     /// shell 工具输出常带 \x1b[...m 颜色码 / OSC 序列（\x1b]...\x07），纯文本
     /// Text 直接渲染会显示成乱码/方块。显示层剥离，不写回 content——
     /// 链接提取（LinkExtractor）仍用原始 content，功能不受影响。
-    private static func stripANSI(_ text: String) -> String {
-        let chars = Array(text)
-        var out = ""
-        var j = 0
-        while j < chars.count {
-            if chars[j] == "\u{1B}" {
-                if j + 1 < chars.count && chars[j + 1] == "[" {
-                    j += 2
-                    while j < chars.count {
-                        let c = chars[j]
-                        j += 1
-                        if c >= "@" && c <= "~" { break }
+    /// v7.2.3-fix38：对齐 OpenMinis sanitizeForDisplay——完整剥 ANSI（CSI/OSC/两字符/孤立 ESC）
+    /// + 控制字符清理（保留 \n\t，删 \r，其余 C0/DEL/C1 替换为 ），这是工具结果乱码的根因。
+    private static func sanitizeForDisplay(_ text: String) -> String {
+        guard !text.isEmpty else { return text }
+        var out = String()
+        out.reserveCapacity(text.count)
+        let scalars = text.unicodeScalars
+        var i = scalars.startIndex
+        let end = scalars.endIndex
+        while i < end {
+            let v = scalars[i].value
+            if v == 0x1B {
+                // ANSI escape：CSI / OSC / 两字符 / 孤立——整段吞掉
+                let next = scalars.index(after: i)
+                guard next < end else { i = next; continue }
+                let n = scalars[next].value
+                if n == 0x5B { // CSI: ESC [ ... final byte
+                    var j = scalars.index(after: next)
+                    while j < end {
+                        let c = scalars[j].value
+                        j = scalars.index(after: j)
+                        if c >= 0x40 && c <= 0x7E { break }
                     }
-                } else if j + 1 < chars.count && chars[j + 1] == "]" {
-                    j += 2
-                    while j < chars.count {
-                        if chars[j] == "\u{07}" { j += 1; break }
-                        if chars[j] == "\u{1B}" && j + 1 < chars.count && chars[j + 1] == "\\" { j += 2; break }
-                        j += 1
+                    i = j
+                } else if n == 0x5D { // OSC: ESC ] ... BEL or ESC \
+                    var j = scalars.index(after: next)
+                    while j < end {
+                        let c = scalars[j].value
+                        if c == 0x07 { j = scalars.index(after: j); break }
+                        if c == 0x1B {
+                            let k = scalars.index(after: j)
+                            if k < end && scalars[k].value == 0x5C { j = scalars.index(after: k); break }
+                        }
+                        j = scalars.index(after: j)
                     }
+                    i = j
                 } else {
-                    j += 1
+                    // 两字符（ESC M / ESC =）或孤立——都丢弃
+                    i = scalars.index(after: next)
                 }
-            } else {
-                out.append(chars[j])
-                j += 1
+                continue
             }
+            // 保留 \n(0x0A) \t(0x09)；\r 静默删（CRLF 双换行）；其余 C0 + DEL 替换
+            if (v < 0x20 && v != 0x0A && v != 0x09) || v == 0x7F {
+                if v != 0x0D { out.unicodeScalars.append(Unicode.Scalar(0xFFFD)!) }
+                i = scalars.index(after: i)
+                continue
+            }
+            // C1 控制块（0x80..0x9F）
+            if v >= 0x80 && v <= 0x9F {
+                out.unicodeScalars.append(Unicode.Scalar(0xFFFD)!)
+                i = scalars.index(after: i)
+                continue
+            }
+            out.unicodeScalars.append(scalars[i])
+            i = scalars.index(after: i)
         }
         return out
     }
@@ -1976,13 +2005,13 @@ struct MessageBubble: View {
         return AttributedString(ns)
     }
 
-    /// URL → 蓝 + 下划线（Open Minis 唯一高亮；fix4 裸 URL 规则复用）
+    /// URL → cyan + 下划线（v7.2.3-fix38：对齐 OpenMinis 终端 URL=cyan，此前是蓝色）
     private static func blueURLs(in ns: NSMutableAttributedString, string: String) {
         let pattern = #"https?://[^\s"'\(\)\]\}，。；：,;]+"#
         if let re = try? NSRegularExpression(pattern: pattern) {
             let full = NSRange(string.startIndex..., in: string)
             for m in re.matches(in: string, range: full) {
-                ns.addAttribute(.foregroundColor, value: UIColor.systemBlue, range: m.range)
+                ns.addAttribute(.foregroundColor, value: UIColor.cyan, range: m.range)
                 ns.addAttribute(.underlineStyle, value: NSUnderlineStyle.single.rawValue, range: m.range)
             }
         }
@@ -1994,7 +2023,7 @@ struct MessageBubble: View {
     /// 限长 20000 字符，超大 JSON 截断标注，避免渲染卡顿。
     private static func jsonHighlighted(from text: String) -> AttributedString? {
         // v7.2.3-fix11：先剥 ANSI——shell 输出带颜色码时 JSONSerialization 无法解析
-        let cleaned = Self.stripANSI(text)
+        let cleaned = Self.sanitizeForDisplay(text)
         guard let data = cleaned.data(using: .utf8),
               let obj = try? JSONSerialization.jsonObject(with: data),
               let prettyData = try? JSONSerialization.data(withJSONObject: obj, options: [.prettyPrinted, .sortedKeys]),
@@ -2497,7 +2526,7 @@ struct MessageBubble: View {
     private func toolCardSymbol(_ toolName: String?) -> String {
         guard let name = toolName, !name.isEmpty else { return "wrench.and.screwdriver" }
         if name == "shell.exec" || name == "shell_exec" || name == "bash" { return "terminal.fill" }
-        if name.hasPrefix("web.") || name == "web_search" { return "magnifyingglass" }
+        if name.hasPrefix("web.") || name == "web_search" { return "globe" } // fix38：联网搜索用 globe（magnifyingglass 用户嫌丑）
         if name.hasPrefix("browser.") { return "safari" }
         if name.hasPrefix("knowledge.") || name.hasPrefix("skills.") || name.hasPrefix("learn.") { return "book.closed" }
         if name.hasPrefix("device.") { return "iphone" }
@@ -2547,9 +2576,15 @@ struct MessageBubble: View {
         return .gray
     }
 
-    /// v7.2.3-fix28：副行族标签/工具名着色——Alpine 工具蓝色（用户要求），其余保持灰
+    /// v7.2.3-fix38：副行族标签/工具名着色——Alpine 工具 + 封装工具都蓝色（用户要求），原生灰
     private func toolFamilyTint(_ toolName: String?) -> Color {
-        if toolName == "shell.exec" || toolName == "shell_exec" { return .blue }
+        guard let name = toolName, !name.isEmpty else { return .secondary }
+        if name == "shell.exec" || name == "shell_exec" { return .blue }
+        let packagedPrefixes = ["web.", "device.", "app.", "container.", "injection.", "location.",
+                                "macro.", "knowledge.", "automation.", "model.", "reminder", "calendar",
+                                "contacts", "phone", "scan.", "skills.", "project.", "build.", "rescue.",
+                                "cron.", "file.", "network."]
+        if packagedPrefixes.contains(where: { name.hasPrefix($0) }) { return .blue }
         return .secondary
     }
 
@@ -2744,14 +2779,14 @@ struct MessageBubble: View {
                             .frame(maxWidth: .infinity, alignment: .leading)
                         }
                     } else {
-                        // v7.2.3-fix30：成功态蓝→绿（对齐 OpenMinis completed=green + 副行徽章已是绿）
+                        // v7.2.3-fix38：成功态回蓝色（用户要求；fix30 改绿被否），错误态仍红
                         Image(systemName: message.isError ? "exclamationmark.circle" : "checkmark.circle")
                             .font(.system(size: 14))
-                            .foregroundColor(message.isError ? .red : .green)
+                            .foregroundColor(message.isError ? .red : .blue)
                         Text(expanded ? L10n.t("i18n_1077") : L10n.t("i18n_1078"))
                             .font(.subheadline)
                             .fontWeight(.medium)
-                            .foregroundColor(message.isError ? .red : .green)
+                            .foregroundColor(message.isError ? .red : .blue)
                     }
                     Spacer()
                 }
@@ -2766,7 +2801,7 @@ struct MessageBubble: View {
                     if let json = Self.jsonHighlighted(from: message.content) {
                         Text(json)
                     } else {
-                        Text(Self.terminalStyled(Self.expandTabs(Self.stripANSI(message.content))))
+                        Text(Self.terminalStyled(Self.expandTabs(Self.sanitizeForDisplay(message.content))))
                     }
                 }
                 .font(.system(.caption, design: .monospaced))
