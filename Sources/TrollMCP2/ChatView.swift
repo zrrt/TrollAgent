@@ -2004,8 +2004,10 @@ struct MessageBubble: View {
         let mono = UIFont.monospacedSystemFont(ofSize: 11, weight: .regular)
         ns.addAttribute(.font, value: mono, range: full)
         ns.addAttribute(.foregroundColor, value: UIColor.white, range: full)
-        // 顶层键（行首无缩进的 "key":）→ 绿色；嵌套键/字符串/数字全部保持白色
-        if let re = try? NSRegularExpression(pattern: #"(?m)^"((?:[^"\\]|\\.)*)"\s*:"#) {
+        // v7.2.3-fix27：顶层键绿色——此前正则 ^" 匹配行首引号，但 JSONSerialization
+        // prettyPrinted 的顶层键前有 2 空格缩进（"  key":），正则从未命中 → 全白。
+        // 改为 ^ {2}" 精确匹配顶层缩进（嵌套键 4+ 空格不命中，保持"头键绿"预期）
+        if let re = try? NSRegularExpression(pattern: #"(?m)^ {2}"((?:[^"\\]|\\.)*)"\s*:"#) {
             for m in re.matches(in: limited, range: full) {
                 ns.addAttribute(.foregroundColor, value: UIColor.systemGreen, range: m.range)
             }
