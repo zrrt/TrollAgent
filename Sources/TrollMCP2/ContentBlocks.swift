@@ -119,7 +119,7 @@ enum ContentBlocks {
         let title = dict["tool_title"]
         var args: String?
         if !dict.isEmpty {
-            args = dict.map { "\"\\($0.key)\": \"\\($0.value)\"" }.sorted().joined(separator: ",\n")
+            args = dict.keys.sorted().map { "\"\\($0)\": \"\\(dict[$0] ?? "")\"" }.joined(separator: ",\n")
         } else {
             let trimmed = segment.trimmingCharacters(in: .whitespacesAndNewlines)
             if !trimmed.isEmpty { args = trimmed }
