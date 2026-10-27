@@ -680,8 +680,8 @@ struct MarkdownTableView: View {
                     LazyVGrid(columns: gridCols, spacing: 6) {
                         ForEach(0..<columns, id: \.self) { i in
                             Text(i < header.count ? header[i] : "")
-                                // v7.1.109-peers：表格字体 11→13pt（用户反馈表格文字较小）
-                                .font(.system(size: 13, design: .monospaced).weight(.semibold))
+                                // v7.2.3-fix39：表格字体 13→15pt（用户仍反馈表格文字小）
+                                .font(.system(size: 15, design: .monospaced).weight(.semibold))
                                 .foregroundColor(.blue)
                                 .frame(maxWidth: .infinity, alignment: .leading)
                         }
@@ -692,7 +692,7 @@ struct MarkdownTableView: View {
                         LazyVGrid(columns: gridCols, spacing: 6) {
                             ForEach(0..<columns, id: \.self) { i in
                                 Text(i < row.count ? row[i] : "")
-                                    .font(.system(size: 13, design: .monospaced))
+                                    .font(.system(size: 15, design: .monospaced))
                                     .foregroundColor(.primary)
                                     .frame(maxWidth: .infinity, alignment: .leading)
                                     .textSelection(.enabled)

@@ -1314,17 +1314,16 @@ struct ChatView: View {
                             .font(.caption)
                             .foregroundColor(.secondary)
                     }
+                    Spacer()
                     Image(systemName: toolsRunExpanded.contains(gid) ? "chevron.up" : "chevron.down")
                         .font(.system(size: 12, weight: .semibold))
                         .foregroundColor(.secondary)
                 }
-                // v7.2.3-fix26：去 Spacer——此前 HStack 内 Spacer 把 Button 撑满整行，
-                // 灰色背景条贴屏幕两端；改内容自适应宽度（对齐灰色气泡/胶囊样式）
-                // v7.2.3-fix31：纯内容宽度太窄（≈150pt）+ footnote 小字 → 加最小宽度
-                // 160pt + 字号整体放大（footnote13→subheadline15、caption2 11→caption12）
+                // v7.2.3-fix39：撑满到与灰色气泡等宽（外层 VStack 加 16 水平 padding，
+                // 与 MessageBubble 一致，不贴屏幕两端）；此前 minWidth 200 仍偏短
                 .padding(.horizontal, 14)
                 .padding(.vertical, 9)
-                .frame(minWidth: 200)
+                .frame(maxWidth: .infinity)
                 .background(Color(.systemGray5).opacity(0.6))
                 .cornerRadius(14)
             }
@@ -1355,6 +1354,7 @@ struct ChatView: View {
                 }
             }
         }
+        .padding(.horizontal, 16)   // fix39：与 MessageBubble 外层 16 对齐，胶囊不贴屏幕两端
     }
 }
 
@@ -2039,7 +2039,9 @@ struct MessageBubble: View {
         // v7.2.3-fix27：顶层键绿色——此前正则 ^" 匹配行首引号，但 JSONSerialization
         // prettyPrinted 的顶层键前有 2 空格缩进（"  key":），正则从未命中 → 全白。
         // 改为 ^ {2}" 精确匹配顶层缩进（嵌套键 4+ 空格不命中，保持"头键绿"预期）
-        if let re = try? NSRegularExpression(pattern: #"(?m)^ {2}"((?:[^"\\]|\\.)*)"\s*:"#) {
+        // v7.2.3-fix39：所有键（任意缩进，含嵌套）都绿色——此前只顶层 2 空格键绿，
+        // 嵌套键（data 内的 _call_count/mode 等）仍白。要求行首缩进+引号+冒号，排除数组元素。
+        if let re = try? NSRegularExpression(pattern: #"(?m)^(\s*)"((?:[^"\\]|\\.)*)"\s*:"#) {
             for m in re.matches(in: limited, range: full) {
                 ns.addAttribute(.foregroundColor, value: UIColor.systemGreen, range: m.range)
             }
@@ -2576,16 +2578,14 @@ struct MessageBubble: View {
         return .gray
     }
 
-    /// v7.2.3-fix38：副行族标签/工具名着色——Alpine 工具 + 封装工具都蓝色（用户要求），原生灰
+    /// v7.2.3-fix39：副行族标签/工具名着色——shell + 所有封装工具（含 bind_app 等下划线名）
+    /// 都蓝色；只有原生工具（nativeSet）灰色。
     private func toolFamilyTint(_ toolName: String?) -> Color {
         guard let name = toolName, !name.isEmpty else { return .secondary }
-        if name == "shell.exec" || name == "shell_exec" { return .blue }
-        let packagedPrefixes = ["web.", "device.", "app.", "container.", "injection.", "location.",
-                                "macro.", "knowledge.", "automation.", "model.", "reminder", "calendar",
-                                "contacts", "phone", "scan.", "skills.", "project.", "build.", "rescue.",
-                                "cron.", "file.", "network."]
-        if packagedPrefixes.contains(where: { name.hasPrefix($0) }) { return .blue }
-        return .secondary
+        let nativeSet: Set<String> = ["sqlite3", "plutil", "ta", "jtool2", "py3-native",
+                                      "node-native", "git.py", "nscan.py", "ldid", "insert_dylib",
+                                      "optool", "ct_bypass", "opainject", "install_name_tool"]
+        return nativeSet.contains(name) ? .secondary : .blue
     }
 
     /// v7.2.3-fix30：子 agent/delegate 电紫 accent——OpenMinis HelperAccent 原色
