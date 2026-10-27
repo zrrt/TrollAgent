@@ -2079,7 +2079,9 @@ struct MessageBubble: View {
         // 顺序：块公式 > 行内公式 > 反引号 > [N] 角标 > 加粗（在 styledBody 内做 [N]）
         // v7.2.3-fix21：$...$/$$...$$ 数学公式等宽着色（LaTeX 源码保留可读，
         // 与反引号代码区分：公式紫色、代码橙色；真 KaTeX 图像渲染需 TextKit 改造，留后续）
-        let pattern = "`([^`]+)`|(\\$\\$[^$]+\\$\\$)|(\\$[^$]+\\$)|(\\[(\\d+)\\])"
+        // v7.2.3-fix21.1：行内公式收紧为无空格/换行——`$100 和 $200` 这类货币
+        // 文本不再被误判为公式（含空格即非公式）；块级 $$...$$ 保持宽松
+        let pattern = "`([^`]+)`|(\\$\\$[^$]+\\$\\$)|(\\$[^ $\\n]+\\$)|(\\[(\\d+)\\])"
         var pos = text.startIndex
         while let range = text.range(of: pattern, options: .regularExpression, range: pos..<text.endIndex) {
             let seg = text[range]

@@ -773,6 +773,11 @@ public final class ToolRegistry: ObservableObject {
         }
         // v3.1.69：显式找 command/action 键 (见 enabledOpenAIToolSchema 注释——哈希顺序问题）
         let selectorKey = def.parameters.keys.first { $0 == "command" || $0 == "action" }
+        // v7.2.3-fix19.1：tool_title 统一注入——Anthropic 通道/动态披露的 schema
+        // 也走这里（OpenAI 全量在 enabledOpenAIToolSchema 注入，两套构造必须一致，
+        // 否则同一请求里部分工具带 tool_title、部分不带 → 模型行为不一致）
+        props["tool_title"] = ["type": "string",
+            "description": "A concise 5-10 word summary of what this tool call does, shown to the user (e.g. 'Test network connectivity', 'List files in home directory'). Use the same language as the user. MUST always output this field."]
         return [
             "type": "function",
             "function": [
