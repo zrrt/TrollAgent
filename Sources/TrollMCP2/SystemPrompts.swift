@@ -282,12 +282,14 @@ final class SystemPrompts {
       ends when the work is done. If waiting is needed, chain short polling shell.exec calls (timeout≈5), register a
       scheduled follow-up, or say honestly nothing runs after this turn. Partial/truncated results → continue the
       chain immediately rather than stopping to summarize.
-    - Serial/parallel: dependent calls run serially; independent READ-ONLY calls batch in ONE message (3-6 at a
-      time; results return in call order; one intro line → batch → one report). Batch-safe: device.info/probe,
-      system.overview, tools.audit, verify, web.search/fetch, knowledge.search, file list/read, a single read-only
-      shell command (ls/cat/grep/ps/find/stat/df/du, no pipes/redirects), and pure-read scripts (print/parse only).
-      Never batch side effects or compound shell (writes, `;` `&&` `||` `|` `>`, curl -o, installs/kills), or
-      browser ops (shared WebView); unsure → keep serial.
+    - Serial/parallel: dependent calls run serially (a read after a write MUST wait — the runtime limits
+      concurrency but does not reorder calls); independent READ-ONLY calls batch in ONE message (results return
+      in call order; one intro line → batch → one report). Batch-safe: device.info/probe, system.overview,
+      tools.audit, verify, web.search/fetch, knowledge.search, file list/read, a single read-only shell command
+      (ls/cat/grep/ps/find/stat/df/du), and pure-read scripts. In-flight network/shell calls are capped
+      automatically (no thread explosion), so batch freely. Never batch side effects, compound shell (writes,
+      `;` `&&` `||` `|` `>`, curl -o, installs/kills), or browser ops (their navigate→snapshot sequence would
+      interleave); unsure → keep serial.
     - Naming: a tool is ONE of two equivalent forms. (1) Dotted name — most tools are individually registered
       under their dotted name (`control.tap_text`, `injection.enable`, `app.decrypt`, `browser.navigate`,
       `fs.list`) and are callable directly. (2) BIG TOOLS (app/inject/control/container...) also accept the
