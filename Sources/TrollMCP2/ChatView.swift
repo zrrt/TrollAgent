@@ -11,7 +11,6 @@ struct ChatView: View {
     @State private var inputText = ""
     @State private var inputHeight: CGFloat = 36
     // v7.2.3-fix14：工具卡参数行折叠——默认一行+▽，点击展开完整命令/参数
-    @State private var toolArgsExpanded: Set<String> = []
     /// v7.2.3-fix20：连续工具折叠展开状态（按组 id）
     @State private var toolsRunExpanded: Set<String> = []
     // v2.9.234：推理强度/智能搜索持久化(@AppStorage)——之前纯@State,关app重开必丢
@@ -1290,6 +1289,69 @@ struct ChatView: View {
         inputText = inputText.replacingOccurrences(of: "@", with: "").trimmingCharacters(in: .whitespaces)
         showToast(L10n.t("i18n_1068", app.name))
     }
+    @ViewBuilder
+    private func toolsRunGroup(_ msgs: [ChatMessage]) -> some View {
+        let gid = "t-" + (msgs.first?.id.uuidString ?? "") + "-" + String(msgs.count)
+        VStack(alignment: .leading, spacing: 8) {
+            Button(action: {
+                withAnimation(.easeInOut(duration: 0.18)) {
+                    if toolsRunExpanded.contains(gid) {
+                        toolsRunExpanded.remove(gid)
+                    } else {
+                        toolsRunExpanded.insert(gid)
+                    }
+                }
+            }) {
+                HStack(spacing: 8) {
+                    Image(systemName: "hammer.fill")
+                        .font(.system(size: 12))
+                        .foregroundColor(.secondary)
+                    Text(String(format: L10n.t("i18n_1260"), msgs.count))
+                        .font(.footnote.weight(.medium))
+                        .foregroundColor(.primary)
+                    if let d = ChatListGrouping.Item.tools(msgs).totalDuration {
+                        Text(String(format: "%.1fs", d))
+                            .font(.caption2)
+                            .foregroundColor(.secondary)
+                    }
+                    Spacer()
+                    Image(systemName: toolsRunExpanded.contains(gid) ? "chevron.up" : "chevron.down")
+                        .font(.system(size: 10, weight: .semibold))
+                        .foregroundColor(.secondary)
+                }
+                .padding(.horizontal, 12)
+                .padding(.vertical, 8)
+                .background(Color(.systemGray5).opacity(0.6))
+                .cornerRadius(10)
+            }
+            .buttonStyle(.plain)
+            if toolsRunExpanded.contains(gid) {
+                VStack(alignment: .leading, spacing: 10) {
+                    ForEach(msgs) { msg in
+                        MessageBubble(
+                            message: msg,
+                            selectionMode: selectionMode,
+                            isSelected: selectedIds.contains(msg.id),
+                            onToggleSelect: { toggleSelect(msg.id) },
+                            onCopy: { copyMessage(msg) },
+                            onShare: { shareMessage(msg) },
+                            isStreaming: store.streamingMessageId == msg.id,
+                            forceType: store.liveProducedID == msg.id,
+                            thinkEnabled: thinkEnabled
+                        )
+                        .id(msg.id)
+                    }
+                }
+                .padding(.leading, 6)
+                .overlay(alignment: .leading) {
+                    Rectangle()
+                        .fill(Color(.systemGray4))
+                        .frame(width: 3)
+                        .cornerRadius(1.5)
+                }
+            }
+        }
+    }
 }
 
 struct ChatChip: View {
@@ -1538,6 +1600,9 @@ struct MessageBubble: View {
     let message: ChatMessage
     // v4.3.77：安装进度——工具"执行中"气泡渲染实时进度条（引用处位于本 struct）
     @ObservedObject private var installRegistry = InstallationRegistry.shared
+    // v7.2.3-fix23.1：参数展开状态每气泡自管（原 ChatView 级 @State 在独立 struct 内
+    // 无法访问——编译错误根因；每气泡独立布尔天然隔离）
+    @State private var argsExpanded = false
     var selectionMode: Bool = false
     var isSelected: Bool = false
     var onToggleSelect: (() -> Void)? = nil
@@ -1837,69 +1902,6 @@ struct MessageBubble: View {
 
     /// v7.2.3-fix20：连续工具折叠组——默认一行胶囊（运行了 N 个工具 + 总耗时），
     /// 点击展开显示各工具卡（左侧竖线标示为折叠组）
-    @ViewBuilder
-    private func toolsRunGroup(_ msgs: [ChatMessage]) -> some View {
-        let gid = "t-" + (msgs.first?.id.uuidString ?? "") + "-" + String(msgs.count)
-        VStack(alignment: .leading, spacing: 8) {
-            Button(action: {
-                withAnimation(.easeInOut(duration: 0.18)) {
-                    if toolsRunExpanded.contains(gid) {
-                        toolsRunExpanded.remove(gid)
-                    } else {
-                        toolsRunExpanded.insert(gid)
-                    }
-                }
-            }) {
-                HStack(spacing: 8) {
-                    Image(systemName: "hammer.fill")
-                        .font(.system(size: 12))
-                        .foregroundColor(.secondary)
-                    Text(String(format: L10n.t("i18n_1260"), msgs.count))
-                        .font(.footnote.weight(.medium))
-                        .foregroundColor(.primary)
-                    if let d = ChatListGrouping.Item.tools(msgs).totalDuration {
-                        Text(String(format: "%.1fs", d))
-                            .font(.caption2)
-                            .foregroundColor(.secondary)
-                    }
-                    Spacer()
-                    Image(systemName: toolsRunExpanded.contains(gid) ? "chevron.up" : "chevron.down")
-                        .font(.system(size: 10, weight: .semibold))
-                        .foregroundColor(.secondary)
-                }
-                .padding(.horizontal, 12)
-                .padding(.vertical, 8)
-                .background(Color(.systemGray5).opacity(0.6))
-                .cornerRadius(10)
-            }
-            .buttonStyle(.plain)
-            if toolsRunExpanded.contains(gid) {
-                VStack(alignment: .leading, spacing: 10) {
-                    ForEach(msgs) { msg in
-                        MessageBubble(
-                            message: msg,
-                            selectionMode: selectionMode,
-                            isSelected: selectedIds.contains(msg.id),
-                            onToggleSelect: { toggleSelect(msg.id) },
-                            onCopy: { copyMessage(msg) },
-                            onShare: { shareMessage(msg) },
-                            isStreaming: store.streamingMessageId == msg.id,
-                            forceType: store.liveProducedID == msg.id,
-                            thinkEnabled: thinkEnabled
-                        )
-                        .id(msg.id)
-                    }
-                }
-                .padding(.leading, 6)
-                .overlay(alignment: .leading) {
-                    Rectangle()
-                        .fill(Color(.systemGray4))
-                        .frame(width: 3)
-                        .cornerRadius(1.5)
-                }
-            }
-        }
-    }
 
     // v7.2.2：来源卡浮层——底部卡片：host + URL + 打开按钮
     /// v7.2.3-fix11：ANSI 剥离（对齐 Open Minis 终端——"乱码少"的关键）——
@@ -2512,6 +2514,17 @@ struct MessageBubble: View {
                             .layoutPriority(1)
                         Spacer()
                     }
+                    // v7.2.3-fix23：点击标题区展开/收起参数（渲染传参默认隐藏后的入口）
+                    .contentShape(Rectangle())
+                    .onTapGesture {
+                        withAnimation(.easeInOut(duration: 0.15)) {
+                            if argsExpanded {
+                                argsExpanded = false
+                            } else {
+                                argsExpanded = true
+                            }
+                        }
+                    }
                     // v7.2.3-fix16：副行小字（括号信息）——工具族·工具名·状态·耗时
                     HStack(spacing: 5) {
                         Text(toolFamilyLabel(for: message.toolName))
@@ -2535,32 +2548,30 @@ struct MessageBubble: View {
                     .font(.system(size: 10))
                     .foregroundColor(.secondary)
                     // v3.5.13：标题已是"工具名: 关键参数"机械短标签，无需再补一行副标题工具名。
-                    // v7.2.3-fix14：参数行默认一行截断 + ▽，点击展开完整命令/参数
-                    // （工具多时参数堆太长，对齐折叠式工具结果体验）
+                    // v7.2.3-fix23：渲染传参提示词默认完全隐藏（对齐用户诉求——标题已说明
+                    // 意图、显示的命令 AI 不一定真执行，界面渲染多余）。点击卡片标题区
+                    // 切换展开/收起完整命令/参数。
                     if let args = message.toolArgs, !args.isEmpty {
-                        let key = message.id.uuidString
-                        let expanded = toolArgsExpanded.contains(key)
-                        HStack(alignment: .top, spacing: 4) {
-                            Text(args)
-                                .font(.system(.caption2, design: .monospaced))
-                                .foregroundColor(.secondary)
-                                .textSelection(.enabled)
-                                .lineLimit(expanded ? nil : 1)
-                                .truncationMode(.tail)
-                                .frame(maxWidth: .infinity, alignment: .leading)
-                            if !expanded {
-                                Image(systemName: "chevron.down")
+                        if argsExpanded {
+                            HStack(alignment: .top, spacing: 4) {
+                                Text(args)
+                                    .font(.system(.caption2, design: .monospaced))
+                                    .foregroundColor(.secondary)
+                                    .textSelection(.enabled)
+                                    .lineLimit(nil)
+                                    .frame(maxWidth: .infinity, alignment: .leading)
+                                Image(systemName: "chevron.up")
                                     .font(.system(size: 9, weight: .bold))
                                     .foregroundColor(.secondary)
                                     .padding(.top, 2)
                             }
-                        }
-                        .contentShape(Rectangle())
-                        .onTapGesture {
-                            withAnimation(.easeInOut(duration: 0.15)) {
-                                if expanded { toolArgsExpanded.remove(key) }
-                                else { toolArgsExpanded.insert(key) }
+                            .contentShape(Rectangle())
+                            .onTapGesture {
+                                withAnimation(.easeInOut(duration: 0.15)) {
+                                    argsExpanded = false
+                                }
                             }
+                            .transition(.opacity)
                         }
                     }
                 }
