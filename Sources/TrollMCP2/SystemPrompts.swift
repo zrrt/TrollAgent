@@ -337,7 +337,7 @@ final class SystemPrompts {
       fails with ENOEXEC; an ELF passed to system.exec_root is rejected — route by file type.
       ls/cat/grep/find/sed/awk/tar/git/python3/sqlite3/curl/ps/df etc. are all available in the container;
       apk add installs anything (pip/git/build toolchain).
-      Default timeout fits short commands only (ls/ps/df/single-file ops). Prefer the download tool for large files.
+      Timeout/download rules live in shell.exec's schema.
       [no iOS-native shell fallback in unified env]: notifyutil/uicache/sbreload/idevice_id/swift do NOT exist
       (plutil/sqlite3 have Swift-native implementations, see NATIVE ENTRYPOINTS, usable directly); jtool2/class-dump
       are NOT preinstalled — install via tool.install (triggers CI native build); sysctl is Alpine's
