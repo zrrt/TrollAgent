@@ -36,7 +36,7 @@ enum ShellDiag {
 final class ShellExecTool: MCPTool {
     let definition = ToolDefinition(
         name: "shell.exec",
-        summary: "Run shell command (terminal/CLI) in unified environment (TrollRuntime). Params: command(required), timeout(default 20s/max 120). Unified env: all commands run in the full Alpine Linux aarch64 toolchain (native ARM64; apk/pipes/symlinks/dynamic ELF fully supported); iOS paths auto-bind to /ios_* for direct read/write (only /ios_workspace, /ios_containers, /ios_system exist — /ios_appdata etc. don't; no iOS-native shell fallback, plutil/jtool2 unavailable, ps only sees container processes). python3/node run natively in the unified env; native entries (shell.exec routed prefixes): py3-native/node-native (run on the chip, no auto-fallback bundled), plutil (plist read/convert), sqlite3 (direct SQLite query) — don't `command -v` them inside the unified env. Missing tools need explicit apk add (no auto-install; git/wget/curl preinstalled; make/cmake/gcc/clang/openssl/radare2 all installable via apk).Use for: file ops, system info, network, text processing.",
+        summary: "Run shell command (terminal/CLI) in unified Alpine environment (TrollRuntime). Params: command(required), timeout(default 20s/max 120), background, limit, full, offset. Use for: file ops, system info, network, text processing. Unified env details & iOS path binding: see the shell.exec section in the system prompt.",
         parameters: [
             "command": "Shell command to execute (required)",
             "timeout": "Timeout seconds (default 20, max 120)",
