@@ -1314,15 +1314,16 @@ struct ChatView: View {
                             .font(.caption2)
                             .foregroundColor(.secondary)
                     }
-                    Spacer()
                     Image(systemName: toolsRunExpanded.contains(gid) ? "chevron.up" : "chevron.down")
                         .font(.system(size: 10, weight: .semibold))
                         .foregroundColor(.secondary)
                 }
-                .padding(.horizontal, 12)
-                .padding(.vertical, 8)
+                // v7.2.3-fix26：去 Spacer——此前 HStack 内 Spacer 把 Button 撑满整行，
+                // 灰色背景条贴屏幕两端；改内容自适应宽度（对齐灰色气泡/胶囊样式）
+                .padding(.horizontal, 14)
+                .padding(.vertical, 9)
                 .background(Color(.systemGray5).opacity(0.6))
-                .cornerRadius(10)
+                .cornerRadius(14)
             }
             .buttonStyle(.plain)
             if toolsRunExpanded.contains(gid) {
