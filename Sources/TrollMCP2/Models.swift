@@ -1755,7 +1755,10 @@ final class ConversationStore: ObservableObject {
                 switch result {
                 case .success(let r):
                     let raw = Self.jsonString(r)
-                    tm.content = raw.count > 8000 ? raw.prefix(8000) + "\n... [tool result truncated, total \(raw.count) chars]" : raw
+                    // v7.2.3-fix25：工具结果硬截断上限 8000 → 48000（旧 16k 窗口时代的值；
+                    // contextTokens 默认已 128k，8000 会把工具完整结果（即使显式 limit=50000）
+                    // 砍到 8k——用户实测 1000 行输出仍 truncated 根因）
+                    tm.content = raw.count > 48000 ? raw.prefix(48000) + "\n... [tool result truncated, total \(raw.count) chars]" : raw
                     tm.toolArgs = String("Command: \(cmdCopy.prefix(120))")
                     tm.toolDuration = 0.01
                 case .failure(let e):
@@ -2000,8 +2003,9 @@ final class ConversationStore: ObservableObject {
         case .success(let r):
             let rawContent = Self.jsonString(r)
             let content: String
-            if rawContent.count > 8000 {
-                content = rawContent.prefix(8000) + "\n... [tool result truncated, total \(rawContent.count) chars. For full data, call the tool with params like limit/filter/query to narrow the range.]"
+            // v7.2.3-fix25：同上——并行批路径同步提升到 48000
+            if rawContent.count > 48000 {
+                content = rawContent.prefix(48000) + "\n... [tool result truncated, total \(rawContent.count) chars. For full data, call the tool with params like limit/filter/query to narrow the range.]"
             } else {
                 content = rawContent
             }
@@ -2082,8 +2086,9 @@ final class ConversationStore: ObservableObject {
             // v2.9.49：工具结果截断 (>8000字符），防止单条工具结果 (如 browser.snapshot / injection.list）
             // 撑爆上下文导致后续请求巨慢。截断后加提示，模型可调用带分页/过滤参数的工具获取完整数据。
             let content: String
-            if rawContent.count > 8000 {
-                content = rawContent.prefix(8000) + "\n... [tool result truncated, total \(rawContent.count) chars. For full data, call the tool with params like limit/filter/query to narrow the range.]"
+            // v7.2.3-fix25：同上——并行批路径同步提升到 48000
+            if rawContent.count > 48000 {
+                content = rawContent.prefix(48000) + "\n... [tool result truncated, total \(rawContent.count) chars. For full data, call the tool with params like limit/filter/query to narrow the range.]"
             } else {
                 content = rawContent
             }
