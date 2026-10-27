@@ -2506,7 +2506,9 @@ struct MessageBubble: View {
         if name.hasPrefix("file.write") || name.hasPrefix("fs.write") { return "doc.text.fill" }
         if name.hasPrefix("file.") || name.hasPrefix("fs.") || name.hasPrefix("artifact.") || name.hasPrefix("project.") { return "folder" }
         if name.hasPrefix("vision.") || name == "read_image" || name == "image" { return "photo" }
-        if name.hasPrefix("memory") || name.hasPrefix("subagent.") || name == "agent" { return "brain.head.profile" }
+        // OpenMinis delegate=person.2（子agent是人形）；thinking 才是 brain——不撞
+        if name.hasPrefix("memory") { return "brain.head.profile" }
+        if name.hasPrefix("subagent.") || name == "agent" || name.hasPrefix("delegate") { return "person.2.fill" }
         if name == "text" || name == "plaintext" || name.hasPrefix("model.") { return "bubble.left" }
         if name == "think" || name == "thinking" { return "lightbulb.max" }
         if name.hasPrefix("code") || name.hasPrefix("py3-native") || name.hasPrefix("node-native") { return "chevron.left.forwardslash.chevron.right" }
@@ -2528,7 +2530,8 @@ struct MessageBubble: View {
         if name.hasPrefix("browser.") { return .orange }
         if name.hasPrefix("knowledge.") || name.hasPrefix("skills.") || name.hasPrefix("learn.") { return .green }
         if name.hasPrefix("device.") || name.hasPrefix("network.") || name.hasPrefix("location.") { return .teal }
-        if name.hasPrefix("app.") || name.hasPrefix("inject") || name.hasPrefix("control.") || name.hasPrefix("subagent.") || name == "agent" { return .purple }
+        if name.hasPrefix("app.") || name.hasPrefix("inject") || name.hasPrefix("control.") { return .purple }
+        if name.hasPrefix("subagent.") || name == "agent" || name.hasPrefix("delegate") { return Self.agentAccent }
         if name.hasPrefix("container.") || name.hasPrefix("package.") || name.hasPrefix("build.") { return .orange }
         if name.hasPrefix("vision.") || name == "read_image" || name == "image" { return .blue }
         if name.hasPrefix("memory") { return .purple }
@@ -2546,6 +2549,14 @@ struct MessageBubble: View {
         if toolName == "shell.exec" || toolName == "shell_exec" { return .blue }
         return .secondary
     }
+
+    /// v7.2.3-fix30：子 agent/delegate 电紫 accent——OpenMinis HelperAccent 原色
+    /// （亮 #734DED / 暗 #A385FF，"AI/tech"语义色，不撞红=错误、绿=成功）
+    private static let agentAccent = Color(UIColor { tc in
+        tc.userInterfaceStyle == .dark
+            ? UIColor(red: 0.64, green: 0.52, blue: 1.00, alpha: 1)
+            : UIColor(red: 0.45, green: 0.30, blue: 0.93, alpha: 1)
+    })
 
     private var toolBubble: some View {
         VStack(alignment: .leading, spacing: 6) {
@@ -2730,13 +2741,14 @@ struct MessageBubble: View {
                             .frame(maxWidth: .infinity, alignment: .leading)
                         }
                     } else {
+                        // v7.2.3-fix30：成功态蓝→绿（对齐 OpenMinis completed=green + 副行徽章已是绿）
                         Image(systemName: message.isError ? "exclamationmark.circle" : "checkmark.circle")
                             .font(.system(size: 14))
-                            .foregroundColor(message.isError ? .red : .blue)
+                            .foregroundColor(message.isError ? .red : .green)
                         Text(expanded ? L10n.t("i18n_1077") : L10n.t("i18n_1078"))
                             .font(.subheadline)
                             .fontWeight(.medium)
-                            .foregroundColor(message.isError ? .red : .blue)
+                            .foregroundColor(message.isError ? .red : .green)
                     }
                     Spacer()
                 }
