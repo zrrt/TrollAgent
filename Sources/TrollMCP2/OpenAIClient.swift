@@ -747,9 +747,11 @@ final class OpenAIClient {
                 pending = calls.map { ($0.id, $0.name) }
                 out.append(m)
             } else if m.role == "tool", let id = m.toolCallId {
+                // 只按 id 配对，不在此 flush——连续的 tool 消息各自配对不同的 toolCall，
+                // 此前每处理一条就 flush，会把"还没轮到的后续 toolCall"误补成 crash 占位符
+                // （多工具串行批第 2 个起结果全被顶替，正是用户实测"no result received"）。
                 pending.removeAll { $0.id == id }
                 out.append(m)
-                flushPending()  // 部分配对后仍有未配对 → 立即补（保持紧跟）
             } else {
                 flushPending()  // user/assistant(无calls)/system 前补
                 out.append(m)
