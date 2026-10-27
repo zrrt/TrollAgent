@@ -434,6 +434,10 @@ final class WebSearchTool: MCPTool {
 // MARK: - 网页抓取 (web.fetch，对齐 OpenClaw web_fetch 设计：搜索结果 → 抓原文）
 
 final class WebFetchTool: MCPTool {
+    // v7.2.3-fix24：fallback 路径共享 BrowserManager 单例 WKWebView——web.fetch 在
+    // 可合批白名单（并发），多个并发批同时 fallback 会竞争同一 WebView 崩溃/错乱。
+    // 全局串行锁把 navigate+sleep+text 整段锁住（直接 fetch 成功路径不受影响）。
+    private static let browserFallbackLock = NSLock()
     let definition = ToolDefinition(name: "web.fetch",
         summary: "Fetch and read text content from a web page URL. Use for: read an article/webpage without opening browser, scrape page text. Don't use for: search web (use web.search), interact with page (use browser.open). Example: user says 'read this webpage content' → fetch web page.",
         parameters: ["url": "Web page URL to read", "maxChars": "Max characters to return (default 4000)"], verified: true, category: "browser")
@@ -459,7 +463,10 @@ final class WebFetchTool: MCPTool {
         
         // v3.1.21: web.fetch failed自动 fallback 到内置浏览器
         // AI 根本不需要知道这个逻辑，直接调用 web.fetch 就能得到结果
+        // v7.2.3-fix24：fallback 整段串行化（BrowserManager 单例 WebView 非并发安全）
         if html == nil {
+            Self.browserFallbackLock.lock()
+            defer { Self.browserFallbackLock.unlock() }
             AuditLog.shared.log("web.fetch", detail: "Direct fetch failed, falling back to the built-in browser: \(urlString)")
             do {
                 // 1. 用内置浏览器打开网页
