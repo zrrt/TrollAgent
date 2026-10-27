@@ -439,7 +439,7 @@ final class WebFetchTool: MCPTool {
     // 全局串行锁把 navigate+sleep+text 整段锁住（直接 fetch 成功路径不受影响）。
     private static let browserFallbackLock = NSLock()
     let definition = ToolDefinition(name: "web.fetch",
-        summary: "Fetch and read text content from a web page URL. Use for: read an article/webpage without opening browser, scrape page text. Don't use for: search web (use web.search), interact with page (use browser.open). Example: user says 'read this webpage content' → fetch web page.",
+        summary: "Fetch and read text content from a web page URL. Use for: read an article/webpage without opening browser, scrape page text. Don't use for: search web (use web.search), interact with page (use browser.open). Extracts main content (article/main first, noise removed); if direct fetch fails it automatically falls back to the built-in browser. Example: user says 'read this webpage content' → fetch web page.",
         parameters: ["url": "Web page URL to read", "maxChars": "Max characters to return (default 4000)"], verified: true, category: "browser")
     func invoke(_ params: [String: Any]) throws -> [String: Any] {
         guard let urlString = params["url"] as? String, let url = URL(string: urlString) else {

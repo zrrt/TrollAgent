@@ -39,7 +39,7 @@ final class ShellExecTool: MCPTool {
         summary: "Run shell command (terminal/CLI) in unified Alpine environment (TrollRuntime). Params: command(required), timeout(default 20s/max 120), background, limit, full, offset. Use for: file ops, system info, network, text processing. Unified env details & iOS path binding: see the shell.exec section in the system prompt.",
         parameters: [
             "command": "Shell command to execute (required)",
-            "timeout": "Timeout seconds (default 20, max 120)",
+            "timeout": "Timeout seconds (default 20, max 120; commands past 20s are killed, exit 15/137). Download/installer commands (curl -o, wget, apk/pip/npm) cap 300s, other commands 120s. Jobs >60s prefer background=true.",
             "background": "Optional Bool: true=launch command in background, returns immediately with background_pid (no 20s kill). You must redirect the job's output yourself: `cmd > /ios_workspace/job.log 2>&1`. Then poll progress via short shell.exec (e.g. `tail -5 /ios_workspace/job.log`) and stop it with shell.stop pid=<pid> when you judge it stalled. Use for: installs/downloads/builds (>20s). Avoid reading big iOS files inside background commands (bridge stdin not usable).",
             "reset_cwd": "Optional Bool: reset working dir to default (default false)",
             "limit": "Optional Int: result string truncation cap (default 16000 chars, covers most analysis output; if not enough use full=true). If diagnostics output is trimmed and the body is invisible, pass limit=20000 or higher; full=true returns the complete untruncated result",
