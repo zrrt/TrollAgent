@@ -502,7 +502,7 @@ final class NetworkCaptureTool: MCPTool {
             "bundle_id": "Target App bundle_id — REQUIRED for start. e.g. com.xingin.discover",
             "limit": "Max requests to show (default 50)"
         ],
-        verified: true, category: "diagnose", prerequisites: ["inject enable NetworkTweak into target App before start", "start first and let the App generate network traffic before requests/analyze", "0 hits can be normal on custom-stack apps (小红书/抖音 etc.: QUIC/protobuf/private networking beyond NSURLSession) OR a real miss (app not restarted / no traffic) — report the reason, then decide retry vs TLS hook from actual evidence, don't give up on one 0-hit result", "TLS-layer capture: inject enable TLSHook — decrypts SSL_read/SSL_write plaintext to Workspace/network_capture/tls/*.log (hex+TEXT); works even where NSURLSession hook fails; read with artifact read, analyze via shell grep"])
+        verified: true, category: "diagnose", prerequisites: ["inject enable NetworkTweak into target App before start", "start first and let the App generate network traffic before requests/analyze; 0-hits recovery + TLSHook usage come back in the result hint when needed"])
 
     func invoke(_ params: [String: Any]) throws -> [String: Any] {
         let action = (params["action"] as? String) ?? "status"
@@ -597,7 +597,7 @@ final class NetworkCaptureTool: MCPTool {
                     out["warning"] = "capture not started: run network.capture action:start bundle_id:<target App> first, restart the App to generate traffic, then query"
                 } else {
                     out["no_requests_reason"] = "started but 0 hits. Possible: target App not restarted / no HTTP traffic / QUIC or private protocol / TLS encryption (NSURLSession hook misses)"
-                    out["next_step"] = "confirm App restarted and actually generating network traffic; if still 0, need TLS hook or protocol-layer solution, not a capture tool fault"
+                    out["next_step"] = "confirm App restarted and generating traffic; if still 0 (custom-stack apps 小红书/抖音: QUIC/protobuf/private networking): TLS layer — inject enable TLSHook (decrypts SSL_read/SSL_write to Workspace/network_capture/tls/*.log, read with artifact read), or switch to vpn.capture; not a tool fault"
                 }
             }
             return out

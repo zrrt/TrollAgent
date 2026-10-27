@@ -18,9 +18,7 @@ final class PackageTool: MCPTool {
             "dest": "required for unpack — output directory (will be created)"
         ],
         verified: false, category: "package", prerequisites: [
-            "path must be a real file (use shell.exec / shell to locate it first)",
-            "unpack writes to dest; ensure enough free space for extracted size",
-            "after unpack, read inner files with artifact read"
+            "path must be a real file (locate with shell.exec); ensure enough free space for the extracted size; after unpack read inner files with artifact read"
         ])
 
     func invoke(_ params: [String: Any]) throws -> [String: Any] {

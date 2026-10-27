@@ -1155,6 +1155,12 @@ final class InjectionManager {
             throw MCPError.failed("app not found: \(bundleId)")
         }
 
+        // 加密 app（cryptid=1）不能直接 hook —— 先 decrypt，避免 spawnRoot 85 / mmap 反复试错
+        let preExec = (NSDictionary(contentsOfFile: app.path + "/Info.plist")?["CFBundleExecutable"] as? String) ?? ""
+        if !preExec.isEmpty, let preMo = MachOAnalyzer.analyze(app.path + "/" + preExec), preMo.cryptID > 0 {
+            throw MCPError.failed("app encrypted (cryptid=\(preMo.cryptID)): run app command=decrypt → replace_decrypted → inject only after the app launches")
+        }
+
         // v3.0.89：iOS 17+ 自动切换到静态injected (ct_bypass 已失效）
         let majorVer = ProcessInfo.processInfo.operatingSystemVersion.majorVersion
         if majorVer >= 17 {

@@ -11,11 +11,9 @@ final class VpnTool: MCPTool {
             "command": "status / start / stop / cert / local_start / local_stop / logs"
         ],
         verified: false, category: "network", prerequisites: [
-            "VPN needs no trust injection — command:start captures directly (trust inject removed to avoid accidental black screens)",
-            "run cert first: generates Workspace/certs/TrollAgentCA.mobileconfig — user must install it in Settings and enable Full Trust (Settings→General→About→Certificate Trust Settings)",
-            "start = VPN mode (NEVPNManager + VpnTunnel appex). If appex not installed/loadable, fall back to local_start + WiFi manual proxy",
-            "after start, user uses the target app normally; logs appear in Workspace/network_capture/mitm/",
-            "0 logs expected if app uses QUIC only (rare on cellular/proxy setups)"
+            "VPN needs no trust injection — command:start captures directly",
+            "run cert first: generates Workspace/certs/TrollAgentCA.mobileconfig — user installs it in Settings and enables Full Trust (Settings→General→About→Certificate Trust Settings)",
+            "after start, user uses the target app normally; logs appear in Workspace/network_capture/mitm/ (appex failure → local_start fallback and 0-logs reason are returned in the result when they occur)"
         ])
 
     func invoke(_ params: [String: Any]) throws -> [String: Any] {
@@ -68,7 +66,11 @@ final class VpnTool: MCPTool {
                 sem.signal()
             }
             _ = sem.wait(timeout: .now() + 12)
-            return ["command": "start", "started": started, "note": note, "cert_reminder": "install+trust CA first if not done (vpn.capture command:cert)"]
+            var out: [String: Any] = ["command": "start", "started": started, "note": note, "cert_reminder": "install+trust CA first if not done (vpn.capture command:cert)"]
+            if !started {
+                out["next_step"] = "VPN appex not installed/loadable — fall back to local_start, then set WiFi HTTP proxy 127.0.0.1:18180 manually"
+            }
+            return out
 
         case "stop":
             vm.stopVpn()
@@ -96,9 +98,13 @@ final class VpnTool: MCPTool {
 
         case "logs":
             let dir = vm.mitmLogDir
-            let files = ((try? FileManager.default.contentsOfDirectory(atPath: dir)) ?? []).sorted().reversed()
-            let recent = Array(files.prefix(20))
-            return ["command": "logs", "log_dir": dir, "recent_files": recent, "total": (try? FileManager.default.contentsOfDirectory(atPath: dir))?.count ?? 0]
+            let allFiles = ((try? FileManager.default.contentsOfDirectory(atPath: dir)) ?? [])
+            let recent = Array(allFiles.sorted().reversed().prefix(20))
+            var out: [String: Any] = ["command": "logs", "log_dir": dir, "recent_files": recent, "total": allFiles.count]
+            if allFiles.isEmpty {
+                out["no_logs_reason"] = "0 logs if: CA not installed+Full Trusted, app uses QUIC/HTTP3 only (rare on cellular/proxy), or TLS-pinned; confirm capture started and user generated traffic"
+            }
+            return out
 
         default:
             return ["error": "unknown command '\(command)'. Use status / start / stop / cert / local_start / local_stop / logs"]

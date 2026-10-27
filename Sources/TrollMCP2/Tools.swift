@@ -321,7 +321,7 @@ final class ContainerExecTool: MCPTool {
             "path": "File path — REQUIRED for write/delete",
             "text": "Text to write — REQUIRED for write"
         ],
-        verified: true, category: "fs", prerequisites: ["resolve/write/delete bundle_id must match an installed app (confirm with app status)", "refresh has no prerequisite, callable anytime"])
+        verified: true, category: "fs", prerequisites: ["resolve/write/delete bundle_id must match an installed app (confirm with app status)"])
     
     func invoke(_ params: [String: Any]) throws -> [String: Any] {
         guard let command = params["command"] as? String else {
