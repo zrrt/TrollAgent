@@ -138,28 +138,6 @@ enum SeedKnowledgeData {
 - 典型坑：Operation not permitted / task_for_pid failed → 没开编辑 Entitlements 或覆盖安装未重应用。
 """),
 
-    ("内置-Alpine环境使用指南.md", """
-# TrollRuntime Alpine Linux 统一环境
-
-## 原理
-- 在 iOS 上跑真实 Alpine Linux 用户态（Asbestos 指令解释器 + 系统调用翻译，类似 WSL1）。
-- 统一环境：全部 shell 命令默认在此执行，无环境路由、无 runtime 参数。
-- 高频重型工具已 native 化直跑（ARM64 原生）：python3（py3-native）、node（node-native）、sqlite3、plutil、jtool2 —— 不经过解释器，速度快。nmap 无 iOS 原生版（统一环境用 nscan.py 脚本或 apk add nmap）。
-- 无需越狱，iOS 13+；沙盒内始终是 root（权限=宿主 App 的权限）。
-
-## 包管理（apk）
-- apk update（刷新索引）；apk add <包>（安装，如 python3、git、nmap、curl、vim）。
-- apk search <词>；apk del <包>；apk info 列已装。
-- 缺命令时自己 apk add 对应包即可（Alpine 仓库工具齐全）。
-- 文件可通过自动 bind 直接读写 iOS 目录（/ios_workspace /ios_containers /ios_system /ios_appdata /ios_appgroups）。
-
-## 限制（合理使用）
-- 解释器运行的工具性能低于原生；编译大工程、跑重活优先用 native 通道或 PC/云。
-- 无内核模块/设备驱动（沙盒限制）；它是「脚本/工具运行环境」，不是越狱。
-- 不能直接操作其他 App/系统底层（沙盒限制）；App 数据容器走 bind_app / bind_app_write。
-- 原生速度场景：用 ARM64 native 工具（py3-native / node-native / jtool2）或 PC/云。
-"""),
-
     ("内置-游戏破解-Unity与IL2CPP.md", """
 # Unity 游戏与 IL2CPP 破解
 
