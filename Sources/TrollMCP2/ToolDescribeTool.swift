@@ -95,6 +95,11 @@ final class ToolDescribeTool: MCPTool {
             "requires_jailbreak": d.requiresJailbreak,
             "requires_trollstore": d.requiresTrollStore,
         ]
+        if !d.prerequisites.isEmpty {
+            // 前置条件是硬约束：缺任何一步调用都会失败（工具返回带 next-step 指引）。
+            // 显式标 MANDATORY 并按编号列出，避免 AI 把前置当可选项跳过。
+            out["prerequisites"] = ["MANDATORY — complete in order or the call FAILS:"] + d.prerequisites.enumerated().map { "  \($0.offset + 1). \($0.element)" }
+        }
         if isWrapped {
             out["type"] = "BIG wrapped tool (must describe before calling)"
             out["subcommands"] = subcommands
