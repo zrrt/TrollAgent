@@ -1298,6 +1298,8 @@ final class ConversationStore: ObservableObject {
                     trail.insert(TrailStep.done(.think, "Thought", detail: String(th.prefix(300))), at: 0)
                 }
                 self.conversations[idx].messages[mi].trail = trail
+                // v7.4.0-fix68：trail 变更 = 中间修改 → dirty（否则 count 不变、persist 不重写，轨迹不落盘）
+                dirtySessions.insert(self.conversations[idx].id)
                 self.save()
             }
         }
@@ -2390,6 +2392,10 @@ final class ConversationStore: ObservableObject {
         }
         conv.updatedAt = Date()
         conversations[idx] = conv
+        // v7.4.0-fix68：压缩 = 结构性变更（删头部+插摘要）→ 强制整会话重写。
+        // 否则 count 减少走 count<last 重写已覆盖，但"头部全 isError 保留"边缘场景
+        // count+1 会走 append 尾部（重复最后一条、摘要丢失）。
+        dirtySessions.insert(conv.id)
         sortAndSave()
         // v7.1.109-peers：OpenMinis 压缩后重测借鉴——摘要写回后重算（用校准系数），
         // 仍超窗则提示（防"压缩白做"导致的连环压缩误读）
