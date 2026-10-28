@@ -1993,44 +1993,6 @@ final class ShellExecTool: MCPTool {
     
     
     
-    /// v3.1.33: iOS 原生 ps 命令——进程列表
-    /// v3.1.68: 真实进程表 (sysctl KERN_PROC_ALL），替换此前假数据桩 (AI 诊断 5："ps 是桩"属实）
-    private static func runIOSPs(_ command: String) -> [String: Any] {
-        var mib: [Int32] = [CTL_KERN, KERN_PROC, KERN_PROC_ALL, 0]
-        var size = 0
-        guard sysctl(&mib, u_int(mib.count), nil, &size, nil, 0) == 0, size > 0 else {
-            return ["command": command, "exit_code": 1, "stdout": "ps: cannot read process list (sysctl size)"]
-        }
-        let count = size / MemoryLayout<kinfo_proc>.size
-        guard count > 0, count < 2000 else {
-            return ["command": command, "exit_code": 1, "stdout": "ps: abnormal process count (\(count))"]
-        }
-        var procList = [kinfo_proc](repeating: kinfo_proc(), count: count)
-        guard sysctl(&mib, u_int(mib.count), &procList, &size, nil, 0) == 0 else {
-            return ["command": command, "exit_code": 1, "stdout": "ps: cannot read process list (sysctl read)"]
-        }
-        
-        var lines = ["PID   PPID  NAME"]
-        let n = min(count, 200)
-        for i in 0..<n {
-            let p = procList[i]
-            let pid = p.kp_proc.p_pid
-            let ppid = p.kp_eproc.e_ppid
-            let comm = withUnsafePointer(to: p.kp_proc.p_comm) { ptr in
-                String(cString: UnsafeRawPointer(ptr).assumingMemoryBound(to: CChar.self))
-            }
-            lines.append(String(format: "%5d  %5d  %@", pid, ppid, comm))
-        }
-        if count > n {
-            lines.append("... (total \(count) processes, showing first \(n)")
-        }
-        return [
-            "command": command,
-            "exit_code": 0,
-            "stdout": lines.joined(separator: "\n"),
-            "hint": "iOS native ps: real process table (sysctl), max 200 entries"
-        ]
-    }
     
     
     

@@ -139,26 +139,25 @@ enum SeedKnowledgeData {
 """),
 
     ("内置-Alpine环境使用指南.md", """
-# TrollRuntime Alpine Linux 用户态环境
+# TrollRuntime Alpine Linux 统一环境
 
 ## 原理
-- 在 iOS 上跑真实 Alpine Linux 用户态：ARM64 解释器（Asbestos——无 JIT，iOS W^X 合规）+ 系统调用翻译，类似 WSL1。
-- 不是虚拟机/容器：x86 指令由自研解释器 Asbestos（汇编写、direct-threading）逐条解释；
-  Linux 进程映射到 iOS 线程组，文件操作转发到 App 沙盒。
+- 在 iOS 上跑真实 Alpine Linux 用户态（Asbestos 指令解释器 + 系统调用翻译，类似 WSL1）。
+- 统一环境：全部 shell 命令默认在此执行，无环境路由、无 runtime 参数。
+- 高频重型工具已 native 化直跑（ARM64 原生）：python3（py3-native）、node（node-native）、nmap、sqlite3、plutil、jtool2 —— 不经过解释器，速度快。
 - 无需越狱，iOS 13+；沙盒内始终是 root（权限=宿主 App 的权限）。
 
 ## 包管理（apk）
 - apk update（刷新索引）；apk add <包>（安装，如 python3、git、nmap、curl、vim）。
 - apk search <词>；apk del <包>；apk info 列已装。
 - 缺命令时自己 apk add 对应包即可（Alpine 仓库工具齐全）。
-- 文件可通过「文件 App」挂载点互访；自动 bind mount 指定的 iOS 目录。
+- 文件可通过自动 bind 直接读写 iOS 目录（/ios_workspace /ios_containers /ios_system /ios_appdata /ios_appgroups）。
 
-## 限制（不要在解释器里硬做）
-- 纯软件解释，性能远慢于原生；别编译大工程、别跑重活。
-- 无 JIT（iOS 非 Safari 不允许）；部分 syscall 未实现，无内核模块/设备驱动。
-- Node.js 长期兼容差（未实现的 x86 指令，易崩）；复杂程序可能跑不起来。
-- 不能直接操作其他 App/系统底层（沙盒限制）；它是「脚本/工具运行环境」，不是越狱。
-- 想要原生速度：用 ARM64 原生运行时（TrollRuntime）或云端 Linux，本 App 也可走 SSH 到电脑/云。
+## 限制（合理使用）
+- 解释器运行的工具性能低于原生；编译大工程、跑重活优先用 native 通道或 PC/云。
+- 无内核模块/设备驱动（沙盒限制）；它是「脚本/工具运行环境」，不是越狱。
+- 不能直接操作其他 App/系统底层（沙盒限制）；App 数据容器走 bind_app / bind_app_write。
+- 原生速度场景：用 ARM64 native 工具（py3-native / node-native / nmap / jtool2）或 PC/云。
 """),
 
     ("内置-游戏破解-Unity与IL2CPP.md", """
