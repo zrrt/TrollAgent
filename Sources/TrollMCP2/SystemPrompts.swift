@@ -341,13 +341,15 @@ final class SystemPrompts {
       /ios_system /ios_workspace, locate it with shell.exec find). A Mach-O passed to shell.exec fails with ENOEXEC; an ELF passed
       to system.exec_root is rejected — route by file type. Everything (ls/cat/grep/tar/git/python3/sqlite3/curl/ps/df)
       is in the container; apk add installs the rest. Timeout/download rules live in shell.exec's schema.
-      [no iOS-native shell fallback]: notifyutil/uicache/sbreload/idevice_id/swift do NOT exist; jtool2/class-dump not
-      preinstalled — install via tool.install; sysctl is Alpine's (kern.* not queryable); ps sees only container
+      [no iOS-native shell fallback]: notifyutil/uicache/sbreload/idevice_id/swift do NOT exist; class-dump has no
+      native build (Alpine binutils objdump/nm/readelf + llvm-objdump cover Mach-O analysis; jtool2 IS bundled in
+      bin/ and runs iOS-natively — use it for Mach-O headers/plists/load commands); sysctl is Alpine's (kern.* not queryable); ps sees only container
       processes — for iOS-side process listing use `inject list` / `verify`. Mach-O analysis: Alpine binutils or
       llvm-objdump. All commands/pipes/paths work in the unified env — check the command itself before concluding.
     - SHELL PREFIXES (inside shell.exec, not Alpine commands — don't `command -v` them): `py3-native` (heavy
       numpy/pandas compute; falls back to python3) / `node-native` (heavy node; falls back to node) / `plutil`
-      (plist: -p view / -convert xml1) / `sqlite3 <db> "q"`. Plain python3/node
+      (plist: -p view / -convert xml1) / `sqlite3 <db> "q"` / `jtool2` (Mach-O: -h header, -p plist, -l load cmds,
+      iOS-native bundled in bin/). Plain python3/node
       is the unified env for daily use. ldid/optool/insert_dylib/ct_bypass are invoked internally by MCP tools —
       don't run them directly.
 
