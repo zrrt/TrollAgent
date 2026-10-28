@@ -30,7 +30,7 @@ enum BigToolCatalog {
 final class ToolDescribeTool: MCPTool {
     let definition = ToolDefinition(
         name: "tool.describe",
-        summary: "Load the full description of a BIG wrapped tool (its subcommands, every parameter, prerequisites) BEFORE calling it. Use for: ALWAYS call this first when about to use a big tool you have not loaded — app / inject / control / browser / device / memory / network.capture / vpn.capture / automation / project / container / github. Don't use for: list what tools exist (use system.overview); or small/simple tools you can call directly (web.search / web.fetch / wifi / location / macro / db / file / server / ssh / reminder / package / shell.exec / system.exec_root / download / tool.install / skills.* / subagent.* / system.overview / bind_app / app_write_file …). Example: before injecting a dylib → tool.describe name:\"inject\".",
+        summary: "Load the full description of a BIG wrapped tool (its subcommands, every parameter, prerequisites) BEFORE calling it. Use for: ALWAYS call this first when about to use a big tool you have not loaded — app / inject / control / browser / device / memory / network.capture / vpn.capture / automation / project / container / github. Don't use for: list what tools exist (use system.overview); or small/simple tools you can call directly (small: wifi / location / macro / db / file / server / ssh / reminder / package / artifact / assistant_memory / knowledge / diagnose / rescue / verify; simple: shell.exec / system.exec_root / web.search / web.fetch / download / tool.install / skills.* / subagent.* / system.overview / bind_app / app_write_file …). Example: before injecting a dylib → tool.describe name:\"inject\".",
         parameters: [
             "name": "Tool name to describe (required), exactly as shown in the schema — e.g. \"inject\", \"app\", \"control\", \"container\", \"shell.exec\", \"web.search\"."
         ],
@@ -79,7 +79,10 @@ final class ToolDescribeTool: MCPTool {
             s = s.replacingOccurrences(of: "'", with: "")
             let parts = s.contains("|") ? s.components(separatedBy: "|") : s.components(separatedBy: "/")
             return parts.map {
-                $0.trimmingCharacters(in: .whitespacesAndNewlines)
+                // 每段取 "(" 前的子命令名——描述可能带说明（如 memory: "attach (confirms injected and connected…) / search (first scan)…"），
+                // 若按整段过滤会丢掉 attach/search/refine/write/freeze/frozen 等核心子命令（只留无括号的项）。
+                // 取括号前单词即可同时兼容纯枚举（control: "inject / status / …"）与带说明枚举（memory 式）。
+                $0.split(separator: "(").first?.trimmingCharacters(in: .whitespacesAndNewlines) ?? ""
             }.filter { !$0.isEmpty && !$0.contains("(") && !$0.contains(")") }
         }()
 

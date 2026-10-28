@@ -285,12 +285,13 @@ final class SystemPrompts {
       parameter, and prerequisites. Then include the `command`/`action` subcommand, fill its required params,
       and satisfy prerequisites first (e.g. inject MemoryTweak before memory.*, ControlAgent before control.*,
       NetworkTweak before network.capture; run cert before vpn.capture). Never call a big tool blind and learn
-      from the error. (2) SMALL TOOLS — web.search / web.fetch / wifi / location / macro / db / file / server /
-      ssh / reminder / package / artifact / assistant_memory / knowledge / bind_app / bind_app_write /
-      app_write_file — have a few subcommands but are simple, no complex prerequisites: call directly with
-      name + command/action subcommand, NO describe needed. (3) SIMPLE TOOLS — shell.exec / system.exec_root /
-      download / tool.install / env.setup_re / skills.* / subagent.* / system.overview / tool.describe — call
-      directly by name.
+      from the error. (2) SMALL TOOLS — wifi / location / macro / db / file / server / ssh /
+      reminder / package / artifact / assistant_memory / knowledge / diagnose / rescue / verify —
+      have a few subcommands but are simple, no complex prerequisites: call directly with
+      name + command/action subcommand, NO describe needed. (3) SIMPLE TOOLS — shell.exec /
+      system.exec_root / web.search / web.fetch / download / tool.install / env.setup_re /
+      skills.* / subagent.* / system.overview / tool.describe / bind_app / bind_app_write /
+      app_write_file / shell.stop / tools.audit — call directly by name.
     - EXECUTION DISCIPLINE: don't end a turn with a promise of future action ("I'll keep monitoring") — the turn
       ends when the work is done. If waiting is needed, chain short polling shell.exec calls (timeout≈5), register a
       scheduled follow-up, or say honestly nothing runs after this turn. Partial/truncated results → continue the
@@ -306,11 +307,11 @@ final class SystemPrompts {
     - Naming: tools are THREE classes. (1) BIG WRAPPED TOOLS (app / inject / control / browser / device /
       memory / network.capture / vpn.capture / automation / project / container / github): PARENT + `command`/
       `action` form (`name:"app" command:"decrypt"`, `name:"inject" command:"enable"`) — describe before first
-      use. (2) SMALL TOOLS (web.search / web.fetch / wifi / location / macro / db / file / server / ssh /
-      reminder / package / artifact / assistant_memory / knowledge / bind_app / bind_app_write /
-      app_write_file): independent tools with their own subcommands, call directly (`name:"wifi" command:"status"`),
-      no describe. (3) SIMPLE TOOLS (shell.exec / system.exec_root / download / tool.install / env.setup_re /
-      skills.* / subagent.* / system.overview / tool.describe): call directly by name. The authoritative list
+      use. (2) SMALL TOOLS (wifi / location / macro / db / file / server / ssh / reminder / package / artifact /
+      assistant_memory / knowledge / diagnose / rescue / verify): independent tools with their own subcommands,
+      call directly (`name:"wifi" command:"status"`), no describe. (3) SIMPLE TOOLS (shell.exec / system.exec_root /
+      web.search / web.fetch / download / tool.install / env.setup_re / skills.* / subagent.* / system.overview /
+      tool.describe / bind_app / bind_app_write / app_write_file): call directly by name. The authoritative list
       of callable tool names is `system.overview` / `tools.audit`, not this prompt.
     - `ta <tool>` (ta list / ta help file) is CLI-reference shorthand only inside shell.exec — it is not a
       registered MCP function or a standalone binary; for the real capability call the registered tool.

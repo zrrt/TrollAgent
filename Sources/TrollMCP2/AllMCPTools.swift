@@ -34,7 +34,7 @@ final class SystemOverviewTool: MCPTool {
             "system": "TrollAgent",
             "version": ver,
             "total_tools": names.count,
-            "important_note": "Tools are THREE classes. (1) BIG WRAPPED TOOLS — app / inject / control / browser / device / memory / network.capture / vpn.capture / automation / project / container / github: many subcommands + prerequisites; run `tool.describe name:\"<tool>\"` before first use this session, then call with `command`/`action` subcommand. (2) SMALL TOOLS — web.search / web.fetch / wifi / location / macro / db / file / server / ssh / reminder / package / artifact / assistant_memory / knowledge / bind_app / bind_app_write / app_write_file: independent tools with their own subcommands; call directly (e.g. name:\"wifi\" command:\"status\"), no describe. (3) SIMPLE TOOLS — shell.exec / system.exec_root / download / tool.install / env.setup_re / skills.* / subagent.* / system.overview / tool.describe: call directly by name.",
+            "important_note": "Tools are THREE classes. (1) BIG WRAPPED TOOLS — app / inject / control / browser / device / memory / network.capture / vpn.capture / automation / project / container / github: many subcommands + prerequisites; run `tool.describe name:\"<tool>\"` before first use this session, then call with `command`/`action` subcommand. (2) SMALL TOOLS — wifi / location / macro / db / file / server / ssh / reminder / package / artifact / assistant_memory / knowledge / diagnose / rescue / verify: independent tools with their own subcommands; call directly (e.g. name:\"wifi\" command:\"status\"), no describe. (3) SIMPLE TOOLS — shell.exec / system.exec_root / web.search / web.fetch / download / tool.install / env.setup_re / skills.* / subagent.* / system.overview / tool.describe / bind_app / bind_app_write / app_write_file: call directly by name.",
             "tool_categories": cats,
             "ios_version_support": [
                 "trollstore_supported": [
@@ -84,7 +84,7 @@ final class SystemOverviewTool: MCPTool {
                 ]
             ],
             "tips": [
-                "Big tools (app/inject/control/browser/device/memory/network.capture/vpn.capture/automation/project/container/github): tool.describe before first use, then name + command/action. Small tools (web.search/wifi/location/macro/db/file/server/ssh/reminder/package/...): call directly with their subcommand. Simple tools (shell.exec, web.fetch, ...): call directly.",
+                "Big tools (app/inject/control/browser/device/memory/network.capture/vpn.capture/automation/project/container/github): tool.describe before first use, then name + command/action. Small tools (wifi/location/macro/db/file/server/ssh/reminder/package/...): call directly with their subcommand. Simple tools (shell.exec, web.search, web.fetch, ...): call directly.",
                 "If you're stuck after 2 tries, ask the user for clarification.",
                 "Don't repeat the same tool with the same params — it's a loop.",
                 "Before injecting dylib, call device + command:info (or device.info) to detect environment.",

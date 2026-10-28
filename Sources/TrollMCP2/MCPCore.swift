@@ -585,7 +585,7 @@ public final class ToolRegistry: ObservableObject {
             // 是否大工具：查权威白名单 BigToolCatalog（ToolDescribeTool.swift）。
             // 只有真正复杂的大工具（app/inject/control/browser/device/memory/network.capture/
             // vpn.capture/automation/project/container/github）初始 schema 精简、调用前必须
-            // tool.describe。小工具（web.search/web.fetch/wifi/location/macro/db/file/server/ssh/
+            // tool.describe。小工具（wifi/location/macro/db/file/server/ssh/
             // reminder/package 等）虽有 command/action 选择器但说明短、无复杂前置——保留完整
             // summary 直接调，不为它们绕 describe。简单工具（shell.exec 等）同样直接调。
             let isWrapped = BigToolCatalog.isWrapped(def.name)
