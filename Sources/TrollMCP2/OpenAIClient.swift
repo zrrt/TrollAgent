@@ -144,9 +144,12 @@ final class OpenAIClient {
         return nil
     }
     /// OpenMinis 图片 token 规则：ceil(w/32)*ceil(h/32)，cap 2048×2048，min 85；解析失败 fallback 2000
+    /// v7.4.0-fix69：只解码 base64 前缀 4KB（PNG IHDR 在前 24B、JPEG SOF 在头几 KB）——
+    /// 不整图解码（4K 图 base64 ~10MB），否则每次 save/UI 重算/发送估算都吃整图解码
     private static func imageTokenCount(_ dataURL: String) -> Int {
-        guard let b64 = dataURL.split(separator: ",").last,
-              let data = Data(base64Encoded: String(b64)),
+        guard let b64 = dataURL.split(separator: ",").last else { return 2000 }
+        let prefix = String(b64.prefix(4096))
+        guard let data = Data(base64Encoded: prefix),
               let (w, h) = imageDimensions(data) else { return 2000 }
         let maxEdge = 2048.0
         let scale = max(Double(w), Double(h)) > maxEdge ? maxEdge / max(Double(w), Double(h)) : 1.0
