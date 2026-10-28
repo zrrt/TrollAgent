@@ -1670,6 +1670,15 @@ struct MessageBubble: View {
             revealedCount = message.content.count
             return
         }
+        // v7.2.5-fix63：长消息（≥4000 字符）不打字机——命令结果/工具长回复直出全文。
+        // 打字机 0.02s tick 每帧全量 ContentBlocks.split(正则)，长文本主线程持续高压；
+        // 多消息同时打字（长会话）→ 主线程风暴 → 白屏（用户滑一下触发重建才恢复）。
+        // 打字机保留给短消息（体验不变），长消息跳过是纯性能修复。
+        if message.content.count >= 4000 {
+            revealedCount = message.content.count
+            Self.markDoneTyping(message.id)
+            return
+        }
         // v3.5.4：MessageBubble 是 SwiftUI 结构体(值类型)，不能用 [weak self]；定时器 onDisappear 会 invalidate
         typeTimer = Timer.scheduledTimer(withTimeInterval: 0.02, repeats: true) { _ in
             DispatchQueue.main.async {
@@ -2021,7 +2030,17 @@ struct MessageBubble: View {
     /// v7.2.3-fix10：配色收敛——只要顶层"头"键（data/cwd 等）绿色，
     /// 其余全部白色（用户实测三色太花）。解析失败返回 nil → 调用方回退原文纯文本。
     /// 限长 20000 字符，超大 JSON 截断标注，避免渲染卡顿。
+    /// v7.2.5-fix63：结果缓存（content 即 key）——LazyVStack 离屏重建不再重跑
+    /// JSONSerialization + 正则着色（大 JSON 一次几百 ms 的主线程开销）。上限 128。
+    private static var jsonHighlightCache: [String: AttributedString] = [:]
     private static func jsonHighlighted(from text: String) -> AttributedString? {
+        if let hit = jsonHighlightCache[text] { return hit }
+        guard let result = jsonHighlightedRaw(from: text) else { return nil }
+        if jsonHighlightCache.count >= 128 { jsonHighlightCache.removeAll(keepingCapacity: true) }
+        jsonHighlightCache[text] = result
+        return result
+    }
+    private static func jsonHighlightedRaw(from text: String) -> AttributedString? {
         // v7.2.3-fix11：先剥 ANSI——shell 输出带颜色码时 JSONSerialization 无法解析
         let cleaned = Self.sanitizeForDisplay(text)
         guard let data = cleaned.data(using: .utf8),

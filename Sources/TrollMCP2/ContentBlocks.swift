@@ -14,7 +14,18 @@ struct ContentBlock: Equatable {
 }
 
 enum ContentBlocks {
+    // v7.2.5-fix63：split 结果缓存——打字机每 tick / LazyVStack 离屏重建都会重跑
+    // 正则分块（长消息成本高）；同一内容只算一次。容量上限 128，超限整体清空
+    // （内容即 key，天然近似 LRU：重复出现的旧消息自动命中）。
+    private static var splitCache: [String: [ContentBlock]] = [:]
     static func split(_ text: String) -> [ContentBlock] {
+        if let hit = splitCache[text] { return hit }
+        let result = splitRaw(text)
+        if splitCache.count >= 128 { splitCache.removeAll(keepingCapacity: true) }
+        splitCache[text] = result
+        return result
+    }
+    private static func splitRaw(_ text: String) -> [ContentBlock] {
         var blocks: [ContentBlock] = []
         var textBuf = ""
         let chars = Array(text)
