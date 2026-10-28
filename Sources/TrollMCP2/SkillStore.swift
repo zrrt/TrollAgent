@@ -78,7 +78,7 @@ final class SkillStore {
             [
                 "name": L10n.t("i18n_880"),
                 "summary": "inject a dylib into an iOS app, check injection status, remove injection. Use for: enable/disable/verify tweak injection into target app. Don't use for: package inspection (use package), memory hacking (use memory). Example: user wants to inject a tweak dylib into a game.",
-                "instruction": "当用户要求对 iOS App 做 dylib 注入/查看注入状态/移除注入时执行本技能：\n## 适用范围\n- 注入 .dylib 到指定 App、查询注入状态、移除注入、注入后验证\n## 工作流\n1. 先只读探测，不直接动手：inject status（或 inject list）确认目标与已注入项；app status bundle_id:<目标> 确认 App 存在\n2. 明确目标 App 的 bundle_id 与 dylib 的绝对路径（勿用占位符/相对路径）\n3. 执行注入：inject enable bundle_id:<目标> ...；参数不确定先 tool.describe name:"inject"\n4. 若需签名/信任处理：确认 Resources/bin/ldid 可用；bundle 内工具 shell 直接调不通时，从 App 进程或经自动 bind 处理（iOS 路径会被挂载为 /ios_* 供 Alpine 直读），不要硬跑\n5. 验证：重启目标 App（app restart bundle_id:<目标>），用 inject verify 或 inject status 检查是否生效\n## 输出要求\n- 给出注入目标 bundle_id、dylib 绝对路径、注入结果、验证证据（状态/日志）\n## 禁止事项\n- 未确认目标与 dylib 路径前禁止注入\n- 禁止覆盖原二进制；注入/替换前保留备份\n- 禁止静默跨环境手动改文件（走自动 bind 直读直写，勿手动 cp 进 Alpine /tmp）\n## 自检\n- [ ] 注入前是否只读探测了状态？ [ ] 是否用绝对路径？ [ ] 是否验证了注入结果？",
+                "instruction": "当用户要求对 iOS App 做 dylib 注入/查看注入状态/移除注入时执行本技能：\n## 适用范围\n- 注入 .dylib 到指定 App、查询注入状态、移除注入、注入后验证\n## 工作流\n1. 先只读探测，不直接动手：inject status（或 inject list）确认目标与已注入项；app status bundle_id:<目标> 确认 App 存在\n2. 明确目标 App 的 bundle_id 与 dylib 的绝对路径（勿用占位符/相对路径）\n3. 执行注入：inject enable bundle_id:<目标> ...；参数不确定先 tool.describe name:\"inject\"\n4. 若需签名/信任处理：确认 Resources/bin/ldid 可用；bundle 内工具 shell 直接调不通时，从 App 进程或经自动 bind 处理（iOS 路径会被挂载为 /ios_* 供 Alpine 直读），不要硬跑\n5. 验证：重启目标 App（app restart bundle_id:<目标>），用 inject verify 或 inject status 检查是否生效\n## 输出要求\n- 给出注入目标 bundle_id、dylib 绝对路径、注入结果、验证证据（状态/日志）\n## 禁止事项\n- 未确认目标与 dylib 路径前禁止注入\n- 禁止覆盖原二进制；注入/替换前保留备份\n- 禁止静默跨环境手动改文件（走自动 bind 直读直写，勿手动 cp 进 Alpine /tmp）\n## 自检\n- [ ] 注入前是否只读探测了状态？ [ ] 是否用绝对路径？ [ ] 是否验证了注入结果？",
             ],
             [
                 "name": L10n.t("i18n_881"),
@@ -103,17 +103,17 @@ final class SkillStore {
             [
                 "name": L10n.t("i18n_885"),
                 "summary": "modify process memory of a running app (coins, values) like GameGuardian/H5GG. Use for: change numeric values in games/apps at runtime. Don't use for: static dylib injection (use inject). Example: user wants to modify a game's coin count.",
-                "instruction": "当用户要求修改运行中进程的内存值（如游戏金币/数值）时执行本技能：\n## 适用范围\n- 搜索内存数值、修改、锁定，作用于指定进程\n## 工作流\n1. 用 memory 工具操作；参数参考 tool.describe name:"memory"\n2. 先确认目标进程在运行（app status bundle_id:<目标> 或 memory status）\n3. 搜索当前值 → 触发数值变化 → 再次搜索缩小范围（经典 fuzzy 流程）\n4. 确认目标地址后修改/锁定；验证修改生效（回读或观察游戏内变化）\n## 输出要求\n- 给出目标进程、搜索过程、修改地址/值、验证结果\n## 禁止事项\n- 目标进程未运行时不硬搜；先启动\n- 修改前后记录原值，便于回退\n## 自检\n- [ ] 是否确认了目标进程在运行？ [ ] 是否验证了修改生效？",
+                "instruction": "当用户要求修改运行中进程的内存值（如游戏金币/数值）时执行本技能：\n## 适用范围\n- 搜索内存数值、修改、锁定，作用于指定进程\n## 工作流\n1. 用 memory 工具操作；参数参考 tool.describe name:\"memory\"\n2. 先确认目标进程在运行（app status bundle_id:<目标> 或 memory status）\n3. 搜索当前值 → 触发数值变化 → 再次搜索缩小范围（经典 fuzzy 流程）\n4. 确认目标地址后修改/锁定；验证修改生效（回读或观察游戏内变化）\n## 输出要求\n- 给出目标进程、搜索过程、修改地址/值、验证结果\n## 禁止事项\n- 目标进程未运行时不硬搜；先启动\n- 修改前后记录原值，便于回退\n## 自检\n- [ ] 是否确认了目标进程在运行？ [ ] 是否验证了修改生效？",
             ],
             [
                 "name": L10n.t("i18n_886"),
                 "summary": "get device info, probe, fake/restore location, advertising ID, IDFV. Use for: device details, spoofing location, manage device state. Example: user wants to check device info or fake location.",
-                "instruction": "当用户要求查看设备信息/模拟定位/设备状态时执行本技能：\n## 适用范围\n- 设备信息查询、定位模拟/还原、广告标识、设备探测\n## 工作流\n1. 用 device / location 工具；参数参考 tool.describe name:"device" / name:"location"\n2. 查询：device info（设备信息）、location get（当前定位）\n3. 需要模拟定位：先记录当前状态，再设置新位置；用完可还原\n4. 涉及广告标识/IDFV 时按工具子命令操作\n## 输出要求\n- 给出查询结果（设备/定位）或修改前后对比\n## 禁止事项\n- 模拟定位前先记录原状态，便于还原\n- 不擅自改设备全局配置，围绕用户明确要求操作\n## 自检\n- [ ] 是否记录了修改前状态？ [ ] 是否验证了修改生效？",
+                "instruction": "当用户要求查看设备信息/模拟定位/设备状态时执行本技能：\n## 适用范围\n- 设备信息查询、定位模拟/还原、广告标识、设备探测\n## 工作流\n1. 用 device / location 工具；参数参考 tool.describe name:\"device\" / name:\"location\"\n2. 查询：device info（设备信息）、location get（当前定位）\n3. 需要模拟定位：先记录当前状态，再设置新位置；用完可还原\n4. 涉及广告标识/IDFV 时按工具子命令操作\n## 输出要求\n- 给出查询结果（设备/定位）或修改前后对比\n## 禁止事项\n- 模拟定位前先记录原状态，便于还原\n- 不擅自改设备全局配置，围绕用户明确要求操作\n## 自检\n- [ ] 是否记录了修改前状态？ [ ] 是否验证了修改生效？",
             ],
             [
                 "name": L10n.t("i18n_887"),
                 "summary": "manage apps: launch/stop/restart/status, install/uninstall, cache, dependencies, duplicate, diagnose startup/injection. Use for: control and troubleshoot a target app. Example: user wants to restart an app or check why it crashes on launch.",
-                "instruction": "当用户要求启动/停止/重启/安装/诊断某个 App 时执行本技能：\n## 适用范围\n- 启动、停止、重启、状态查询、安装卸载、缓存/依赖、启动诊断\n## 工作流\n1. 用 app 工具管理；参数参考 tool.describe name:"app"\n2. 明确目标 App 的 bundle_id\n3. 常规操作：app launch/stop/restart/status bundle_id:<目标>\n4. 崩溃/启动失败：diagnose startup bundle_id:<目标>（或 injection）定位原因\n5. 安装/卸载走 app install/uninstall，涉及替换先备份\n## 输出要求\n- 给出目标 App、执行的操作、返回状态、诊断证据\n## 禁止事项\n- 未确认 bundle_id 前不批量误操作\n- 诊断崩溃用 diagnose，不用不可靠的二进制 grep\n## 自检\n- [ ] 是否明确了 bundle_id？ [ ] 是否验证了操作结果？",
+                "instruction": "当用户要求启动/停止/重启/安装/诊断某个 App 时执行本技能：\n## 适用范围\n- 启动、停止、重启、状态查询、安装卸载、缓存/依赖、启动诊断\n## 工作流\n1. 用 app 工具管理；参数参考 tool.describe name:\"app\"\n2. 明确目标 App 的 bundle_id\n3. 常规操作：app launch/stop/restart/status bundle_id:<目标>\n4. 崩溃/启动失败：diagnose startup bundle_id:<目标>（或 injection）定位原因\n5. 安装/卸载走 app install/uninstall，涉及替换先备份\n## 输出要求\n- 给出目标 App、执行的操作、返回状态、诊断证据\n## 禁止事项\n- 未确认 bundle_id 前不批量误操作\n- 诊断崩溃用 diagnose，不用不可靠的二进制 grep\n## 自检\n- [ ] 是否明确了 bundle_id？ [ ] 是否验证了操作结果？",
             ],
             // v4.4.11(P0): 环境提示词瘦身——SHELL 段"实测边界知识"拆到此技能, 遇到时 skills.read 按需加载
             // v7.1.77: name 固定英文标识（不再 L10n.t）——提示词/搜索按固定名引用，避免中文界面=中文名、
