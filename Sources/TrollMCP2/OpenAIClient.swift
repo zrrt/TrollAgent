@@ -87,6 +87,70 @@ final class OpenAIClient {
     private let overallBudget: TimeInterval = 220
     /// v2.9.20：本轮推理强度 (0=低 1=中 2=高 3=最高xhigh 4=极限max 5=关闭none），由 ChatView 传入并真实作用于请求。
     var currentReasoningLevel = 0  // v2.9.49：默认 low (medium/high 推理显著增加延迟，对标 Codex CLI 默认 low）
+    // —— v7.3.0-scalpel：手术刀式上下文管理（对齐 Claude Code 五层压缩瀑布）——
+    // 预算模型: |S系统|+|H历史|+|T工具|+|R提醒| ≤ W；S+T+R 为固定开销，H 是唯一压缩对象。
+    // T1 重排保缓存：无 prompt caching 的中转不适用，稳定前缀在前即等价（现有顺序已满足）。
+    // T2 归档最旧(13K 缓冲) / T3 分节渐进退化(75%+) / T4 全量摘要(窗口−13K) / T5 413 页错误恢复。
+    private static let defaultContextWindow = 128_000        // W 默认（无实测窗口时）
+    private static let fixedOverheadTokens = 6_000           // 系统提示 + 工具定义固定开销估算
+    private static let snipBufferTokens = 13_000             // T2: 超目标缓冲触发（Claude 同款）
+    private static let pressureShortened: Double = 0.60      // 压力分级阈值（Claude: 60/75/90）
+    private static let pressureAggressive: Double = 0.75
+    private static let pressureCompact: Double = 0.90
+    private static let tokenSaverMaxChars = 4_000            // tokenSaverOutput: 大结果压缩阈值
+    private static let tokenSaverHeadChars = 2_000           // 保头部
+    private static let tokenSaverTailChars = 1_000           // 保尾部
+    private static let reactiveLastKeep = 4                  // T5: 413 只保最近 4 条（Claude 同款）
+    private static let autoCompactThrottle: TimeInterval = 30  // T4 自动压缩防抖（秒）
+    /// T5 单次守卫——413 激进压缩只做一次，防止重试循环
+    private var hasAttemptedReactiveCompact = false
+    /// T4 自动压缩防抖——同会话 30s 内不重复自动触发
+    private var lastAutoCompactAt: Date? = nil
+
+    /// Claude Code token 记账中间级：字符启发式 t̂=⌈ℓ/4⌉+1（~85% 准确、保守高估——超估安全）
+    /// tool_use 块 ℓ 含工具名+JSON 输入；图片按固定 ~2K token 估算（Claude 同款三级）
+    private func estimateTokens(_ m: ChatMessage) -> Int {
+        var l = m.content.count + (m.thinking?.count ?? 0)
+        if let calls = m.toolCalls {
+            for tc in calls { l += tc.name.count + tc.arguments.count }
+        }
+        if let imgs = m.imageDataURLs, !imgs.isEmpty { l += imgs.count * 2_000 }
+        return l / 4 + 1
+    }
+    private func estimateTotalTokens(_ msgs: [ChatMessage]) -> Int {
+        msgs.reduce(0) { $0 + estimateTokens($1) }
+    }
+    /// 当前模型上下文窗口：优先实测（RuntimeWindowTracker 动态收敛），无则默认
+    private func contextWindowTokens() -> Int {
+        RuntimeWindowTracker.shared.measuredWindow(for: config.model) ?? Self.defaultContextWindow
+    }
+    /// 历史可用预算 = W − 固定开销 − T2 缓冲（T2 在超缓冲时先归档，不是到 W 才动手）
+    private func historyTokenBudget() -> Int {
+        max(8_000, contextWindowTokens() - Self.fixedOverheadTokens - Self.snipBufferTokens)
+    }
+    /// 压力百分比（0-100），用于分级与提醒注入
+    private func tokenPressurePercent(_ msgs: [ChatMessage]) -> Int {
+        let used = Double(estimateTotalTokens(msgs) + Self.fixedOverheadTokens)
+        let w = Double(contextWindowTokens())
+        guard w > 0 else { return 0 }
+        return min(100, Int((used / w * 100).rounded()))
+    }
+    private enum ContextPressure { case normal, shortened, aggressive, compact }
+    private func pressureLevel(_ msgs: [ChatMessage]) -> ContextPressure {
+        let p = Double(tokenPressurePercent(msgs)) / 100.0
+        if p >= Self.pressureCompact { return .compact }
+        if p >= Self.pressureAggressive { return .aggressive }
+        if p >= Self.pressureShortened { return .shortened }
+        return .normal
+    }
+    /// 压力提醒注入（对齐 Claude system-reminder 的 hot 注入：不进系统提示缓存区，
+    /// 附加到最新 user 消息尾部——不新增 role 序列，保持消息流自洽）
+    private func appendPressureHint(to msgs: inout [ChatMessage], pct: Int) {
+        guard let idx = msgs.lastIndex(where: { $0.role == "user" }),
+              !msgs[idx].content.contains("[token pressure") else { return }
+        let mode = pct >= 90 ? "上下文接近上限，即将自动压缩" : (pct >= 75 ? "请显著精简输出" : "请精简输出，减少无关工具调用")
+        msgs[idx].content += "\n\n[token pressure \(pct)% — \(mode)]"
+    }
 
     init(_ config: ModelConfig) {
         currentCompatLevel = config.compatLevel  // v6.0.30: 初始化内存里的兼容级别
@@ -128,7 +192,9 @@ final class OpenAIClient {
         guard !compactSource.isEmpty else { completion(nil); return }
         let base = config.baseURL.trimmingCharacters(in: CharacterSet(charactersIn: "/"))
         guard let url = URL(string: base + "/chat/completions") else { completion(nil); return }
-        let summarySystem = "You are a conversation compression engine. Below is an old conversation between an AI assistant and the user (user questions, assistant replies, tool calls and results). Compress it into a structured Markdown summary so the assistant can seamlessly continue in later turns. The input may BEGIN with a previously generated summary of this same conversation — if so, MERGE it with the new messages below into ONE updated summary (keep earlier context that is still relevant, integrate the new state; do not duplicate or drop it). MUST include:\n1. Task overview: user's core request, success criteria, constraints;\n2. Current state: what's done, changed/generated files or artifacts (with paths);\n3. Key findings: technical constraints, important decisions, resolved errors, failed approaches;\n4. Next steps: todos, blockers, priorities;\n5. Context to keep: user preferences, domain details, commitments.\nOutput only the summary body — no pleasantries, no restating the original conversation."
+        // v7.3.0-scalpel：摘要模板升级 9 节（对齐 Claude Code BASE_COMPACT_PROMPT——
+        // 保留的不只是"说了什么"还有"为什么"：意图、概念、文件、错误、路径、原文、待办、进行中、下一步）
+        let summarySystem = "You are a conversation compression engine. Below is an old conversation between an AI assistant and the user (user questions, assistant replies, tool calls and results). Compress it into a structured Markdown summary so the assistant can seamlessly continue in later turns. The input may BEGIN with a previously generated summary of this same conversation — if so, MERGE it with the new messages below into ONE updated summary (keep earlier context that is still relevant, integrate the new state; do not duplicate or drop it). MUST include these 9 sections:\n1. Request & intent: user's core request, success criteria, constraints;\n2. Key technical concepts: domain details, technical constraints, commitments;\n3. Files & code: changed/generated files or artifacts with paths, key code sections;\n4. Errors & fixes: resolved errors, failed approaches, important decisions;\n5. Approaches: problem-solving strategies tried or chosen;\n6. User messages VERBATIM: quote every user message exactly as written, in order;\n7. Pending tasks: todos, blockers, priorities;\n8. Work in progress: current state — what's done vs in-flight;\n9. Next step: the exact next action to take.\nOutput only the summary body — no pleasantries, no restating the original conversation."
         let conversation = compactSource.map { m -> String in
             let roleLabel: String
             switch m.role {
@@ -171,9 +237,17 @@ final class OpenAIClient {
         let currentAuth = config.authMethod.trimmingCharacters(in: .whitespacesAndNewlines)
         authProbeQueue = ["Bearer", "API Key", "Query api_key"].filter { $0 != currentAuth }
         overrideAuthMethod = nil
-        // v4.3.71：LLM Compaction 前置——先摘要被裁旧消息，替换启发式占位后再发主请求
-        if !compactSource.isEmpty {
-            summarize(compactSource) { [weak self] summary in
+        // v4.3.71 / v7.3.0-scalpel-T4：LLM Compaction 前置——先摘要被裁旧消息，替换启发式占位后再发主请求。
+        // T4 自动触发：历史 token 压力达 90%（窗口−13K 缓冲）且无手动 compactSource 时自动摘要
+        // （对齐 Claude Code auto-compact）。防抖 30s 防空转；summarize 直连 API 不走 attempt → 无递归。
+        let autoNeedsCompact = compactSource.isEmpty
+            && pressureLevel(messages) == .compact
+            && (lastAutoCompactAt.map { Date().timeIntervalSince($0) >= Self.autoCompactThrottle } ?? true)
+            && messages.contains(where: { $0.role == "user" })
+        if !compactSource.isEmpty || autoNeedsCompact {
+            if autoNeedsCompact { lastAutoCompactAt = Date() }
+            let source = compactSource.isEmpty ? messages : compactSource
+            summarize(source) { [weak self] summary in
                 guard let self = self else {
                     completion(.failure(NSError(domain: "OpenAIClient", code: -999, userInfo: [NSLocalizedDescriptionKey: "Request cancelled"])))
                     return
@@ -202,7 +276,16 @@ final class OpenAIClient {
             }
             return
         }
-        sendWithFallback(messages: messages, tools: tools, onStatus: onStatus, onDelta: onDelta, onThinking: onThinking, completion: completion)
+        // v7.3.0-scalpel-reminder：非 compact 压力级时注入 token 压力提醒
+        // （对齐 Claude system-reminder hot 注入——不进系统提示缓存区，附加到最新 user 尾部，
+        // 不新增 role 序列 → 消息流自洽；60%+ 提醒精简输出，75%+ 提醒显著精简）
+        var msgs = messages
+        let pct = tokenPressurePercent(msgs)
+        switch pressureLevel(msgs) {
+        case .shortened, .aggressive: appendPressureHint(to: &msgs, pct: pct)
+        default: break
+        }
+        sendWithFallback(messages: msgs, tools: tools, onStatus: onStatus, onDelta: onDelta, onThinking: onThinking, completion: completion)
     }
 
     /// v7.1.107：模型组 fallback 入口——主模型失败（网络/超时/鉴权/熔断/HTTP 4xx5xx，
@@ -630,6 +713,30 @@ final class OpenAIClient {
                 NetworkLog.shared.log("\(self.config.name): model is non-vision, stripped images and retrying L\(level)")
                 onStatus?(L10n.t("status_images_stripped"))
                 self.attempt(level: level, isFirst: false, messages: stripped, tools: tools, onStatus: onStatus, onDelta: onDelta, onThinking: onThinking, avoidL5: avoidL5, completion: completion)
+                return
+            }
+
+            // v7.3.0-scalpel-T5：413/上下文超限——页错误处理器（Claude Code reactiveCompact 同款）：
+            // 任何估计体系都不完美，413 就是兜底层。只保最近 4 条 + 其余压成占位标记
+            // （不调 LLM 摘要防递归），同级别重试一次；hasAttemptedReactiveCompact 单次守卫
+            // 防重试循环，一次不够就把错误如实抛给用户。
+            let overflowErr = NSError(domain: "OpenAIClient", code: status,
+                userInfo: [NSLocalizedDescriptionKey: (errorPayload ?? raw) + " " + raw])
+            if (status == 413 || self.isContextOverflow(overflowErr))
+                && !self.hasAttemptedReactiveCompact
+                && messages.count > Self.reactiveLastKeep {
+                self.hasAttemptedReactiveCompact = true
+                let keep = Array(messages.suffix(Self.reactiveLastKeep))
+                let dropCount = messages.count - keep.count
+                var compacted = keep
+                if !compacted.isEmpty {
+                    var last = compacted[compacted.count - 1]
+                    last.content += "\n\n[context overflow recovery: \(dropCount) earlier messages compacted away]"
+                    compacted[compacted.count - 1] = last
+                }
+                NetworkLog.shared.log("\(self.config.name) HTTP \(status) context overflow → reactive compact (keep last \(Self.reactiveLastKeep)), retrying L\(level)")
+                onStatus?("⚠️ context overflow → compacted to last \(Self.reactiveLastKeep) messages, retrying…")
+                self.attempt(level: level, isFirst: false, messages: compacted, tools: tools, onStatus: onStatus, onDelta: onDelta, onThinking: onThinking, avoidL5: avoidL5, completion: completion)
                 return
             }
 
@@ -1115,30 +1222,48 @@ final class OpenAIClient {
         return nil
     }
 
+    /// v7.3.0-scalpel-T2-tokenSaverOutput：大工具结果压缩视图（对齐 Claude Code BashTool
+    /// tokenSaverOutput——全量输出进 UI/日志，压缩版进模型。单优化每会话可省数万 token，
+    /// 且不动会话内存历史：只改发往模型的请求快照。仅截内容、不删消息 → 配对不受影响）
+    private func tokenSaverView(_ m: ChatMessage) -> ChatMessage {
+        var mm = m
+        if mm.role == "tool", mm.content.count > Self.tokenSaverMaxChars {
+            let c = mm.content
+            let head = String(c.prefix(Self.tokenSaverHeadChars))
+            let tail = String(c.suffix(Self.tokenSaverTailChars))
+            let omitted = c.count - Self.tokenSaverHeadChars - Self.tokenSaverTailChars
+            mm.content = head + "\n…[tool 输出过长：省略中间 \(omitted) 字符（完整结果已存会话日志，需要时用工具重新获取）]…\n" + tail
+        }
+        return mm
+    }
+
     /// v2.9.292：历史图片裁剪——只保留最近 imageBudget 条带图消息的图片，
     /// 更早的图片置空并加文字占位。用于 chat/completions 序列化路径，
     /// 避免历史 base64 图片每次请求全量重发导致 body 巨大 → 卡住/超时。
     private func trimmedMessages(_ messages: [ChatMessage], imageBudget: Int = 2) -> [ChatMessage] {
-        // v3.6.19l: 上下文按 token 截断——防止超长会话撑爆模型上下文窗口导致"卡死不回复"(空 completion)。
-        // 策略: 始终保留最近 6 条 + 最新 user；超阈值时优先丢弃最旧 tool 结果(最占空间/最不影响语义)，
-        // 再丢旧 assistant/user，直到低于上限；被丢弃的部分在最后一条保留消息上标记。
-        let MAX_CHARS = 100_000            // ≈25k token, 给模型窗口留余量
+        // v3.6.19l / v7.3.0-scalpel：上下文按 TOKEN 预算裁剪（Claude Code 手术刀三层：
+        // tokenSaverOutput 压缩视图 → T2 LRU 归档最旧 → T3 渐进退化），防止超长会话
+        // 撑爆模型上下文窗口导致"卡死不回复"(空 completion)。
+        // 策略: 始终保留最近 6 条 + 最新 user；超预算时优先归档最旧 tool 结果(最占空间)，
+        // 再归档旧 assistant/user，直到低于预算；被归档的部分在最后一条保留消息上标记。
+        // v7.2.5-fix64：成对裁剪——删 tool 结果必删配对 assistant.toolCalls id（自洽，
+        // 杜绝 repairDanglingToolCalls 误补 "interrupted" 伪错误）。
         let KEEP_LAST = 6                  // 始终保留的最近消息数
         var budget = imageBudget
         var out: [ChatMessage] = []
-        // --- 文本截断 ---
-        var arr = messages
-        let totalChars = arr.reduce(0) { $0 + ($1.content.count) + ($1.thinking?.count ?? 0) }
-        if totalChars > MAX_CHARS {
-            // 记录丢弃了多少条
+        // --- tokenSaverOutput：先压缩大工具结果视图（内容截断，不删消息）---
+        var arr = messages.map { tokenSaverView($0) }
+        let budgetTokens = historyTokenBudget()
+        if estimateTotalTokens(arr) > budgetTokens {
+            // 记录归档了多少条
             var dropped = 0
-            // 保底: 找到最后一条 user 的索引，截断不越过它(保证当前诉求在)
+            // 保底: 找到最后一条 user 的索引，裁剪不越过它(保证当前诉求在)
             var lastUserIdx = -1
             for (i, m) in arr.enumerated() where m.role == "user" { lastUserIdx = i }
-            // 优先丢弃最旧的 tool 消息(不越过 lastUserIdx - 1 和 保底尾巴)
+            // 优先归档最旧的 tool 消息(不越过 lastUserIdx - 1 和 保底尾巴)
             let cutFloor = max(0, lastUserIdx - 1)
             var droppedAny = true
-            while arr.reduce(0, { $0 + ($1.content.count) + ($1.thinking?.count ?? 0) }) > MAX_CHARS && droppedAny {
+            while estimateTotalTokens(arr) > budgetTokens && droppedAny {
                 droppedAny = false
                 var i = 0
                 while i < arr.count {
@@ -1170,7 +1295,7 @@ final class OpenAIClient {
                     i += 1
                 }
                 if !droppedAny {
-                    // tool 丢完还不够 → 丢最旧 assistant/user(不越过 cutFloor 和保底)
+                    // tool 归档完还不够 → 归档最旧 assistant/user(不越过 cutFloor 和保底)
                     for i in 0..<arr.count where i < cutFloor || i < max(0, arr.count - 6) {
                         // v7.2.5-fix64：assistant.toolCalls 与其 tool 结果成对删——删掉带调用声明的
                         // assistant 却留下孤立 tool 消息，服务端会因 tool 消息无配对 assistant 报 400。
@@ -1189,11 +1314,13 @@ final class OpenAIClient {
                     }
                 }
             }
-            // --- v4.3.66 兜底：预算循环只丢「最近 6 条之外」的消息，若最近 6 条内本身就有超大
-            // 单条（如刚 dump 的大文件/tool 结果），循环退出后仍可能超 MAX_CHARS → API 400。
-            // 对剩余中 content 最长的一条做头部截断（保留 2/3 + 提示），只压缩内容、不删消息、不丢语义锚点。
+            // --- v4.3.66 / v7.3.0-scalpel-T3：渐进退化兜底（Claude Code 分节渐进同款——
+            // 不是悬崖式一次砍完，而是多轮渐进截断）。预算循环只丢「最近 6 条之外」的消息，
+            // 若保底区内本身就有超大单条（如刚 dump 的大文件/tool 结果），循环退出后仍可能
+            // 超预算 → API 413。对剩余中 content 最长的一条做头部截断（保留 2/3 + 提示），
+            // 每轮只截一条、最多 8 轮 → 内容渐进退化、不删消息、不丢语义锚点。
             var guardPass = 0
-            while arr.reduce(0, { $0 + ($1.content.count) + ($1.thinking?.count ?? 0) }) > MAX_CHARS && guardPass < 8 {
+            while estimateTotalTokens(arr) > budgetTokens && guardPass < 8 {
                 guardPass += 1
                 var maxIdx = -1
                 var maxLen = 0
@@ -1215,7 +1342,7 @@ final class OpenAIClient {
                 var anchor = arr.count - 1
                 while anchor > 0 && arr[anchor].content.isEmpty { anchor -= 1 }
                 var m = arr[anchor]
-                m.content += "\n\n[早期上下文已截断: 会话过长已省略 \(dropped) 条历史消息]"
+                m.content += "\n\n[早期上下文已归档: 会话过长已省略 \(dropped) 条历史消息]"
                 arr[anchor] = m
             }
         }
