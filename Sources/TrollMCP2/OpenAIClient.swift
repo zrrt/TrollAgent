@@ -1140,14 +1140,51 @@ final class OpenAIClient {
             var droppedAny = true
             while arr.reduce(0, { $0 + ($1.content.count) + ($1.thinking?.count ?? 0) }) > MAX_CHARS && droppedAny {
                 droppedAny = false
-                for i in 0..<arr.count where i < cutFloor || i < max(0, arr.count - 6) {
-                    if arr[i].role == "tool" {
-                        arr.remove(at: i); dropped += 1; droppedAny = true; break
+                var i = 0
+                while i < arr.count {
+                    if i < cutFloor || i < max(0, arr.count - 6) {
+                        if arr[i].role == "tool" {
+                            // v7.2.5-fix64：成对裁剪——删除 tool 结果时同步从配对 assistant.toolCalls
+                            // 移除该 id（assistant 的 toolCalls 清空则连同 assistant 一起删），保证消息流
+                            // 自洽。此前只删 tool 结果 → 后续 repairDanglingToolCalls 把被删旧结果误补成
+                            // "interrupted by an app crash or protocol fallback" 伪错误——长会话 AI 每轮
+                            // 请求都看到这条假报错，误判"通道断/App 崩溃"（工具实际一直成功）。
+                            let tid = arr[i].toolCallId
+                            if let tid = tid {
+                                for j in stride(from: i - 1, through: 0, by: -1) where arr[j].role == "assistant" {
+                                    if var calls = arr[j].toolCalls, calls.contains(where: { $0.id == tid }) {
+                                        calls.removeAll { $0.id == tid }
+                                        if calls.isEmpty {
+                                            arr.remove(at: j)   // 整对删除（j < i，删后 i 指向的 tool 前移一位）
+                                            i -= 1
+                                        } else {
+                                            arr[j].toolCalls = calls
+                                        }
+                                        break
+                                    }
+                                }
+                            }
+                            arr.remove(at: i); dropped += 1; droppedAny = true; break
+                        }
                     }
+                    i += 1
                 }
                 if !droppedAny {
                     // tool 丢完还不够 → 丢最旧 assistant/user(不越过 cutFloor 和保底)
                     for i in 0..<arr.count where i < cutFloor || i < max(0, arr.count - 6) {
+                        // v7.2.5-fix64：assistant.toolCalls 与其 tool 结果成对删——删掉带调用声明的
+                        // assistant 却留下孤立 tool 消息，服务端会因 tool 消息无配对 assistant 报 400。
+                        if arr[i].role == "assistant", let calls = arr[i].toolCalls, !calls.isEmpty {
+                            let ids = Set(calls.map { $0.id })
+                            var k = i + 1
+                            while k < arr.count {
+                                if arr[k].role == "tool", let tid = arr[k].toolCallId, ids.contains(tid) {
+                                    arr.remove(at: k)
+                                } else {
+                                    k += 1
+                                }
+                            }
+                        }
                         arr.remove(at: i); dropped += 1; droppedAny = true; break
                     }
                 }
