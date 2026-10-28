@@ -1,5 +1,45 @@
 import Foundation
 
+/// v7.4.0-sessionstore：会话索引工具——元数据先行（SQLite 索引秒开）+ 上下文占用可视化数据源。
+/// 对齐 Claude /context 与 OpenMinis TokenUsageSheet：列表/统计不读消息体，只查索引。
+final class ConversationsIndexTool: MCPTool {
+    let definition = ToolDefinition(
+        name: "conversations.index",
+        summary: "Session index (metadata-first, fast): list conversations with message counts and token estimates from the SQLite session index, or aggregate stats for context usage. Use for: fast conversation list, context/token usage visualization, debug long-session bloat. Don't use for: full messages (use debug.dump_conversation), raw debug export (use debug.dump_conversations). Example: user asks 'how many conversations / context usage' → index stats.",
+        parameters: [
+            "command": "Subcommand (required): list / stats",
+            "limit": "Max rows for list (default 20, max 50)"
+        ], verified: true, category: "debug")
+
+    func invoke(_ params: [String: Any]) throws -> [String: Any] {
+        let command = (params["command"] as? String) ?? "list"
+        let limit = max(1, min((params["limit"] as? Int) ?? 20, 50))
+        switch command {
+        case "list":
+            let rows = SessionStore.shared.listSessions(limit: limit)
+            return [
+                "source": "session_index.sqlite",
+                "total": rows.count,
+                "sessions": rows.map { row -> [String: Any] in
+                    [
+                        "id": row["id"] as? String ?? "",
+                        "title": row["title"] as? String ?? "",
+                        "messageCount": row["messageCount"] as? Int64 ?? 0,
+                        "tokenEstimate": row["tokenEstimate"] as? Int64 ?? 0,
+                        "updatedAt": row["updatedAt"] as? Int64 ?? 0
+                    ]
+                }
+            ]
+        case "stats":
+            var out = SessionStore.shared.stats()
+            out["source"] = "session_index.sqlite"
+            return out
+        default:
+            throw MCPError.invalidParams("Unknown command: \(command). Available: list / stats")
+        }
+    }
+}
+
 /// v2.9.295：调试工具——导出会话标题与首条消息内容
 /// 用途：排查"对话标题乱码/不更新"问题时，远程直接看手机上的真实会话数据
 final class DebugDumpConversationsTool: MCPTool {

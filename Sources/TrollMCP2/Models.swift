@@ -1032,6 +1032,10 @@ final class ConversationStore: ObservableObject {
 
     private let key = "trollmcp2.conversations"
 
+    // v7.4.0-sessionstore：中间修改标记（主线程独占——UI 事件线程）。
+    // 尾部追加走增量路径；删除/编辑消息标记 dirty → save() 时整会话重写 JSONL（保序保真）。
+    private var dirtySessions = Set<UUID>()
+
     init() { load() }
 
     var selectedIndex: Int? {
@@ -1103,6 +1107,8 @@ final class ConversationStore: ObservableObject {
               let mi = conversations[idx].messages.firstIndex(where: { $0.id == id }) else { return }
         conversations[idx].messages[mi].content = content
         conversations[idx].updatedAt = Date()
+        // v7.4.0-sessionstore：中间修改 → dirty（save() 时整会话重写）
+        dirtySessions.insert(conversations[idx].id)
     }
 
     /// v3.1.70：删除活动请求会话内的消息 (无活动请求时用当前选中会话）
@@ -1110,6 +1116,8 @@ final class ConversationStore: ObservableObject {
         guard let idx = activeConvIndex,
               let mi = conversations[idx].messages.firstIndex(where: { $0.id == id }) else { return }
         conversations[idx].messages.remove(at: mi)
+        // v7.4.0-sessionstore：中间修改 → dirty（save() 时整会话重写）
+        if let i = activeConvIndex { dirtySessions.insert(conversations[i].id) }
     }
 
     /// v2.9.13：取消当前进行中的请求 (ChatView 停止按钮）
@@ -1135,6 +1143,8 @@ final class ConversationStore: ObservableObject {
         conv.title = L10n.t("i18n_1059")
         conv.updatedAt = Date()
         conversations[idx] = conv
+        // v7.4.0-sessionstore：清空 = 中间修改 → dirty（save() 时整会话重写为空）
+        dirtySessions.insert(conv.id)
         sortAndSave()
     }
 
@@ -1142,6 +1152,8 @@ final class ConversationStore: ObservableObject {
     func clearAll() {
         conversations.removeAll()
         selectedId = nil
+        // v7.4.0-sessionstore：同步清双层（JSONL 会话文件 + SQLite 索引行）
+        SessionStore.shared.clearAll()
         save()
         // v6.0.28：清空会话同样停掉 TTS 队列，避免残留音频读旧内容
         TTSService.shared.stop()
@@ -2615,9 +2627,18 @@ final class ConversationStore: ObservableObject {
 
     private func save() {
         let snapshot = conversations
+        // v7.4.0-sessionstore：dirty 快照随 save 清空（主线程独占；队列只读快照）
+        let dirty = dirtySessions
+        dirtySessions.removeAll()
         let dir = storeDir
         let path = storeFile
         saveQueue.async {
+            // v7.4.0-sessionstore：增量双层优先（JSONL 真源 + SQLite 索引）——
+            // 只 append 新消息行 + upsert 索引行，根治全量重写 O(N²)（长会话卡顿）。
+            if SessionStore.shared.persist(snapshot: snapshot, dirty: dirty) {
+                return
+            }
+            // 失败可降级：回退旧全量 JSON（不丢数据）
             guard let data = try? JSONEncoder().encode(snapshot) else { return }
             let fm = FileManager.default
             let bak1 = dir.appending("/conversations.bak.1.json")
@@ -2697,6 +2718,15 @@ final class ConversationStore: ObservableObject {
 
     private func load() {
         let fm = FileManager.default
+        // v7.4.0-sessionstore：双层优先——JSONL 真源已有数据则直接重建
+        // （崩溃清理逻辑与旧路径共用 applyLoaded；列表/元数据来自 SQLite 索引）
+        if SessionStore.shared.hasData() {
+            let decoded = SessionStore.shared.loadAll()
+            if !decoded.isEmpty {
+                applyLoaded(decoded)
+                return
+            }
+        }
         // 1. 文件主数据
         if fm.fileExists(atPath: storeFile), let d = decodeFile(storeFile), !d.isEmpty {
             applyLoaded(d); return

@@ -101,6 +101,8 @@ let package = Package(
             exclude: ["Resources"],
             linkerSettings: [
                 .linkedLibrary("z"),
+                // v7.4.0-sessionstore：SQLite3 系统库（SessionStore 双层持久化——JSONL 真源 + SQLite 索引）
+                .linkedLibrary("sqlite3"),
                 .linkedFramework("NetworkExtension"),
                 // v6.6.0: CoreServices 保留（LSApplicationWorkspace 等 LaunchServices 调用——HUD/App 管理用）
                 .linkedFramework("CoreServices"),
