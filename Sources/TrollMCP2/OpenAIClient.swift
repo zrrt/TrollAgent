@@ -107,33 +107,108 @@ final class OpenAIClient {
     /// T4 自动压缩防抖——同会话 30s 内不重复自动触发
     private var lastAutoCompactAt: Date? = nil
 
-    /// Claude Code token 记账中间级：字符启发式 t̂=⌈ℓ/4⌉+1（~85% 准确、保守高估——超估安全）
-    /// tool_use 块 ℓ 含工具名+JSON 输入；图片按固定 ~2K token 估算（Claude 同款三级）
-    private func estimateTokens(_ m: ChatMessage) -> Int {
-        var l = m.content.count + (m.thinking?.count ?? 0)
-        if let calls = m.toolCalls {
-            for tc in calls { l += tc.name.count + tc.arguments.count }
+    /// —— v7.3.1-precision：精确 token 估算（对齐 Claude tokenEstimation.ts rough 层 +
+    /// OpenMinis BPE 规则 + 真实 usage 校准。精度实测：散文 chars/4 误差 ~0.04%；
+    /// tool 结果（代码/JSON/日志）4 chars/token 低估 2.78×（tokenauditor 实测）→ 密桶 2 bytes/token；
+    /// 图片用 OpenMinis ceil(w/32)*ceil(h/32) 规则。cl100k BPE 对非 OpenAI 模型是错误词表
+    /// （claude-opus-4-7 需 ×1.654 修正，tloc 实测），所以不背 1.5MB 词表——用请求后真实
+    /// usage.prompt_tokens 校准（UsageRecorder.lastRealRatio），跨模型自动学习 tokenizer 系数。
+    private enum TokenBucket { case prose, code }
+
+    /// 从 dataURL 解析图片像素尺寸（PNG IHDR / JPEG SOF marker），失败返回 nil
+    private static func imageDimensions(_ data: Data) -> (w: Int, h: Int)? {
+        if data.count >= 24, data[0] == 0x89, data[1] == 0x50, data[2] == 0x4E, data[3] == 0x47 {
+            let w = (Int(data[16]) << 24) | (Int(data[17]) << 16) | (Int(data[18]) << 8) | Int(data[19])
+            let h = (Int(data[20]) << 24) | (Int(data[21]) << 16) | (Int(data[22]) << 8) | Int(data[23])
+            if w > 0, h > 0, w <= 16384, h <= 16384 { return (w, h) }
+            return nil
         }
-        if let imgs = m.imageDataURLs, !imgs.isEmpty { l += imgs.count * 2_000 }
-        return l / 4 + 1
+        if data.count >= 4, data[0] == 0xFF, data[1] == 0xD8 {
+            var i = 2
+            while i + 9 < data.count {
+                if data[i] != 0xFF { i += 1; continue }
+                let marker = data[i + 1]
+                if marker == 0xD8 || marker == 0xD9 || (marker >= 0xD0 && marker <= 0xD7) { i += 2; continue }
+                if (marker >= 0xC0 && marker <= 0xCF) && marker != 0xC4 && marker != 0xC8 && marker != 0xCC {
+                    let h = (Int(data[i + 5]) << 8) | Int(data[i + 6])
+                    let w = (Int(data[i + 7]) << 8) | Int(data[i + 8])
+                    if w > 0, h > 0, w <= 16384, h <= 16384 { return (w, h) }
+                    return nil
+                }
+                let len = (Int(data[i + 2]) << 8) | Int(data[i + 3])
+                if len < 2 { return nil }
+                i += 2 + len
+            }
+            return nil
+        }
+        return nil
     }
+    /// OpenMinis 图片 token 规则：ceil(w/32)*ceil(h/32)，cap 2048×2048，min 85；解析失败 fallback 2000
+    private static func imageTokenCount(_ dataURL: String) -> Int {
+        guard let b64 = dataURL.split(separator: ",").last,
+              let data = Data(base64Encoded: String(b64)),
+              let (w, h) = imageDimensions(data) else { return 2000 }
+        let maxEdge = 2048.0
+        let scale = max(Double(w), Double(h)) > maxEdge ? maxEdge / max(Double(w), Double(h)) : 1.0
+        return max(85, Int(ceil(Double(w) * scale / 32.0) * ceil(Double(h) * scale / 32.0)))
+    }
+    /// 内容分桶：tool 结果一律密桶；散文含代码特征（大括号/分号/等号/换行密集）也走密桶
+    private static func tokenBucket(_ m: ChatMessage) -> TokenBucket {
+        if m.role == "tool" { return .code }
+        let c = m.content
+        guard !c.isEmpty else { return .prose }
+        let hits = c.filter { $0 == "{" || $0 == "}" || $0 == "[" || $0 == "]" || $0 == ";" || $0 == "=" || $0 == "\n" }.count
+        return (hits * 12) > c.count ? .code : .prose
+    }
+    /// 分桶估算（static 供 UsageRecorder 复用——ratio 分母必须同源）
+    static func estimateTokensStatic(_ m: ChatMessage) -> Int {
+        var tokens = 0
+        let textLen = m.content.count + (m.thinking?.count ?? 0)
+        if textLen > 0 {
+            if tokenBucket(m) == .code {
+                tokens += max(4, textLen / 2)              // 密桶：2 bytes/token（JSON/代码/日志实测密度）
+            } else {
+                tokens += textLen / 4 + 1                   // 散文桶：4 chars/token（实测误差 ~0.04%）
+            }
+        }
+        if let calls = m.toolCalls {
+            for tc in calls {
+                tokens += max(4, (tc.name.count + tc.arguments.count) / 2) + 4   // tool_use: name+JSON + 结构开销
+            }
+        }
+        if let imgs = m.imageDataURLs, !imgs.isEmpty {
+            for u in imgs { tokens += imageTokenCount(u) }
+        }
+        return max(1, tokens)
+    }
+    private func estimateTokens(_ m: ChatMessage) -> Int { Self.estimateTokensStatic(m) }
+    /// 总量估算 × 真实 usage 校准比（end() 从响应 prompt_tokens 学习，clamp 0.5–2.5——
+    /// 跨模型自动修正 tokenizer 差异：Claude 4.7+ 自动收敛 ~1.65、中文内容自动修正）
     private func estimateTotalTokens(_ msgs: [ChatMessage]) -> Int {
-        msgs.reduce(0) { $0 + estimateTokens($1) }
+        let est = msgs.reduce(0) { $0 + Self.estimateTokensStatic($1) }
+        let cal = UsageRecorder.shared.lastRealRatio
+        return cal > 0 ? max(est, Int(Double(est) * cal)) : est
     }
     /// 当前模型上下文窗口：优先实测（RuntimeWindowTracker 动态收敛），无则默认
     private func contextWindowTokens() -> Int {
         RuntimeWindowTracker.shared.measuredWindow(for: config.model) ?? Self.defaultContextWindow
     }
-    /// 历史可用预算 = W − 固定开销 − T2 缓冲（T2 在超缓冲时先归档，不是到 W 才动手）
-    private func historyTokenBudget() -> Int {
-        max(8_000, contextWindowTokens() - Self.fixedOverheadTokens - Self.snipBufferTokens)
+    /// v7.3.1-precision：输出预算预留（对齐 Claude/Codex——窗口 = input + output，
+    /// 预算在发送前就给输出留位，避免"输入塞满 → 输出被截断/413"）
+    private func outputReserveTokens() -> Int {
+        let w = contextWindowTokens()
+        return min(config.maxTokens > 0 ? config.maxTokens : 8_192, max(4_096, w / 4))
     }
-    /// 压力百分比（0-100），用于分级与提醒注入
+    /// 历史可用预算 = W − 固定开销 − T2 缓冲 − 输出预留（T2 在超缓冲时先归档，不是到 W 才动手）
+    private func historyTokenBudget() -> Int {
+        max(8_000, contextWindowTokens() - Self.fixedOverheadTokens - Self.snipBufferTokens - outputReserveTokens())
+    }
+    /// 压力百分比（0-100），分母为「窗口 − 输出预留」（输出预留后压力提前分级）
     private func tokenPressurePercent(_ msgs: [ChatMessage]) -> Int {
         let used = Double(estimateTotalTokens(msgs) + Self.fixedOverheadTokens)
-        let w = Double(contextWindowTokens())
-        guard w > 0 else { return 0 }
-        return min(100, Int((used / w * 100).rounded()))
+        let avail = Double(contextWindowTokens() - outputReserveTokens())
+        guard avail > 0 else { return 100 }
+        return min(100, Int((used / avail * 100).rounded()))
     }
     private enum ContextPressure { case normal, shortened, aggressive, compact }
     private func pressureLevel(_ msgs: [ChatMessage]) -> ContextPressure {
@@ -150,6 +225,22 @@ final class OpenAIClient {
               !msgs[idx].content.contains("[token pressure") else { return }
         let mode = pct >= 90 ? "上下文接近上限，即将自动压缩" : (pct >= 75 ? "请显著精简输出" : "请精简输出，减少无关工具调用")
         msgs[idx].content += "\n\n[token pressure \(pct)% — \(mode)]"
+    }
+    /// v7.3.1-precision-T3：按 user 边界切语义节（节 = user 消息 + 后续 assistant/tool，
+    /// 直到下一个 user 前）——分节语义摘要的切割单位（对齐 Claude Code Context Collapse：
+    /// 调试段/编辑序列/评审段各自独立摘要，渐进退化 90%→92%→94%）
+    private func sections(_ msgs: [ChatMessage]) -> [[ChatMessage]] {
+        var result: [[ChatMessage]] = []
+        var cur: [ChatMessage] = []
+        for m in msgs {
+            if m.role == "user", !cur.isEmpty {
+                result.append(cur)
+                cur = []
+            }
+            cur.append(m)
+        }
+        if !cur.isEmpty { result.append(cur) }
+        return result
     }
 
     init(_ config: ModelConfig) {
@@ -237,16 +328,34 @@ final class OpenAIClient {
         let currentAuth = config.authMethod.trimmingCharacters(in: .whitespacesAndNewlines)
         authProbeQueue = ["Bearer", "API Key", "Query api_key"].filter { $0 != currentAuth }
         overrideAuthMethod = nil
-        // v4.3.71 / v7.3.0-scalpel-T4：LLM Compaction 前置——先摘要被裁旧消息，替换启发式占位后再发主请求。
-        // T4 自动触发：历史 token 压力达 90%（窗口−13K 缓冲）且无手动 compactSource 时自动摘要
-        // （对齐 Claude Code auto-compact）。防抖 30s 防空转；summarize 直连 API 不走 attempt → 无递归。
+        // v4.3.71 / v7.3.0-scalpel-T4 / v7.3.1-precision-T3：LLM Compaction 前置——先摘要被裁旧消息，
+        // 替换启发式占位后再发主请求。
+        //  T4 自动触发：历史 token 压力达 90%（窗口−13K 缓冲）且无手动 compactSource 时自动摘要
+        //    （对齐 Claude Code auto-compact：达 effectiveContextWindow−13K）。
+        //  T3 分节触发：压力 75–90%（aggressive）时只对「最旧语义节」做 LLM 单节摘要替换
+        //    （对齐 Claude Code Context Collapse：分节渐进退化，不是一次性全量压缩）。
+        // 防抖 30s 共用；summarize 直连 API 不走 attempt → 无递归。
+        let secs = sections(messages)
         let autoNeedsCompact = compactSource.isEmpty
             && pressureLevel(messages) == .compact
             && (lastAutoCompactAt.map { Date().timeIntervalSince($0) >= Self.autoCompactThrottle } ?? true)
             && messages.contains(where: { $0.role == "user" })
-        if !compactSource.isEmpty || autoNeedsCompact {
-            if autoNeedsCompact { lastAutoCompactAt = Date() }
-            let source = compactSource.isEmpty ? messages : compactSource
+        let t3NeedsSectionCompact = compactSource.isEmpty
+            && pressureLevel(messages) == .aggressive
+            && secs.count >= 2
+            && secs[0].count >= 2
+            && (lastAutoCompactAt.map { Date().timeIntervalSince($0) >= Self.autoCompactThrottle } ?? true)
+        if !compactSource.isEmpty || autoNeedsCompact || t3NeedsSectionCompact {
+            if autoNeedsCompact || t3NeedsSectionCompact { lastAutoCompactAt = Date() }
+            let isSectionCompact: Bool
+            let source: [ChatMessage]
+            if !compactSource.isEmpty {
+                source = compactSource; isSectionCompact = false
+            } else if t3NeedsSectionCompact {
+                source = secs[0]; isSectionCompact = true     // T3：只压最旧一节
+            } else {
+                source = messages; isSectionCompact = false   // T4：全量
+            }
             summarize(source) { [weak self] summary in
                 guard let self = self else {
                     completion(.failure(NSError(domain: "OpenAIClient", code: -999, userInfo: [NSLocalizedDescriptionKey: "Request cancelled"])))
@@ -259,18 +368,28 @@ final class OpenAIClient {
                 }
                 var msgs = messages
                 if let s = summary, !s.isEmpty {
-                    // v7.1.41：优先更新已有摘要（增量演进——同会话多次压缩只保留一份、内容持续合并），
-                    // 无则替换启发式占位，再否则插入最前
                     let newSummary = "[Long-conversation summary, model-generated]\n" + s
-                    if let idx = msgs.firstIndex(where: { $0.role == "system" && $0.content.hasPrefix("[Long-conversation summary") }) {
-                        msgs[idx] = ChatMessage(role: "system", content: newSummary)
-                    } else if let idx = msgs.firstIndex(where: { $0.role == "system" && $0.content.hasPrefix("[System] earliest") }) {
-                        msgs[idx] = ChatMessage(role: "system", content: newSummary)
-                    } else {
+                    if isSectionCompact {
+                        // T3：替换最旧节——删掉该节全部消息，在相同位置插摘要（消息流自洽：
+                        // 该节内 assistant.toolCalls 与其 tool 结果一起被替换，无配对撕裂）
+                        let dropCount = min(secs[0].count, msgs.count)
+                        msgs.removeFirst(dropCount)
                         msgs.insert(ChatMessage(role: "system", content: newSummary), at: 0)
+                        // v7.1.41：回调上层把压缩持久化进会话历史（对齐 Claude Code /compact 的破坏性替换）
+                        onCompacted?(s)
+                    } else {
+                        // v7.1.41：优先更新已有摘要（增量演进——同会话多次压缩只保留一份、内容持续合并），
+                        // 无则替换启发式占位，再否则插入最前
+                        if let idx = msgs.firstIndex(where: { $0.role == "system" && $0.content.hasPrefix("[Long-conversation summary") }) {
+                            msgs[idx] = ChatMessage(role: "system", content: newSummary)
+                        } else if let idx = msgs.firstIndex(where: { $0.role == "system" && $0.content.hasPrefix("[System] earliest") }) {
+                            msgs[idx] = ChatMessage(role: "system", content: newSummary)
+                        } else {
+                            msgs.insert(ChatMessage(role: "system", content: newSummary), at: 0)
+                        }
+                        // v7.1.41：回调上层把压缩持久化进会话历史（对齐 Claude Code /compact 的破坏性替换）
+                        onCompacted?(s)
                     }
-                    // v7.1.41：回调上层把压缩持久化进会话历史（对齐 Claude Code /compact 的破坏性替换）
-                    onCompacted?(s)
                 }
                 self.sendWithFallback(messages: msgs, tools: tools, onStatus: onStatus, onDelta: onDelta, onThinking: onThinking, completion: completion)
             }
@@ -2291,11 +2410,11 @@ final class UsageRecorder {
 
     func begin(messages: [ChatMessage]) {
         lastStart = Date()
+        // v7.3.1-precision：估算与 OpenAIClient 分桶估算统一（校准 ratio 分母必须同源，
+        // 否则 real/est 比值失真——此前 ch/3 粗估算对 tool 结果低估 2.78×）
         var est = 0
         for m in messages {
-            let ch = m.content.count
-            let imgs = (m.imageDataURLs?.count ?? 0) * 1000
-            est += ch / 3 + imgs + 8
+            est += OpenAIClient.estimateTokensStatic(m)
         }
         lastInputEst = est
     }
