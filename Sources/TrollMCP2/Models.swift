@@ -2727,8 +2727,11 @@ final class ConversationStore: ObservableObject {
     private func load() {
         let fm = FileManager.default
         // v7.4.0-sessionstore：双层优先——JSONL 真源已有数据则直接重建
-        // （崩溃清理逻辑与旧路径共用 applyLoaded；列表/元数据来自 SQLite 索引）
-        if SessionStore.shared.hasData() {
+        // （崩溃清理逻辑与旧路径共用 applyLoaded；列表/元数据来自 SQLite 索引）。
+        // 降级标记存在时跳过 JSONL 优先：conversations.json 是降级期间最新权威
+        // （JSONL 可能停留在降级前状态，读它会丢降级窗口内消息）。
+        if !fm.fileExists(atPath: storeDir + "/.fallback_flag"),
+           SessionStore.shared.hasData() {
             let decoded = SessionStore.shared.loadAll()
             if !decoded.isEmpty {
                 applyLoaded(decoded)

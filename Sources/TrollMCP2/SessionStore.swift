@@ -177,15 +177,38 @@ final class SessionStore {
 
     /// 增量持久化：dirty 会话整会话重写（中间修改），否则尾部追加新消息；都 upsert 索引。
     /// 返回 false 表示失败——调用方降级回退旧全量 JSON。
+    /// 一致性闭环（v7.4.0-fix65 深度审计）：
+    ///  - persist 失败写 .fallback_flag；下次成功先全量重建 JSONL（对齐内存）再删标记——
+    ///    防降级窗口内的删除/编辑在增量 append 路径下"复活"（count>last 只补尾部，删过的头部仍在）
+    ///  - last==0 但文件已存在（索引丢失/降级部分写入）→ 整会话重写，防尾部重复
     func persist(snapshot: [ChatConversation], dirty: Set<UUID>) -> Bool {
         lock.lock(); defer { lock.unlock() }
-        guard open() else { return false }
+        guard open() else { writeFlag(); return false }
+        let flag = storeDir + "/.fallback_flag"
+        // 一致性修复路径：上次降级过 → 全量重建 JSONL（对齐内存快照），全成功才删标记
+        if FileManager.default.fileExists(atPath: flag) {
+            var rebuilt = true
+            for conv in snapshot {
+                if !rewriteConversation(conv, to: sessionsDir + "/" + conv.id.uuidString + ".jsonl") {
+                    rebuilt = false; break
+                }
+                if !upsertIndexLocked(conv) { rebuilt = false; break }
+            }
+            if rebuilt {
+                try? FileManager.default.removeItem(atPath: flag)
+                return true
+            }
+            writeFlag()
+            return false
+        }
         var ok = true
         for conv in snapshot {
             let id = conv.id.uuidString
             let file = sessionsDir + "/" + id + ".jsonl"
             let last = messageCountLocked(id: conv.id)
-            let needFull = dirty.contains(conv.id) || !FileManager.default.fileExists(atPath: file)
+            let fileExists = FileManager.default.fileExists(atPath: file)
+            // last==0 但文件已存在且有消息 = 索引丢失/从未 upsert → 整会话重写防重复
+            let needFull = dirty.contains(conv.id) || !fileExists || (last == 0 && !conv.messages.isEmpty)
             if needFull {
                 if !rewriteConversation(conv, to: file) { ok = false; continue }
             } else if conv.messages.count < last {
@@ -195,9 +218,15 @@ final class SessionStore {
                 let newMsgs = Array(conv.messages.suffix(conv.messages.count - last))
                 if !appendMessages(newMsgs, to: file) { ok = false; continue }
             }
-            upsertIndexLocked(conv)
+            if !upsertIndexLocked(conv) { ok = false }
         }
+        if !ok { writeFlag() }
         return ok
+    }
+
+    private func writeFlag() {
+        _ = open()
+        try? Data().write(to: URL(fileURLWithPath: storeDir + "/.fallback_flag"))
     }
 
     /// 清空全部会话（对齐 ConversationStore.clearAll）
@@ -212,6 +241,8 @@ final class SessionStore {
         if db != nil {
             _ = sqlite3_exec(db, "DELETE FROM sessions;", nil, nil, nil)
         }
+        // 清空后状态一致，降级标记一并清除
+        try? FileManager.default.removeItem(atPath: storeDir + "/.fallback_flag")
     }
 
     /// 删除单个会话（JSONL 文件 + 索引行）——v7.4.0-fix65：delete 会话必须同步清双层，否则重启复活
@@ -278,12 +309,16 @@ final class SessionStore {
             handle.write(d)
             handle.write(Data("\n".utf8))
         }
+        // v7.4.0-fix65：本次会话保存末尾 fsync——崩溃最多丢本次未完成行，不丢已确认消息
+        //（旧全量路径 .atomic 有同步，增量 append 必须补上同等保证）
+        handle.synchronizeFile()
         return true
     }
 
     /// upsert 会话索引（v7.4.0：SQLite UPSERT——iOS 15 系统 SQLite 3.32+ 支持 ON CONFLICT DO UPDATE）
-    private func upsertIndexLocked(_ conv: ChatConversation) {
-        guard db != nil else { return }
+    @discardableResult
+    private func upsertIndexLocked(_ conv: ChatConversation) -> Bool {
+        guard db != nil else { return false }
         let tokens = tokenEstimate(conv)
         var stmt: OpaquePointer?
         let sql = """
@@ -295,7 +330,7 @@ final class SessionStore {
             message_count=excluded.message_count,
             token_estimate=excluded.token_estimate
         """
-        guard sqlite3_prepare_v2(db, sql, -1, &stmt, nil) == SQLITE_OK else { return }
+        guard sqlite3_prepare_v2(db, sql, -1, &stmt, nil) == SQLITE_OK else { return false }
         defer { sqlite3_finalize(stmt) }
         sqlite3_bind_text(stmt, 1, conv.id.uuidString, -1, transient)
         sqlite3_bind_text(stmt, 2, conv.title, -1, transient)
@@ -303,7 +338,7 @@ final class SessionStore {
         sqlite3_bind_int64(stmt, 4, sqlite3_int64(conv.updatedAt.timeIntervalSince1970))
         sqlite3_bind_int64(stmt, 5, sqlite3_int64(conv.messages.count))
         sqlite3_bind_int64(stmt, 6, sqlite3_int64(tokens))
-        _ = sqlite3_step(stmt)
+        return sqlite3_step(stmt) == SQLITE_DONE
     }
 
     /// 会话 token 估算（与 OpenAIClient 分桶估算同源——上下文占用可视化的口径）

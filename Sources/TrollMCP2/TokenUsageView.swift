@@ -8,7 +8,10 @@ import SwiftUI
 struct ContextUsageBar: View {
     @ObservedObject private var store = ConversationStore.shared
     @State private var showDetail = false
-    private let windowTokens = 128_000   // 对齐 OpenAIClient.defaultContextWindow（无实测窗口时）
+    // 对齐 OpenAIClient 默认窗口；有实测窗口时用实测值（RuntimeWindowTracker）
+    private var windowTokens: Int {
+        RuntimeWindowTracker.shared.measuredWindow(for: ModelStore.shared.defaultConfig?.model ?? "") ?? 128_000
+    }
 
     private var currentTokens: Int {
         guard let idx = store.selectedIndex, idx < store.conversations.count else { return 0 }
@@ -57,7 +60,9 @@ struct TokenUsageDetailView: View {
     @ObservedObject private var store = ConversationStore.shared
     @Environment(\.presentationMode) private var presentationMode
     var showsDismissButton = false
-    private let windowTokens = 128_000
+    private var windowTokens: Int {
+        RuntimeWindowTracker.shared.measuredWindow(for: ModelStore.shared.defaultConfig?.model ?? "") ?? 128_000
+    }
 
     @State private var indexRows: [[String: Any]] = []
     @State private var stats: [String: Any] = [:]
