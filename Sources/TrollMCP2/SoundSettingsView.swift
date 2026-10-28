@@ -24,7 +24,8 @@ struct SoundSettingsView: View {
                     }
                     .accentColor(.tmCyan)
                 }
-                Section(header: Text("提示音选择")) {
+                Section(header: Text("提示音选择"),
+                        footer: Text("共 \(TaskNotify.soundOptions.count) 种系统提示音，点选即试听；前台与后台通知使用同一音色。")) {
                     ForEach(TaskNotify.soundOptions.indices, id: \.self) { idx in
                         let opt = TaskNotify.soundOptions[idx]
                         Button(action: {
@@ -49,8 +50,6 @@ struct SoundSettingsView: View {
                         .disabled(!soundEnabled)
                         .opacity(soundEnabled ? 1 : 0.45)
                     }
-                } footer: {
-                    Text("共 \(TaskNotify.soundOptions.count) 种系统提示音，点选即试听；前台与后台通知使用同一音色。")
                 }
             }
             .listStyle(.insetGrouped)
