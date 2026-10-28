@@ -336,26 +336,24 @@ final class SystemPrompts {
     - UNIFIED ENVIRONMENT: shell.exec has no runtime param — everything runs in TrollRuntime (full Alpine Linux
       toolchain, aarch64 container, ARM64-native). Two executors coexist by binary type, not by choice: shell.exec
       runs Linux/ELF tools (apk-installed clang/git/python3...); system.exec_root runs iOS-side Mach-O binaries from
-      jroot (ldid, clang, dpkg-deb, theos, /bin/ps...). A Mach-O passed to shell.exec fails with ENOEXEC; an ELF passed
+      jroot (ldid, clang, dpkg-deb, theos — jailbroken only). A Mach-O passed to shell.exec fails with ENOEXEC; an ELF passed
       to system.exec_root is rejected — route by file type. Everything (ls/cat/grep/tar/git/python3/sqlite3/curl/ps/df)
       is in the container; apk add installs the rest. Timeout/download rules live in shell.exec's schema.
       [no iOS-native shell fallback]: notifyutil/uicache/sbreload/idevice_id/swift do NOT exist; jtool2/class-dump not
       preinstalled — install via tool.install; sysctl is Alpine's (kern.* not queryable); ps sees only container
-      processes — for iOS-side process listing use system.exec_root /bin/ps. Mach-O analysis: Alpine binutils or
+      processes — for iOS-side process listing use `inject list` / `verify`. Mach-O analysis: Alpine binutils or
       llvm-objdump. All commands/pipes/paths work in the unified env — check the command itself before concluding.
     - SHELL PREFIXES (inside shell.exec, not Alpine commands — don't `command -v` them): `py3-native` (heavy
       numpy/pandas compute; falls back to python3) / `node-native` (heavy node; falls back to node) / `plutil`
-      (plist: -p view / -convert xml1) / `sqlite3 <db> "q"` / `ta <cmd>` (host tool routing). Plain python3/node
+      (plist: -p view / -convert xml1) / `sqlite3 <db> "q"`. Plain python3/node
       is the unified env for daily use. ldid/optool/insert_dylib/ct_bypass are invoked internally by MCP tools —
       don't run them directly.
 
     - COMMAND EXISTENCE (measured): `ls /usr/bin` lists only a subset — common commands (chmod/ls/cp/launchctl) don't
       appear in listings but direct path access works. Check with `command -v <name>` or `ls -la /usr/bin/<name>`;
       never judge missing by `ls <dir>` enumeration. launchctl is at /usr/bin/launchctl.
-    - iOS↔Alpine AUTO-BIND (5 dirs): /var/mobile/Documents/Workspace→/ios_workspace(rw),
-      /var/containers→/ios_containers(rw), /System→/ios_system(ro),
-      /var/mobile/Containers/Data/Application→/ios_appdata(ro),
-      /var/mobile/Containers/Shared/AppGroup→/ios_appgroups(ro).
+    - iOS↔Alpine AUTO-BIND (3 dirs only): /var/mobile/Documents/Workspace→/ios_workspace(rw),
+      /var/containers→/ios_containers(rw), /System→/ios_system(ro). /ios_appdata /ios_appgroups do NOT exist.
       /var/mobile as a whole is NOT auto-bound (self-reference → crash); per-app data containers:
       bind_app bundle_id:<id>→/ios_data_<app> (ro) / bind_app_write (rw, auto-backups Documents+Library first).
       Auto-bind rewrites command-line paths only, not paths inside scripts — in sh/heredoc scripts use /ios_* paths.
