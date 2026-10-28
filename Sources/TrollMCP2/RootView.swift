@@ -273,8 +273,11 @@ struct ConversationDrawerView: View {
         }
         // 用 ScrollView + LazyVStack 替代 List，去掉行间分隔线（v2.9.9）
         // v2.9.10：选中行加渐变圆角卡片
+        // v7.4.0-fix73d：LazyVStack → VStack 全量渲染——用户反馈"滑动时有些地方空有些加载出来，
+        // 像随机"——LazyVStack 按视口懒创建行（滑到哪建哪），渐变背景行创建有成本 → 快速滑动
+        // 时出现随机空白/渐进填充。会话列表规模可控（几十行轻量行），全量渲染一次完成，滑动无空白。
         return AnyView(ScrollView {
-            LazyVStack(spacing: 6) {
+            VStack(spacing: 6) {
                 ForEach(filtered) { conv in
                     Button(action: {
                         store.select(conv.id)

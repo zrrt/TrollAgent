@@ -1,6 +1,7 @@
 import Foundation
 import UserNotifications
 import UIKit
+import AVFoundation
 
 // v2.9.82：任务完成通知 + 后台执行延长
 // - iOS 无越狱下 TrollStore App 无法真正后台常驻（受系统后台机制限制），
@@ -10,18 +11,50 @@ final class TaskNotify {
     static let shared = TaskNotify()
     private let defaults = UserDefaults.standard
     private var bgTask: UIBackgroundTaskIdentifier = .invalid
+    private var player: AVAudioPlayer?
 
     var enabled: Bool {
         get { defaults.object(forKey: "taskNotify.enabled") as? Bool ?? true }
         set { defaults.set(newValue, forKey: "taskNotify.enabled") }
     }
 
+    // v7.4.0-fix73d：AI 完成任务提示音开关（默认开）+ 所选提示音下标（默认 0 = 三全音）
+    var soundEnabled: Bool {
+        get { defaults.object(forKey: "taskNotify.soundEnabled") as? Bool ?? true }
+        set { defaults.set(newValue, forKey: "taskNotify.soundEnabled") }
+    }
+    var soundIndex: Int {
+        get {
+            let v = defaults.integer(forKey: "taskNotify.soundIndex")
+            return v >= 0 && v < Self.soundOptions.count ? v : 0
+        }
+        set { defaults.set(newValue, forKey: "taskNotify.soundIndex") }
+    }
+    /// 当前所选提示音的 bundle 文件名（含扩展名，UNNotificationSound 用）
+    var soundFileName: String {
+        Self.soundOptions[soundIndex].file + ".caf"
+    }
+
+    /// v7.4.0-fix73d：可选提示音清单（bundle 内置 CAF——iOS 14 提取的系统音效，
+    /// 短信/邮件同款经典短音，前台 AVAudioPlayer 与后台通知声音共用同一文件，
+    /// 保证前后台音色完全一致）。
+    static let soundOptions: [(file: String, name: String)] = [
+        ("sms-received1", "三全音（经典短信）"),
+        ("sms-received2", "铃声（Chime）"),
+        ("sms-received3", "玻璃音"),
+        ("sms-received4", "号角音"),
+        ("sms-received5", "铃铛音"),
+        ("sms-received6", "电子音"),
+        ("Tink", "叮咚声"),
+        ("new-mail", "新邮件声"),
+    ]
+
     /// 首次请求通知权限（App 启动 / 首次发送消息时调用）
     func requestPermissionIfNeeded() {
         UNUserNotificationCenter.current().requestAuthorization(options: [.alert, .sound, .badge]) { _, _ in }
     }
 
-    /// 仅在 App 处于后台/挂起时发本地通知（前台不打扰）
+    /// 仅在 App 处于后台/挂起时发本地通知（前台不打扰）——声音用所选提示音文件
     func notifyIfBackground(title: String, body: String) {
         guard enabled else { return }
         DispatchQueue.main.async {
@@ -29,10 +62,41 @@ final class TaskNotify {
             let content = UNMutableNotificationContent()
             content.title = title
             content.body = body
-            content.sound = .default
+            content.sound = UNNotificationSound(named: UNNotificationSoundName(self.soundFileName))
             let req = UNNotificationRequest(identifier: UUID().uuidString, content: content, trigger: nil)
             UNUserNotificationCenter.current().add(req)
         }
+    }
+
+    /// v7.4.0-fix73d：AI 完成任务时前台播放所选提示音（bundle 文件，与后台通知同音色；
+    /// 后台/锁屏场景由 notifyIfBackground 的通知声音负责）
+    func playCompletionSoundIfForeground() {
+        guard soundEnabled else { return }
+        DispatchQueue.main.async {
+            guard UIApplication.shared.applicationState == .active else { return }
+            self.playFile(Self.soundOptions[self.soundIndex].file)
+        }
+    }
+
+    /// v7.4.0-fix73d：试听提示音（设置页点选时播放）
+    func previewSound(_ index: Int) {
+        let i = min(max(index, 0), Self.soundOptions.count - 1)
+        playFile(Self.soundOptions[i].file)
+    }
+
+    /// 播放 bundle 内提示音文件（ambient 类别：不打断正在播放的音乐/视频）
+    private func playFile(_ name: String) {
+        guard let url = Bundle.main.url(forResource: name, withExtension: "caf") else { return }
+        do {
+            try AVAudioSession.sharedInstance().setCategory(.ambient, options: [.mixWithOthers])
+            try AVAudioSession.sharedInstance().setActive(true, options: .notifyOthersOnDeactivation)
+        } catch {
+            // 音频会话失败不阻塞提示音逻辑
+        }
+        player?.stop()
+        player = try? AVAudioPlayer(contentsOf: url)
+        player?.prepareToPlay()
+        player?.play()
     }
 
     /// 开始后台任务（切后台后尽量延长执行，系统上限约 30 秒）

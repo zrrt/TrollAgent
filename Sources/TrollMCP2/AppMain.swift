@@ -57,9 +57,13 @@ final class AppDelegate: UIResponder, UIApplicationDelegate {
 
         // v7.4.0-fix71：导航栏滚动边缘固定不透明——修复 AI 发消息/执行命令自动滚动时
         // 列表处于顶部边缘 → iOS 15 默认 scrollEdgeAppearance 透明导致导航栏闪变透明
+        // v7.4.0-fix73d：configureWithOpaqueBackground 默认带底部 hairline shadow（深色模式=黑线）——
+        // 用户反馈聊天框顶部栏多一条黑线 → 显式清 shadow（导航栏更干净，全局统一）
         if #available(iOS 13.0, *) {
             let appearance = UINavigationBarAppearance()
             appearance.configureWithOpaqueBackground()
+            appearance.shadowColor = .clear
+            appearance.shadowImage = UIImage()
             UINavigationBar.appearance().scrollEdgeAppearance = appearance
         }
 
@@ -206,7 +210,18 @@ final class AppDelegate: UIResponder, UIApplicationDelegate {
 
     // v2.9.10：进后台时申请后台任务，让正在进行的请求有保活窗口（最多 3 分钟）
     func applicationDidEnterBackground(_ application: UIApplication) {
+        // v7.4.0-fix73c：后台代传**绑到窗口耗尽时刻**（不是 3 秒延迟）——
+        // iOS 事实：beginBackgroundTask 窗口内普通 URLSession 继续正常传输（Apple Forums 确认：
+        // app remains running until you complete the request or run out of background time）。
+        // 因此原请求在窗口内（最长 180s）一直活着，过早 cancel = 杀活请求、白白重发。
+        // 正确时机：窗口耗尽（expirationHandler）→ 系统即将冻结 → 此刻原请求必死 → 代传保住。
+        // 窗口内完成/回前台 → 零浪费；系统内存强杀（Jetsam）→ handler 不触发 → fix72 前台兜底。
         backgroundTask = application.beginBackgroundTask(withName: "trollmcp2.network") {
+            // 窗口耗尽前一刻（系统在主线程同步调用，短暂阻止暂停）→ 轻量代传
+            ConversationStore.shared.handoffActiveRequestToBackground()
+            // v7.4.0-fix73d：子代理请求不在主会话 currentClient 管辖内（独立 OpenAIClient），
+            // 代传覆盖不到——标记"后台挂起"，失败回调判 interrupted（可重派发）而非误报 failed
+            SubAgentManager.shared.suspendAllForBackground()
             application.endBackgroundTask(self.backgroundTask)
             self.backgroundTask = .invalid
         }
@@ -218,8 +233,6 @@ final class AppDelegate: UIResponder, UIApplicationDelegate {
         }
         // v2.9.136：切后台提交 BGTask 周期刷新（系统调度窗口内保持存活）
         BackgroundKeepAlive.scheduleRefresh()
-        // v7.4.0-fix73：在途流式请求 → background session 系统代传（App 挂起/被杀也能完成）
-        ConversationStore.shared.handoffActiveRequestToBackground()
     }
 
     func applicationWillEnterForeground(_ application: UIApplication) {

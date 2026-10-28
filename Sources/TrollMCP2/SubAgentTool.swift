@@ -21,11 +21,15 @@ final class SubAgentTask: Identifiable {
     /// v7.1.107-P0: 完成但无交付内容（模型总结为空/被截断）——对齐 OpenMinis
     /// "finished callback whose body is empty carries no deliverable" 语义
     private(set) var noDeliverable: Bool = false
+    /// v7.4.0-fix73d：后台挂起标记——窗口耗尽时由 suspendAllForBackground 设置；
+    /// 请求失败回调据此判 interrupted（可重派发）而非误报 failed。
+    /// 请求若窗口内完成/回前台恢复成功 → 正常 done，标记残留无影响。
+    private(set) var backgroundSuspended: Bool = false
     /// v7.1.108-fix: 状态锁——runner 后台线程写状态（markDone/Failed/Stopped/addRound），
     /// 工具线程读（toDict/status）。无锁多线程读写是数据竞争（UB），全部可变状态读写统一走 stateLock。
     private let stateLock = NSLock()
 
-    enum Status: String { case running, done, failed, stopped }
+    enum Status: String { case running, done, failed, stopped, interrupted }
 
     init(id: String, instruction: String, maxRounds: Int, timeoutSecs: TimeInterval) {
         self.id = id
@@ -62,6 +66,27 @@ final class SubAgentTask: Identifiable {
         stateLock.lock(); defer { stateLock.unlock() }
         status = .stopped
         elapsed = Date().timeIntervalSince(createdAt)
+    }
+
+    /// v7.4.0-fix73d：后台挂起中断——区别于 failed（误报）与 stopped（用户手动），
+    /// 语义 = "app 切后台窗口耗尽，请求被冻结中断"，父模型应重新派发而非诊断失败。
+    func markInterrupted() {
+        stateLock.lock(); defer { stateLock.unlock() }
+        status = .interrupted
+        error = "interrupted by app backgrounding (background window expired) — re-dispatch to resume"
+        elapsed = Date().timeIntervalSince(createdAt)
+    }
+
+    /// v7.4.0-fix73d：标记"可能被后台挂起"（窗口耗尽时对所有 running 任务设置）
+    func markBackgroundSuspended() {
+        stateLock.lock(); defer { stateLock.unlock() }
+        backgroundSuspended = true
+    }
+
+    /// v7.4.0-fix73d：读取挂起标记（失败回调判定用）
+    func isBackgroundSuspended() -> Bool {
+        stateLock.lock(); defer { stateLock.unlock() }
+        return backgroundSuspended
     }
 
     func addRound(tools: [String]) {
@@ -179,6 +204,17 @@ final class SubAgentManager {
         defer { lock.unlock() }
         return pendingSteers.removeValue(forKey: id) ?? []
     }
+
+    /// v7.4.0-fix73d：窗口耗尽时标记全部 running 子代理"可能被后台挂起"。
+    /// 子代理请求用独立 OpenAIClient（不在主会话 currentClient 管辖内，fix73 代传覆盖不到）——
+    /// 冻结后请求失败回调据此判 interrupted（可重派发）而非误报 failed。
+    /// 请求若窗口内完成/回前台恢复成功 → 正常 done，标记残留无影响。
+    func suspendAllForBackground() {
+        lock.lock()
+        let running = tasks.values.filter { $0.isRunning() }
+        lock.unlock()
+        for t in running { t.markBackgroundSuspended() }
+    }
 }
 
 // MARK: - 子代理执行循环（隔离会话 + 工具循环，独立于主 runLoop，不碰主线状态）
@@ -196,6 +232,8 @@ final class SubAgentRunner {
     private var turnWarningInjected = false
     /// v7.1.107-P0: wrap-up 已注入（最后一轮收回工具，强制写交付总结）
     private var wrapUpInjected = false
+    /// v7.4.0-fix73d：历史折叠已执行（只折叠一次——折叠后 token 骤降，重复触发无意义）
+    private var historyFolded = false
 
     /// 子代理默认工具集——通用干活三件套 + 只读信息工具（全量 schema 太大，注入精简集）
     private let defaultTools: Set<String> = [
@@ -257,9 +295,63 @@ final class SubAgentRunner {
         loop()
     }
 
+    /// v7.4.0-fix73d：多轮中间折叠——对齐大厂子任务上下文管理（Claude Code subagent compaction /
+    /// OpenMinis 子会话压缩）。子代理默认 12 轮、上限 30 轮，每轮 assistant+tool 结果全量累积，
+    /// 后期请求 token 膨胀（浪费 + 可能超窗）。本地折叠（不做网络摘要——循环内加 summarize
+    /// 请求会引入新失败点，且执行型任务的历史工具结果价值低）：保留 system + instruction +
+    /// 最近 K 轮完整配对，更早轮次折叠成一条紧凑说明（含已执行工具名轨迹，供模型感知进度）。
+    private func foldHistoryIfNeeded() {
+        guard !historyFolded else { return }
+        let est = messages.reduce(0) { $0 + ConversationStore.estimateTokens($1) }
+        // 阈值 6000 token ≈ 常见窗口(8k-32k)的一半；折叠一次后骤降，无需再触发
+        guard est > 6000 else { return }
+        guard messages.count > 6 else { return }  // system+instruction+至少几轮才值得折
+        // 从尾部保留最近 K 轮完整配对（assistant tool_calls ↔ tool 结果不能拆散——sanitize 语义）
+        let keepTail = 6
+        var keepStart = messages.count
+        var keptRounds = 0
+        var i = messages.count - 1
+        while i >= 0 && keptRounds < keepTail {
+            if messages[i].role == "tool" {
+                keptRounds += 1
+            }
+            i -= 1
+        }
+        keepStart = i + 1
+        // fix73d 审计：keepStart 若正好落在 tool 消息上，它的配对 assistant(tool_calls) 会留在折叠段
+        // → 保留段出现孤儿 tool（无前导 tool_calls），API 校验/模型理解都会出问题。前移一位纳入配对。
+        if keepStart < messages.count, messages[keepStart].role == "tool", keepStart > 2 {
+            keepStart -= 1
+        }
+        // 折叠段：从 index 1（instruction 之后）到 keepStart 之前——只折"轮次消息"，
+        // 绝不折 system(0) 与 instruction(1)（那是任务的根，丢了任务就废了）
+        var folded: [ChatMessage] = []
+        var foldCount = 0
+        if keepStart > 2 {
+            folded = Array(messages[2..<keepStart])
+            foldCount = folded.count
+        }
+        guard foldCount > 0 else { return }
+        // 折叠说明：列出被折轮次用过的工具名（来自消息里的 tool 角色 title/name，简化取 role==tool 的 toolName）
+        var used = Set<String>()
+        for m in folded where m.role == "tool" {
+            if let name = m.toolName, !name.isEmpty { used.insert(name) }
+        }
+        let toolsLine = used.isEmpty ? "various tools" : used.sorted().joined(separator: ", ")
+        let foldNote = ChatMessage(role: "user", content:
+            "[HISTORY FOLDED — \(foldCount) earlier tool-round messages summarized away to save context. " +
+            "Completed so far (tools used): \(toolsLine). Key findings persist in the later rounds below; " +
+            "continue the task; your final summary must still cover the whole task including folded work.]")
+        messages = Array(messages[..<2]) + [foldNote] + Array(messages[keepStart...])
+        historyFolded = true
+    }
+
     private func loop() {
         // 停止检查（线程安全读取——stop 可能由工具线程随时触发）
         if !task.isRunning() { return }
+        // v7.4.0-fix73d：多轮中间折叠（对齐大厂子任务 compaction）——在轮次预算/超时检查之后、
+        // 请求组装之前执行，保证折叠结果进入本轮请求
+        foldHistoryIfNeeded()
         // 超时
         if Date() > deadline {
             task.markFailed("timeout after \(Int(deadline.timeIntervalSince(task.createdAt)))s")
@@ -329,7 +421,11 @@ final class SubAgentRunner {
                 }
             case .failure(let err):
                 let nsErr = err as NSError
-                if nsErr.code == -999 {
+                // v7.4.0-fix73d：后台挂起优先判定——窗口耗尽冻结导致请求失败 ≠ 任务真实失败。
+                // 主代理看到 interrupted 应重新派发（长任务可能已白跑，但状态语义准确、不误报 failed）。
+                if self.task.isBackgroundSuspended() {
+                    self.task.markInterrupted()
+                } else if nsErr.code == -999 {
                     self.task.markStopped()
                 } else {
                     self.task.markFailed(String(err.localizedDescription.prefix(200)))

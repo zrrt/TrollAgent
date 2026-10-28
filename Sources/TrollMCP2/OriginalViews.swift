@@ -1001,6 +1001,13 @@ struct UpstreamModelPickerView: View {
                             }) {
                                 HStack {
                                     Text(id).font(.system(.subheadline, design: .monospaced))
+                                    // v7.4.0-fix73d：视觉能力标注（对齐配置列表 photo 图标）
+                                    if ModelConfig.modelSupportsVision(id) {
+                                        Image(systemName: "photo")
+                                            .font(.system(size: 11, weight: .semibold))
+                                            .foregroundColor(.blue)
+                                            .accessibilityLabel("Vision")
+                                    }
                                     Spacer()
                                     if models.defaultConfig?.model == id {
                                         Image(systemName: "checkmark").foregroundColor(.blue)

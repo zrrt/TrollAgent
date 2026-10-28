@@ -3,6 +3,16 @@ import UIKit
 import RSKGrowingTextView
 import UniformTypeIdentifiers
 
+// v7.4.0-fix73d：滚动位置检测（悬浮按钮用）——内容 offset / 总高 / 视口高
+private struct ChatScrollOffsetKey: PreferenceKey {
+    static var defaultValue: CGFloat = 0
+    static func reduce(value: inout CGFloat, nextValue: () -> CGFloat) { value = nextValue() }
+}
+private struct ChatContentHeightKey: PreferenceKey {
+    static var defaultValue: CGFloat = 0
+    static func reduce(value: inout CGFloat, nextValue: () -> CGFloat) { value = nextValue() }
+}
+
 struct ChatView: View {
     @ObservedObject private var store = ConversationStore.shared
     @ObservedObject private var modelStore = ModelStore.shared
@@ -41,6 +51,10 @@ struct ChatView: View {
     @State private var selectedIds = Set<UUID>()
     @State private var showToast = false
     @State private var toastText = L10n.t("i18n_1197")
+    // v7.4.0-fix73d：悬浮滚动按钮状态（对齐 Minis：up 只在中间显示、down 非底部显示）
+    @State private var chatScrollOffset: CGFloat = 0
+    @State private var chatContentHeight: CGFloat = 0
+    @State private var chatViewportHeight: CGFloat = 0
     var body: some View {
         CompatNav {
             VStack(spacing: 0) {
@@ -508,30 +522,38 @@ struct ChatView: View {
 
     private var messageList: some View {
         ScrollViewReader { proxy in
-            ScrollView {
-                LazyVStack(spacing: 12) {
-                    // v7.2.3-fix20：连续工具折叠——相邻已完成工具消息聚合成组，
-                    // 组默认一行"运行了 N 个工具"，展开显示各工具卡
-                    ForEach(ChatListGrouping.group(store.currentMessages), id: \.id) { item in
-                        switch item {
-                        case .msg(let msg):
-                            MessageBubble(
-                                message: msg,
-                                selectionMode: selectionMode,
-                                isSelected: selectedIds.contains(msg.id),
-                                onToggleSelect: { toggleSelect(msg.id) },
-                                onCopy: { copyMessage(msg) },
-                                onShare: { shareMessage(msg) },
-                                isStreaming: store.streamingMessageId == msg.id,
-                                forceType: store.liveProducedID == msg.id,
-                                thinkEnabled: thinkEnabled
-                            )
-                            .id(msg.id)
-                        case .tools(let msgs):
-                            toolsRunGroup(msgs)
+            ZStack(alignment: .bottomTrailing) {
+                ScrollView {
+                    LazyVStack(spacing: 12) {
+                        // v7.4.0-fix73d：滚动偏移上报（顶部=0，向下滚为负；配合内容高+视口高算 canScrollUp/Down）
+                        GeometryReader { geo in
+                            Color.clear.preference(
+                                key: ChatScrollOffsetKey.self,
+                                value: geo.frame(in: .named("chatScroll")).minY)
                         }
-                    }
-                    if store.isLoading {
+                        .frame(height: 0)
+                        // v7.2.3-fix20：连续工具折叠——相邻已完成工具消息聚合成组，
+                        // 组默认一行"运行了 N 个工具"，展开显示各工具卡
+                        ForEach(ChatListGrouping.group(store.currentMessages), id: \.id) { item in
+                            switch item {
+                            case .msg(let msg):
+                                MessageBubble(
+                                    message: msg,
+                                    selectionMode: selectionMode,
+                                    isSelected: selectedIds.contains(msg.id),
+                                    onToggleSelect: { toggleSelect(msg.id) },
+                                    onCopy: { copyMessage(msg) },
+                                    onShare: { shareMessage(msg) },
+                                    isStreaming: store.streamingMessageId == msg.id,
+                                    forceType: store.liveProducedID == msg.id,
+                                    thinkEnabled: thinkEnabled
+                                )
+                                .id(msg.id)
+                            case .tools(let msgs):
+                                toolsRunGroup(msgs)
+                            }
+                        }
+                        if store.isLoading {
                         // v2.9.34：请求过程可视化（对齐老 MCP 的"正在思考"面板）
                         // v2.9.127：改为实时执行轨迹（豆包工作任务/Codex 式步骤流）
                         VStack(alignment: .trailing, spacing: 6) {
@@ -580,11 +602,23 @@ struct ChatView: View {
                 // v3.4.0：去掉整行水平 padding —— AI 气泡改为真正占满左右屏边缘；
                 // 用户气泡的右留白由 MessageBubble 内部按 isUser 处理
                 .padding(.vertical, 12)
+                // v7.4.0-fix73d：内容总高上报（悬浮按钮 canScrollDown 判定用）
+                .background(GeometryReader { geo in
+                    Color.clear.preference(key: ChatContentHeightKey.self, value: geo.size.height)
+                })
             }
+            .coordinateSpace(name: "chatScroll")
             // 点击聊天区空白处收起键盘（v2.9.9）
             .simultaneousGesture(
                 TapGesture().onEnded { dismissKeyboard() }
             )
+            .onPreferenceChange(ChatScrollOffsetKey.self) { chatScrollOffset = $0 }
+            .onPreferenceChange(ChatContentHeightKey.self) { chatContentHeight = $0 }
+            .background(GeometryReader { geo in
+                Color.clear
+                    .onAppear { chatViewportHeight = geo.size.height }
+                    .onChange(of: geo.size.height) { chatViewportHeight = $0 }
+            })
             .onChange(of: store.currentMessages.count) { _ in
                 if let last = store.currentMessages.last {
                     withAnimation { proxy.scrollTo(last.id, anchor: .bottom) }
@@ -614,7 +648,46 @@ struct ChatView: View {
                     }
                 }
             }
+            // v7.4.0-fix73d：悬浮滚动按钮（对齐 Minis 显示矩阵：顶部只显 down、中间 up+down、底部全隐）
+            VStack(spacing: 10) {
+                if chatCanScrollUp && chatCanScrollDown {
+                    chatFloatingButton("arrow.up") {
+                        if let first = store.currentMessages.first {
+                            withAnimation { proxy.scrollTo(first.id, anchor: .top) }
+                        }
+                    }
+                }
+                if chatCanScrollDown {
+                    chatFloatingButton("arrow.down") { scrollToBottom(proxy) }
+                }
+            }
+            .padding(.trailing, 12)
+            .padding(.bottom, 14)
+            }
         }
+    }
+
+    // v7.4.0-fix73d：悬浮按钮显示条件——Minis 矩阵：up 只在"中间"（可上可下）显示，
+    // down 只在"非底部"（可下）显示；底部两者全隐，顶部只显 down
+    private var chatCanScrollUp: Bool {
+        chatScrollOffset < -2
+    }
+    private var chatCanScrollDown: Bool {
+        let maxOffset = max(0, chatContentHeight - chatViewportHeight)
+        return chatScrollOffset > -maxOffset + 2
+    }
+
+    private func chatFloatingButton(_ icon: String, action: @escaping () -> Void) -> some View {
+        Button(action: action) {
+            Image(systemName: icon)
+                .font(.system(size: 15, weight: .semibold))
+                .foregroundColor(.primary)
+                .frame(width: 40, height: 40)
+                .background(Color(.systemGray5).opacity(0.92))
+                .clipShape(Circle())
+                .shadow(color: .black.opacity(0.15), radius: 4, y: 2)
+        }
+        .buttonStyle(PlainButtonStyle())
     }
 
     /// v2.9.12：滚到当前会话最新一条
@@ -1446,6 +1519,13 @@ struct ChatModelPickerSheet: View {
                                         .font(.caption)
                                         .foregroundColor(.secondary)
                                         .lineLimit(1)
+                                }
+                                // v7.4.0-fix73d：视觉能力标注——首页切换弹窗对齐配置列表
+                                if cfg.supportsVision {
+                                    Image(systemName: "photo")
+                                        .font(.system(size: 11, weight: .semibold))
+                                        .foregroundColor(.blue)
+                                        .accessibilityLabel("Vision")
                                 }
                                 Spacer()
                                 if cfg.isDefault {

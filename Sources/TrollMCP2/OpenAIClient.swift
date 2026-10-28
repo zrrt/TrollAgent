@@ -81,6 +81,8 @@ final class OpenAIClient {
     /// 鉴权纠正回调（创建方注入，用于把识别到的 authMethod 持久化）
     var onAuthCorrected: ((String) -> Void)?
     private var currentCompatLevel: Int;  // v6.0.30: 内存里的兼容级别，避免反复试探死循环
+    // v7.4.0-fix73c：流式请求在途标志（后台代传检测用——仅流式请求值得 cancel+非流式重发）
+    private(set) var isStreamingInFlight = false
     /// v2.9.87：多级降级总预算——全链串行最坏 7 分钟+，用户感知"一直请求中"。
     /// v2.9.96：试探级 (L0-L4）超时已压到 25s，预算放宽到 220s 给 L5 流式留足时间。
     private var overallDeadline = Date.distantFuture
@@ -1814,7 +1816,9 @@ final class OpenAIClient {
         setHTTPMethod("POST", on: &request)
         request.setValue("application/json", forHTTPHeaderField: "Content-Type")
         applyAuth(to: &request)
-        var body = buildBody(level: 0, messages: messages, tools: tools)
+        // fix73b-audit：用记忆的兼容级别（而非硬编码 L0）——该中转已验证过的载荷形态
+        // （如 L2 去 tool_choice）后台重发更稳，避免完整载荷被 502（用户实测 Botcf L0 502）
+        var body = buildBody(level: currentCompatLevel, messages: messages, tools: tools)
         injectBodyAuth(into: &body)
         applyParamAliases(into: &body)
         request.httpBody = try? JSONSerialization.data(withJSONObject: body)
@@ -2122,6 +2126,9 @@ final class OpenAIClient {
         request.httpBody = try? JSONSerialization.data(withJSONObject: body)
 
         onStatus?(L10n.t("status_streaming_responses"))
+        // v7.4.0-fix73c：流式在途标志——后台代传检测用（只有流式请求才值得 cancel+非流式重发，
+        // 参数形态真的变了；非流式请求重发 = 同参数 = 纯 token 浪费，OpenMinis 同原则）
+        isStreamingInFlight = true
 
         // 累积状态
         var fullText = ""
@@ -2142,11 +2149,13 @@ final class OpenAIClient {
         // 统一走 guardedCompletion，任何路径只能done一次。
         let completionLock = NSLock()
         var completionCalled = false
-        let guardedCompletion: (Result<ChatResult, Error>) -> Void = { r in
+        let guardedCompletion: (Result<ChatResult, Error>) -> Void = { [weak self] r in
             completionLock.lock()
             if completionCalled { completionLock.unlock(); return }
             completionCalled = true
             completionLock.unlock()
+            // v7.4.0-fix73c：流式结束（成功/失败/降级均经过此出口）→ 清标志
+            self?.isStreamingInFlight = false
             completion(r)
         }
 

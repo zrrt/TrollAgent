@@ -85,10 +85,14 @@ final class BackgroundLLM: NSObject, URLSessionDownloadDelegate {
     }
 
     /// v7.4.0-fix73b：用户发新消息/手动停止时取消后台等待（放弃旧结果，避免结果覆盖新会话）
+    /// fix73b-audit：无在途任务且无结果时不重建 session（send() 每轮都会调用，避免无谓 invalidate）
     func cancelHandoff() {
-        lock.lock(); defer { lock.unlock() }
+        lock.lock()
+        let hasWork = isHandoffInFlight || pendingResult != nil
         pendingResult = nil
         isHandoffInFlight = false
+        lock.unlock()
+        guard hasWork else { return }
         backgroundSession?.invalidateAndCancel()
         let cfg = URLSessionConfiguration.background(withIdentifier: bgID)
         cfg.isDiscretionary = false

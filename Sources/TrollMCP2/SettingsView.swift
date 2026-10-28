@@ -284,6 +284,17 @@ struct SettingsView: View {
                          destination: AnyView(CorunaShieldView())),
         ]))
 
+        // v7.4.0-fix73d：提示音——AI 完成任务提示音开关 + 点击进子页选音色
+        // （复用"开关优先"模式：isOn 开关键 + destination 子页，NavigationLink 包 Toggle）
+        groups.append(SettingsGroup(header: "提示音", items: [
+            SettingsItem(title: "任务完成提示音",
+                         subtitle: TaskNotify.shared.soundEnabled ? "已开启 · 点击选择音色" : "已关闭",
+                         icon: "bell.badge.fill", color: .orange,
+                         destination: AnyView(SoundSettingsView()),
+                         isOn: { TaskNotify.shared.soundEnabled },
+                         onToggle: { on in TaskNotify.shared.soundEnabled = on }),
+        ]))
+
         // 关于
         let ver = Bundle.main.infoDictionary?["CFBundleShortVersionString"] as? String ?? "unknown"
         var aboutItems: [SettingsItem] = [

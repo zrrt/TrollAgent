@@ -74,6 +74,14 @@ struct ModelConfig: Codable, Identifiable, Hashable {
         return false
     }
 
+    /// v7.4.0-fix73d：按模型名判断视觉能力（上游模型列表/选择弹窗 UI 用——无 config 对象时
+    /// 用临时 config 走同一套 supportsVision 判定：VisionTracker 学习优先 + 静态规则兜底）
+    static func modelSupportsVision(_ model: String) -> Bool {
+        let cfg = ModelConfig(name: model, provider: "preview",
+                              baseURL: "", apiKey: "", model: model)
+        return cfg.supportsVision
+    }
+
     init(id: UUID = UUID(), name: String, provider: String, apiProtocol: String = "OpenAI Chat Completions",
          baseURL: String, apiKey: String, model: String, authMethod: String = "Bearer",
          isDefault: Bool = false, temperature: Double = 0.2, maxTokens: Int = 16384, compatLevel: Int = 0,
@@ -1039,6 +1047,8 @@ final class ConversationStore: ObservableObject {
     @Published var isLoadingData = true
     // v7.4.0-fix73：当前在途请求上下文快照（切后台 handoff 用）——runLoop 每次发送前更新
     private var lastRequestContext: (messages: [ChatMessage], tools: [[String: Any]]?, config: ModelConfig)?
+    // v7.4.0-fix73b-audit：后台代传发起时的会话 ID（consume 校验归属，防污染新会话）
+    private var handoffConvId: UUID?
 
     init() {
         // v7.4.0-fix71：会话异步加载——loadAll 逐会话 JSONL 全量解码（含大图 base64）
@@ -1331,6 +1341,8 @@ final class ConversationStore: ObservableObject {
         if UIApplication.shared.applicationState == .active || (sinceForeground >= 0 && sinceForeground < 5) {
             DispatchQueue.main.async { [weak self] in
                 guard let self = self else { return }
+                // fix73b-audit：排队期间用户已发新请求/停止 → 放弃本次自动重试，防双 runLoop 竞态
+                if self.isLoading { return }
                 self.statusText = "Foreground restored, auto-retrying…"
                 self.isLoading = true
                 self.runLoop(config: config, tools: tools, disclosed: disclosed, depth: depth, reasoningLevel: reasoningLevel, personaPrompt: personaPrompt)
@@ -1366,17 +1378,29 @@ final class ConversationStore: ObservableObject {
     /// 成功接管 → cancel 原流式（-999 静默，不弹错误气泡）；不支持（协议/中转）→ 不动，靠 fix72 前台重试。
     func handoffActiveRequestToBackground() {
         guard isLoading, currentClient != nil,
-              let ctx = lastRequestContext,
-              BackgroundLLM.shared.handoff(messages: ctx.messages, tools: ctx.tools, config: ctx.config) else { return }
+              let ctx = lastRequestContext else { return }
+        // v7.4.0-fix73c：只有流式请求才值得代传——cancel+非流式重发的参数形态真的变了
+        // （stream:true → stream:false）。非流式请求（chat 路径）重发 = 同参数 = 纯 token 浪费
+        // （OpenMinis 原则：retry only when the new shape actually changes the request）。
+        // 注：不设"活跃检测"——本方法在 backgroundTask 窗口耗尽时刻被调（AppMain expirationHandler），
+        // 此刻系统即将冻结，请求无论是否活跃都会死，代传保住剩余部分；窗口内原请求一直活着由系统传输。
+        guard currentClient?.isStreamingInFlight == true else { return }
+        guard BackgroundLLM.shared.handoff(messages: ctx.messages, tools: ctx.tools, config: ctx.config) else { return }
+        handoffConvId = requestSessionId ?? activeConvId
         currentClient?.cancel()
         currentClient = nil
         statusText = "切后台：请求已转后台代传，回前台自动收结果"
     }
-
     /// 回前台：收取后台代传结果并展示/继续执行。
     func consumeBackgroundResult() {
         guard let result = BackgroundLLM.shared.consumeResult() else { return }
         guard isLoading else { return }
+        // v7.4.0-fix73b-audit：会话归属校验——后台结果只写回发起会话。
+        // 若期间用户发了新请求（requestSessionId 已更新）或切了会话，旧后台结果直接丢弃，
+        // 防止污染新会话（cancelHandoff 异步竞态下旧任务仍可能完成回调）。
+        if let h = handoffConvId, requestSessionId != h, activeConvId != h {
+            return
+        }
         if let err = result.error, !err.isEmpty {
             let errMsg = ChatMessage(role: "assistant", content: "⚠️ \(err)", isError: true)
             appendToCurrent(errMsg)
@@ -1393,10 +1417,15 @@ final class ConversationStore: ObservableObject {
             appendToCurrent(msg)
             TaskNotify.shared.endBackground()
             TaskNotify.shared.notifyIfBackground(title: "✅ AI replied", body: String(result.text.prefix(60)))
+            // v7.4.0-fix73d：后台代传结果回前台 → 前台播放所选提示音
+            TaskNotify.shared.playCompletionSoundIfForeground()
             isLoading = false
             currentClient = nil
             activeConvId = nil
             statusText = nil
+            // v7.4.0-fix73c：后台代传一次性语义固化——结果已消费，后台状态已清空，
+            // 下一轮 send() 走正常流式（用户发下一条消息即恢复流式）
+            NetworkLog.shared.log("background handoff result consumed — next request returns to streaming")
             trailStep(.done(.note, "AI reply done (background)", detail: String(result.text.prefix(80))))
             attachTrail(to: msg.id)
             return
@@ -1662,6 +1691,8 @@ final class ConversationStore: ObservableObject {
                     // v2.9.82：done通知 (后台时）
                     TaskNotify.shared.endBackground()
                     TaskNotify.shared.notifyIfBackground(title: "✅ AI replied", body: String(text.prefix(60)))
+                    // v7.4.0-fix73d：任务完成提示音（前台播放所选音色，后台由通知声音负责）
+                    TaskNotify.shared.playCompletionSoundIfForeground()
                     if let sid = self.streamingMessageId {
                         // 流式已显示，更新最终文本 + thinking
                         self.updateMessageContent(id: sid, content: text)
@@ -2614,7 +2645,8 @@ final class ConversationStore: ObservableObject {
     }
 
     /// 粗估 token：中文/日文等约 1 字≈1.5 token；ASCII 约 4 字符≈1 token；图片按固定值计
-    private static func estimateTokens(_ m: ChatMessage) -> Int {
+    /// v7.4.0-fix73d：private → internal——SubAgentRunner 多轮折叠复用此估算（子代理 12-30 轮膨胀防护）
+    static func estimateTokens(_ m: ChatMessage) -> Int {
         var t = 0
         let content = m.content
         var cjk = 0
