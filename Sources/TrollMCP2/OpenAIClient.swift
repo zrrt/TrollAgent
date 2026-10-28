@@ -186,7 +186,8 @@ final class OpenAIClient {
     /// 跨模型自动修正 tokenizer 差异：Claude 4.7+ 自动收敛 ~1.65、中文内容自动修正）
     private func estimateTotalTokens(_ msgs: [ChatMessage]) -> Int {
         let est = msgs.reduce(0) { $0 + Self.estimateTokensStatic($1) }
-        let cal = UsageRecorder.shared.lastRealRatio
+        // v7.4.0-fix66：线程安全读（原直接读 lastRealRatio 与回调线程竞争）
+        let cal = UsageRecorder.shared.calibratedRatio
         return cal > 0 ? max(est, Int(Double(est) * cal)) : est
     }
     /// 当前模型上下文窗口：优先实测（RuntimeWindowTracker 动态收敛），无则默认
@@ -2401,6 +2402,12 @@ final class UsageRecorder {
     // v7.1.109-peers：OpenMinis calibration ratio 借鉴——最近一次真实 prompt_tokens/估算 的比值，
     // 供 messagesForAPI 校准上下文预算比较（clamp 0.5–2.5，防估算器偏差导致超发或过度压缩）
     private(set) var lastRealRatio: Double = 1.0
+    /// v7.4.0-fix66：线程安全读——UI/SessionStore 跨线程读（end() 写点在 lock 内，
+    /// 读方必须走本访问器，避免与回调线程数据竞争；同时统一 UI 与 AI 压力判断口径）
+    var calibratedRatio: Double {
+        lock.lock(); defer { lock.unlock() }
+        return lastRealRatio
+    }
 
     init() {
         let dir = FileManager.default.urls(for: .documentDirectory, in: .userDomainMask).first

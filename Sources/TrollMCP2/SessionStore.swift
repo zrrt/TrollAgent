@@ -341,12 +341,14 @@ final class SessionStore {
         return sqlite3_step(stmt) == SQLITE_DONE
     }
 
-    /// 会话 token 估算（与 OpenAIClient 分桶估算同源——上下文占用可视化的口径）
+    /// 会话 token 估算（与 OpenAIClient 分桶估算同源，乘真实 usage 校准比——
+    /// UI 索引口径与 AI 压力判断一致：Claude 模型自动收敛 ~1.65，不乘会显示偏低 40%）
     private func tokenEstimate(_ conv: ChatConversation) -> Int {
         var total = 0
         for m in conv.messages {
             total += OpenAIClient.estimateTokensStatic(m)
         }
-        return total
+        let cal = UsageRecorder.shared.calibratedRatio
+        return cal > 0 ? max(total, Int(Double(total) * cal)) : total
     }
 }

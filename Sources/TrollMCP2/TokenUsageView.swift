@@ -15,7 +15,10 @@ struct ContextUsageBar: View {
 
     private var currentTokens: Int {
         guard let idx = store.selectedIndex, idx < store.conversations.count else { return 0 }
-        return store.conversations[idx].messages.reduce(0) { $0 + OpenAIClient.estimateTokensStatic($1) }
+        // v7.4.0-fix66：与 AI 压力判断同口径（分桶估算 × 真实 usage 校准比）
+        let est = store.conversations[idx].messages.reduce(0) { $0 + OpenAIClient.estimateTokensStatic($1) }
+        let cal = UsageRecorder.shared.calibratedRatio
+        return cal > 0 ? max(est, Int(Double(est) * cal)) : est
     }
     private var pct: Double { windowTokens > 0 ? min(1.0, Double(currentTokens) / Double(windowTokens)) : 0 }
 
@@ -70,7 +73,10 @@ struct TokenUsageDetailView: View {
 
     private var currentTokens: Int {
         guard let idx = store.selectedIndex, idx < store.conversations.count else { return 0 }
-        return store.conversations[idx].messages.reduce(0) { $0 + OpenAIClient.estimateTokensStatic($1) }
+        // v7.4.0-fix66：与 AI 压力判断同口径（分桶估算 × 真实 usage 校准比）
+        let est = store.conversations[idx].messages.reduce(0) { $0 + OpenAIClient.estimateTokensStatic($1) }
+        let cal = UsageRecorder.shared.calibratedRatio
+        return cal > 0 ? max(est, Int(Double(est) * cal)) : est
     }
     private var currentPct: Double { windowTokens > 0 ? min(1.0, Double(currentTokens) / Double(windowTokens)) : 0 }
 
