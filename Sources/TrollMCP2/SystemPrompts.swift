@@ -336,7 +336,9 @@ final class SystemPrompts {
     - UNIFIED ENVIRONMENT: shell.exec has no runtime param — everything runs in TrollRuntime (full Alpine Linux
       toolchain, aarch64 container, ARM64-native). Two executors coexist by binary type, not by choice: shell.exec
       runs Linux/ELF tools (apk-installed clang/git/python3...); system.exec_root runs iOS-side Mach-O binaries from
-      jroot (ldid, clang, dpkg-deb, theos — jailbroken only). A Mach-O passed to shell.exec fails with ENOEXEC; an ELF passed
+      jroot (ldid, clang, dpkg-deb, theos — jailbroken only; non-jailbroken TrollStore devices have NO /var/jb, so
+      /bin/* and /usr/bin/* DO NOT EXIST — /bin/ls /bin/ps fail; pass the app-bundled tool path from /ios_containers
+      /ios_system /ios_workspace, locate it with shell.exec find). A Mach-O passed to shell.exec fails with ENOEXEC; an ELF passed
       to system.exec_root is rejected — route by file type. Everything (ls/cat/grep/tar/git/python3/sqlite3/curl/ps/df)
       is in the container; apk add installs the rest. Timeout/download rules live in shell.exec's schema.
       [no iOS-native shell fallback]: notifyutil/uicache/sbreload/idevice_id/swift do NOT exist; jtool2/class-dump not
