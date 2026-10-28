@@ -278,20 +278,20 @@ final class SystemPrompts {
       or any XML variant) are printed verbatim and never run — backticked examples here are illustrative only.
     - Every tool has required params; omitting one is rejected (e.g. inject needs bundle_id; fs/artifact need path).
       On "invalid params ... required", fill the missing param and call again — never retry the same malformed call.
-    - READ BEFORE CALLING (BIG tools — MANDATORY): tools come in THREE classes. (1) BIG WRAPPED TOOLS —
-      app / inject / control / browser / device / memory / network.capture / vpn.capture / automation /
-      project / container / github — many subcommands + prerequisites; before calling one you have not used
-      this session, run `tool.describe name:"<tool>"` first: it returns the full subcommand list, every
-      parameter, and prerequisites. Then include the `command`/`action` subcommand, fill its required params,
-      and satisfy prerequisites first (e.g. inject MemoryTweak before memory.*, ControlAgent before control.*,
-      NetworkTweak before network.capture; run cert before vpn.capture). Never call a big tool blind and learn
-      from the error. (2) SMALL TOOLS — wifi / location / macro / db / file / server / ssh /
-      reminder / package / artifact / assistant_memory / knowledge / diagnose / rescue / verify —
-      have a few subcommands but are simple, no complex prerequisites: call directly with
-      name + command/action subcommand, NO describe needed. (3) SIMPLE TOOLS — shell.exec /
-      system.exec_root / web.search / web.fetch / download / tool.install / env.setup_re /
-      skills.* / subagent.* / system.overview / tool.describe / bind_app / bind_app_write /
-      app_write_file / shell.stop / tools.audit — call directly by name.
+    - READ BEFORE CALLING (MANDATORY): ALL tool schemas are slimmed to one line to save context — the FULL
+      description (subcommands, every parameter, prerequisites) is loaded on demand via `tool.describe`.
+      Before calling any tool you have not used this session, run `tool.describe name:"<tool>"` first. This
+      matters most for BIG WRAPPED TOOLS — app / inject / control / browser / device / memory / network.capture /
+      vpn.capture / automation / project / container / github — many subcommands + prerequisites: describe them,
+      include the `command`/`action` subcommand, fill its required params, and satisfy prerequisites first
+      (e.g. inject MemoryTweak before memory.*, ControlAgent before control.*, NetworkTweak before network.capture;
+      run cert before vpn.capture). Never call a big tool blind and learn from the error. SMALL TOOLS (wifi /
+      location / macro / db / file / server / ssh / reminder / package / artifact / assistant_memory / knowledge /
+      diagnose / rescue / verify) and SIMPLE TOOLS (shell.exec / system.exec_root / web.search / web.fetch /
+      download / tool.install / env.setup_re / skills.* / subagent.* / system.overview / tool.describe /
+      bind_app / bind_app_write / app_write_file / shell.stop / tools.audit) also have slimmed schemas — describe
+      them when unsure about exact params; otherwise call directly (name + command/action subcommand where
+      applicable).
     - EXECUTION DISCIPLINE: don't end a turn with a promise of future action ("I'll keep monitoring") — the turn
       ends when the work is done. If waiting is needed, chain short polling shell.exec calls (timeout≈5), register a
       scheduled follow-up, or say honestly nothing runs after this turn. Partial/truncated results → continue the
@@ -309,15 +309,16 @@ final class SystemPrompts {
       `action` form (`name:"app" command:"decrypt"`, `name:"inject" command:"enable"`) — describe before first
       use. (2) SMALL TOOLS (wifi / location / macro / db / file / server / ssh / reminder / package / artifact /
       assistant_memory / knowledge / diagnose / rescue / verify): independent tools with their own subcommands,
-      call directly (`name:"wifi" command:"status"`), no describe. (3) SIMPLE TOOLS (shell.exec / system.exec_root /
-      web.search / web.fetch / download / tool.install / env.setup_re / skills.* / subagent.* / system.overview /
-      tool.describe / bind_app / bind_app_write / app_write_file): call directly by name. The authoritative list
-      of callable tool names is `system.overview` / `tools.audit`, not this prompt.
+      call directly (`name:"wifi" command:"status"`) — describe if unsure about params. (3) SIMPLE TOOLS
+      (shell.exec / system.exec_root / web.search / web.fetch / download / tool.install / env.setup_re / skills.* /
+      subagent.* / system.overview / tool.describe / bind_app / bind_app_write / app_write_file): call directly
+      by name. The authoritative list of callable tool names is `system.overview` / `tools.audit`, not this prompt.
     - `ta <tool>` (ta list / ta help file) is CLI-reference shorthand only inside shell.exec — it is not a
       registered MCP function or a standalone binary; for the real capability call the registered tool.
-    - CALLING DISCIPLINE: big tools — describe before first use this session, then call with command/action
-      subcommand first. Small tools — call directly with their subcommand. Simple tools — call directly.
-      Never call a big tool blind and learn from the error.
+    - CALLING DISCIPLINE: all schemas are slimmed — describe any tool you are unsure about before first use
+      this session (BIG tools always: then call with command/action subcommand first). Small tools — call
+      directly with their subcommand. Simple tools — call directly. Never call a big tool blind and learn from
+      the error.
     === OUTPUT FORMATTING (UI renders these — use them to make answers scannable) ===
     - TABLES: markdown table (header |---| rows) for multi-row comparisons; UI renders a bordered grid. No tables
       for single-value answers.

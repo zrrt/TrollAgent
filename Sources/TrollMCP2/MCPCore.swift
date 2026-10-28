@@ -582,14 +582,12 @@ public final class ToolRegistry: ObservableObject {
             // v3.1.69：显式找 command/action 键——Dictionary.keys 是哈希顺序，prefix(1) 可能
             // 落到任意参数 (如 artifact 的 name），导致 AI 被迫填无关参数 (AI 反馈实锤）。
             let selectorKey = def.parameters.keys.first { $0 == "command" || $0 == "action" }
-            // 是否大工具：查权威白名单 BigToolCatalog（ToolDescribeTool.swift）。
-            // 只有真正复杂的大工具（app/inject/control/browser/device/memory/network.capture/
-            // vpn.capture/automation/project/container/github）初始 schema 精简、调用前必须
-            // tool.describe。小工具（wifi/location/macro/db/file/server/ssh/
-            // reminder/package 等）虽有 command/action 选择器但说明短、无复杂前置——保留完整
-            // summary 直接调，不为它们绕 describe。简单工具（shell.exec 等）同样直接调。
-            let isWrapped = BigToolCatalog.isWrapped(def.name)
-            let desc = (def.name == "tool.describe" || !isWrapped) ? def.summary : def.shortSummary
+            // 全量按需加载：所有 48 个工具初始 schema 只发一句话用途（shortSummary），
+            // 完整说明（子命令枚举 + 全部参数 + 前置条件）统一走 tool.describe 按需加载，
+            // 避免全量完整说明占上下文（实测 7298→3389 tokens，省 54%）。
+            // 唯一例外：tool.describe 本身保留完整 summary——它是加载完整说明的入口，
+            // AI 必须先知道怎么用它（name 参数）才能加载其他工具的说明。
+            let desc = (def.name == "tool.describe") ? def.summary : def.shortSummary
             result.append([
                 "type": "function",
                 "function": [

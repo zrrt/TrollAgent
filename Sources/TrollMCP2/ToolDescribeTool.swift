@@ -30,7 +30,7 @@ enum BigToolCatalog {
 final class ToolDescribeTool: MCPTool {
     let definition = ToolDefinition(
         name: "tool.describe",
-        summary: "Load the full description of a BIG wrapped tool (its subcommands, every parameter, prerequisites) BEFORE calling it. Use for: ALWAYS call this first when about to use a big tool you have not loaded — app / inject / control / browser / device / memory / network.capture / vpn.capture / automation / project / container / github. Don't use for: list what tools exist (use system.overview); or small/simple tools you can call directly (small: wifi / location / macro / db / file / server / ssh / reminder / package / artifact / assistant_memory / knowledge / diagnose / rescue / verify; simple: shell.exec / system.exec_root / web.search / web.fetch / download / tool.install / skills.* / subagent.* / system.overview / bind_app / app_write_file …). Example: before injecting a dylib → tool.describe name:\"inject\".",
+        summary: "Load the FULL description of ANY tool before calling it — all tool schemas are slimmed to one line, so describe returns the complete subcommand list, every parameter, and prerequisites. Use for: ALWAYS call this first when about to use a tool you have not loaded — esp. BIG tools (app / inject / control / browser / device / memory / network.capture / vpn.capture / automation / project / container / github), and any small/simple tool when unsure about its exact params (wifi / location / macro / db / file / server / ssh / reminder / package / artifact / assistant_memory / knowledge / diagnose / rescue / verify / shell.exec / system.exec_root / web.search / web.fetch / download / tool.install / skills.* / subagent.* / bind_app / app_write_file …). Don't use for: list what tools exist (use system.overview). Example: before injecting a dylib → tool.describe name:\"inject\".",
         parameters: [
             "name": "Tool name to describe (required), exactly as shown in the schema — e.g. \"inject\", \"app\", \"control\", \"container\", \"shell.exec\", \"web.search\"."
         ],
@@ -64,10 +64,10 @@ final class ToolDescribeTool: MCPTool {
 
         let d = tool.definition
 
-        // 是否大工具：查权威白名单 BigToolCatalog（不看 command/action 描述猜测——
-        // web.search / wifi / location 等小工具虽有选择器但说明短、无复杂前置，直接调即可）。
+        // 是否大工具：查权威白名单 BigToolCatalog（BIG 复杂、有前置，必须 describe；
+        // 其余工具初始 schema 已全量精简，同样建议 describe 加载完整说明后再调）。
         let isWrapped = BigToolCatalog.isWrapped(d.name)
-        // 小工具/简单工具如果有 command/action 选择器，也解析出来供参考（不强制 describe）
+        // 小工具/简单工具如果有 command/action 选择器，也解析出来供参考
         let selKey = d.parameters.keys.first { $0 == "command" || $0 == "action" }
         let selDesc = selKey.flatMap { d.parameters[$0] } ?? ""
         let subcommands: [String] = {
@@ -103,15 +103,16 @@ final class ToolDescribeTool: MCPTool {
                 ? "Pick the subcommand from `subcommands`, include it in `command`, fill its required params, then call."
                 : "Complete the prerequisites first (" + d.prerequisites.joined(separator: "; ") + "), then call with the right subcommand + params."
         } else if !subcommands.isEmpty {
-            out["type"] = "small tool (call directly, subcommands included)"
+            out["type"] = "small tool (subcommands included, call directly)"
             out["subcommands"] = subcommands
-            out["hint"] = "Small tool — call directly with name:\"\(d.name)\" + command:<subcommand> + params. No describe needed."
+            out["hint"] = "Small tool — initial schema is slimmed; this is the full description. Call directly with name:\"\(d.name)\" + command:<subcommand> + params."
         } else {
             out["type"] = "simple tool (call directly)"
             out["hint"] = d.prerequisites.isEmpty
-                ? "Call the tool directly using the parameters above."
+                ? "Initial schema is slimmed; this is the full description. Call the tool directly using the parameters above."
                 : "Complete the prerequisites first (" + d.prerequisites.joined(separator: "; ") + "), then call the tool with the parameters above."
         }
+        out["slimmed"] = true
         return out
     }
 }
