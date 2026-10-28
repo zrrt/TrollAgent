@@ -22,6 +22,9 @@ final class BackgroundLLM: NSObject, URLSessionDownloadDelegate {
     private var backgroundSession: URLSession?
     /// AppDelegate 的 handleEventsForBackgroundURLSession completionHandler（全部任务结束后调用）
     var onAllTasksFinished: (() -> Void)?
+    /// v7.4.0-fix73b：结果就绪时的主动推送（主线程）——App 前台或被系统唤醒时直接消费，
+    /// 不再只依赖 willEnterForeground 一次快照（根治"回前台太早 → 结果无人收 → 永久请求中"）
+    var onResultAvailable: ((HandoffResult) -> Void)?
     private let lock = NSLock()
     /// 非流式能力缓存 key（按 baseURL 记忆；默认假设支持，失败后标记跳过）
     private let capKey = "background.llm.nonstream.supported"
@@ -79,6 +82,29 @@ final class BackgroundLLM: NSObject, URLSessionDownloadDelegate {
         lock.lock(); defer { lock.unlock() }
         defer { pendingResult = nil; isHandoffInFlight = false }
         return pendingResult
+    }
+
+    /// v7.4.0-fix73b：用户发新消息/手动停止时取消后台等待（放弃旧结果，避免结果覆盖新会话）
+    func cancelHandoff() {
+        lock.lock(); defer { lock.unlock() }
+        pendingResult = nil
+        isHandoffInFlight = false
+        backgroundSession?.invalidateAndCancel()
+        let cfg = URLSessionConfiguration.background(withIdentifier: bgID)
+        cfg.isDiscretionary = false
+        cfg.waitsForConnectivity = true
+        cfg.timeoutIntervalForResource = 300
+        cfg.timeoutIntervalForRequest = 90
+        backgroundSession = URLSession(configuration: cfg, delegate: self, delegateQueue: nil)
+    }
+
+    /// 结果就绪统一出口（存 + 主动推送主线程）
+    private func deliver(_ result: HandoffResult) {
+        lock.lock(); defer { lock.unlock() }
+        pendingResult = result
+        DispatchQueue.main.async {
+            self.onResultAvailable?(result)
+        }
     }
 
     // MARK: - URLSessionDownloadDelegate

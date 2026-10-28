@@ -1205,6 +1205,19 @@ final class ConversationStore: ObservableObject {
 
     func send(_ text: String, using config: ModelConfig, imageDataURLs: [String]? = nil,
               reasoningLevel: Int = 0, smartSearch: Bool = true, personaPrompt: String? = nil) {
+        // v7.4.0-fix73b：请求进行中用户发新消息 → 取消当前请求（-999 静默不弹错）再发新，
+        // 根治并发请求导致的双流式 ID 竞争、结果丢失/错乱（用户实测"请求完成无结果"）
+        if isLoading {
+            cancelCurrent()
+        }
+        // v7.4.0-fix73b：用户主动发新消息 → 放弃后台代传等待（防旧 background 请求完成后
+        // 结果写入/污染新会话；background session 也一并重建）
+        BackgroundLLM.shared.cancelHandoff()
+        // v7.4.0-fix73b：后台代传结果主动推送接线——App 前台或被系统唤醒完成时直接收，
+        // 根治"回前台太早 → 结果无人消费 → 永久请求中"
+        BackgroundLLM.shared.onResultAvailable = { [weak self] _ in
+            self?.consumeBackgroundResult()
+        }
         // v7.2.3：personaPrompt 非空 = 语音角色对话模式——系统提示词替换为角色人设，且不带任何工具调用
 
         // v2.9.97：记住最近使用的模型，顶栏/下次启动立即恢复
@@ -1312,6 +1325,19 @@ final class ConversationStore: ObservableObject {
 
     private func scheduleRetryOnForeground(config: ModelConfig, tools: [[String: Any]]?, disclosed: [String], depth: Int, reasoningLevel: Int, personaPrompt: String? = nil) {
         retriedBackgroundOnce = true
+        // v7.4.0-fix73b：若失败时已在前台（或刚回前台 5s 内）→ willEnterForeground 事件已经发出，
+        // 注册监听永远等不到下一次（用户实测"一直请求中"卡死根因）→ 直接立即重试一次
+        let sinceForeground = Date().timeIntervalSince(AppLifecycleMonitor.lastForegroundAt)
+        if UIApplication.shared.applicationState == .active || (sinceForeground >= 0 && sinceForeground < 5) {
+            DispatchQueue.main.async { [weak self] in
+                guard let self = self else { return }
+                self.statusText = "Foreground restored, auto-retrying…"
+                self.isLoading = true
+                self.runLoop(config: config, tools: tools, disclosed: disclosed, depth: depth, reasoningLevel: reasoningLevel, personaPrompt: personaPrompt)
+            }
+            return
+        }
+        // 仍确认在后台 → 注册监听等真正回前台
         foregroundRetryObserver = NotificationCenter.default.addObserver(
             forName: AppLifecycleMonitor.willEnterForeground,
             object: nil, queue: .main
@@ -1812,7 +1838,12 @@ final class ConversationStore: ObservableObject {
                     let nsErr = error as NSError
                     if nsErr.code == -999 {
                         self.statusText = nil
-                        self.streamingMessageId = nil
+                        // v7.4.0-fix73b：若已有新请求接管（currentClient 非 nil / 新一轮 isLoading），
+                        // 不清流式状态——否则旧请求的 -999 回调会把新请求的流式消息 ID 清掉，
+                        // 新请求的流式文本全部丢失（用户实测"请求完成无结果"）
+                        if self.currentClient == nil {
+                            self.streamingMessageId = nil
+                        }
                         // v2.9.82：取消也算结束，回收后台任务但不通知
                         TaskNotify.shared.endBackground()
                         // v3.1.70：用户取消——解除活动会话绑定
