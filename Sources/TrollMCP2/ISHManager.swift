@@ -297,9 +297,9 @@ enum TrollRuntimeEngine {
         case .booted:
             return nil
         case .booting:
-            return "[ish] kernel initializing, try again later"
+            return "[runtime] kernel initializing, try again later"
         case .failed(let msg):
-            return "[ish] kernel init failed: \(msg)"
+            return "[runtime] kernel init failed: \(msg)"
         case .idle:
             break
         }
@@ -314,18 +314,18 @@ enum TrollRuntimeEngine {
         if !fm.fileExists(atPath: dataPath) {
             guard let zipURL = Bundle.main.url(forResource: "alpine-rootfs", withExtension: "zip") else {
                 state = .failed("alpine-rootfs.zip missing from bundle")
-                return "[ish] kernel init failed: alpine-rootfs.zip missing from bundle"
+                return "[runtime] kernel init failed: alpine-rootfs.zip missing from bundle"
             }
             do {
                 try fm.createDirectory(at: parent, withIntermediateDirectories: true)
                 try fm.unzipItem(at: zipURL, to: parent)
             } catch {
                 state = .failed("rootfs extraction failed: \(error.localizedDescription)")
-                return "[ish] kernel init failed: rootfs extraction failed \(error.localizedDescription)"
+                return "[runtime] kernel init failed: rootfs extraction failed \(error.localizedDescription)"
             }
             if !fm.fileExists(atPath: dataPath) {
                 state = .failed("rootfs lacks the data dir after extraction")
-                return "[ish] kernel init failed: rootfs lacks the data dir after extraction"
+                return "[runtime] kernel init failed: rootfs lacks the data dir after extraction"
             }
             if let h = Self.fileMD5((Bundle.main.url(forResource: "alpine-rootfs", withExtension: "zip")?.path) ?? "") {
                 try? h.write(toFile: versionFile, atomically: true, encoding: .utf8)
@@ -341,12 +341,12 @@ enum TrollRuntimeEngine {
                 try fm.moveItem(atPath: dataPath, toPath: backup)
                 try fm.unzipItem(at: zipURL, to: parent)
                 try newHash.write(toFile: versionFile, atomically: true, encoding: .utf8)
-                NSLog("[ish] rootfs version update: re-extract done (old rootfs backed up at .old)")
+                NSLog("[runtime] rootfs version update: re-extract done (old rootfs backed up at .old)")
             } catch {
                 // 重解压失败——回滚备份
                 try? fm.removeItem(atPath: dataPath)
                 try? fm.moveItem(atPath: backup, toPath: dataPath)
-                NSLog("[ish] rootfs re-extract failed, rolled back to the old rootfs: \(error.localizedDescription)")
+                NSLog("[runtime] rootfs re-extract failed, rolled back to the old rootfs: \(error.localizedDescription)")
             }
         }
 
@@ -355,7 +355,7 @@ enum TrollRuntimeEngine {
         let rc = dataPath.withCString { cish_boot($0) }
         if rc != 0 {
             state = .failed("cish_boot rc=\(rc)")
-            return "[ish] kernel init failed: cish_boot rc=\(rc)"
+            return "[runtime] kernel init failed: cish_boot rc=\(rc)"
         }
 
         // v3.7.1：bind mount 默认关闭（v3.7.0 在 cish_boot 自动挂载会污染 meta.db 权限
@@ -449,7 +449,7 @@ enum TrollRuntimeEngine {
         }
         lock.lock()
         defer { lock.unlock() }
-        guard case .booted = state else { return ("[ish] kernel not ready", -1, false) }
+        guard case .booted = state else { return ("[runtime] kernel not ready", -1, false) }
 
         // v7.0.4.2: 首次执行前等 JIT 就绪（双保险——AppMain 已计划 0.5s 后调 TrollStore URL + 2.5s 处理）。
         // fix7.0.4.2：若远程/终端在 URL 完成前就执行 shell.exec，JIT 授权未生效 → SIGBUS(10) 崩 cpu_run_to_interrupt。
@@ -497,13 +497,13 @@ enum TrollRuntimeEngine {
         var stdinFds: [Int32] = [-1, -1]
         guard pipe(&outFds) == 0, pipe(&errFds) == 0, pipe(&notifyFds) == 0 else {
             ShellDiag.log("ISH exec pipe fail")
-            return ("[ish] pipe creation failed", -1, false)
+            return ("[runtime] pipe creation failed", -1, false)
         }
         // v3.6.14: 有桥文件时建 stdin 管道，guest stdin 接读端，host 写原始字节
         if !bridgeStdin.isEmpty {
             guard pipe(&stdinFds) == 0 else {
                 ShellDiag.log("ISH exec stdin pipe fail")
-                return ("[ish] stdin pipe creation failed", -1, false)
+                return ("[runtime] stdin pipe creation failed", -1, false)
             }
         }
 
@@ -539,7 +539,7 @@ enum TrollRuntimeEngine {
                 spawnFailCount = 0
                 // guestCwd 保留 /root 默认值即可，reboot 后 /root 仍存在
             }
-            return ("[ish] process creation failed rc=\(pid)", -1, false)
+            return ("[runtime] process creation failed rc=\(pid)", -1, false)
         }
         ShellDiag.log("ISH spawned pid=\(pid)")
 

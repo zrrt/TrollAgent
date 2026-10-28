@@ -195,6 +195,12 @@
             for (int i = 0; i < 8; i++) len = (len << 8) | b[2 + i];
             headerLen = 10;
         }
+        // fix：帧长度上限校验——防恶意 server 声明超大帧导致 dataWithLength 内存暴涨（OOM）。
+        // 实际用途（edge-tts 音频帧等）远小于 64MB，此上限不影响正常帧。
+        if (len > 64 * 1024 * 1024) {
+            [self _fail:@"frame too large"];
+            return;
+        }
         NSUInteger maskLen = hasMask ? 4 : 0;
         NSUInteger need = headerLen + maskLen + (NSUInteger)len;
         if (_inBuf.length < need) return;

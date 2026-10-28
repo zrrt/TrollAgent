@@ -17,6 +17,8 @@
 #import <objc/runtime.h>
 #import <stdlib.h>
 #import <dlfcn.h>
+#import <string.h>
+#import <limits.h>
 
 #import "IOKit+SPI.h"
 #import "HUDHelper.h"
@@ -104,18 +106,44 @@ void _HUDEventCallback(void *target, void *refcon, IOHIDServiceRef service, IOHI
 }
 
 // -exit：读 pid 文件杀掉 HUD 进程（主 App 关闭悬浮用）
+// fix：pid 文件是全局可写路径（/var/mobile/Library/Caches），可能被篡改成任意 pid——
+// 提权身份直接 kill 会变成"root 杀任意进程"攻击面。只允许 kill 本 HUD 二进制：
+// 用 proc_pidpath 从内核读目标进程真实可执行路径，与当前进程路径比对，不匹配拒绝。
+// dlopen libproc 运行时解析（与下方 HUDMainStart 清旧 HUD 同款，避免链接依赖）。
 extern "C" void HUDExit(void)
 {
     @autoreleasepool {
         NSString *pidPath = @(PID_PATH);
-        NSString *pidString = [NSString stringWithContentsOfFile:pidPath
-                                                        encoding:NSUTF8StringEncoding
-                                                           error:nil];
+        // fix：pid 文件大小保护（内容仅几字节，≤64 字节）——防篡改成超大文件后整读 OOM
+        NSString *pidString = nil;
+        NSDictionary *attr = [[NSFileManager defaultManager] attributesOfItemAtPath:pidPath error:nil];
+        if (attr && [attr[NSFileSize] unsignedLongLongValue] <= 64) {
+            pidString = [NSString stringWithContentsOfFile:pidPath
+                                                  encoding:NSUTF8StringEncoding
+                                                     error:nil];
+        }
         if (pidString)
         {
             pid_t pid = (pid_t)[pidString intValue];
-            kill(pid, SIGKILL);
-            unlink([pidPath UTF8String]);
+            if (pid > 0) {
+                typedef int (*ppath_fn)(pid_t, void *, uint32_t);
+                void *proc_h = dlopen("/usr/lib/libproc.dylib", RTLD_LAZY);
+                ppath_fn ppath = proc_h ? (ppath_fn)dlsym(proc_h, "proc_pidpath") : NULL;
+                if (ppath) {
+                    char selfPath[PATH_MAX] = {0};
+                    char targetPath[PATH_MAX] = {0};
+                    // proc_pidpath 返回写入字节数且不保证 NUL 结尾——用长度相等 + memcmp 比较，
+                    // 避免 strcmp 在无 NUL 缓冲上越界读（fix 审计项）。
+                    int selfLen = ppath(getpid(), selfPath, (uint32_t)sizeof(selfPath));
+                    int targetLen = ppath(pid, targetPath, (uint32_t)sizeof(targetPath));
+                    if (selfLen > 0 && selfLen == targetLen &&
+                        memcmp(selfPath, targetPath, (size_t)selfLen) == 0) {
+                        kill(pid, SIGKILL);
+                        unlink([pidPath UTF8String]);
+                    }
+                }
+                if (proc_h) dlclose(proc_h);
+            }
         }
     }
 }
@@ -125,9 +153,14 @@ extern "C" int HUDCheck(void)
 {
     @autoreleasepool {
         NSString *pidPath = @(PID_PATH);
-        NSString *pidString = [NSString stringWithContentsOfFile:pidPath
-                                                        encoding:NSUTF8StringEncoding
-                                                           error:nil];
+        // fix：pid 文件加大小保护（内容仅几字节，≤64 字节）——防篡改成超大文件后整读 OOM
+        NSString *pidString = nil;
+        NSDictionary *attr = [[NSFileManager defaultManager] attributesOfItemAtPath:pidPath error:nil];
+        if (attr && [attr[NSFileSize] unsignedLongLongValue] <= 64) {
+            pidString = [NSString stringWithContentsOfFile:pidPath
+                                                  encoding:NSUTF8StringEncoding
+                                                     error:nil];
+        }
         if (pidString)
         {
             pid_t pid = (pid_t)[pidString intValue];

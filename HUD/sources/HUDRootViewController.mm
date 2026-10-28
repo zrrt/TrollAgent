@@ -40,6 +40,16 @@ static BOOL _passthrough = NO;
 @property (nonatomic, strong) WSClient *hudWS;
 @end
 
+// fix：读取受信任配置文件统一走此辅助——防配置文件被篡改成超大文件后整读进内存
+// （root 进程内存暴涨/OOM）。超过 maxBytes 视为无效返回 nil，由调用方走默认值。
+// 配置为独立进程读主 App 写的 /var/mobile/Documents 下文件（语言标记/样式/菜单参数均小文件）。
+static NSData *HUDConfigData(NSString *path, unsigned long long maxBytes) {
+    NSDictionary *attr = [[NSFileManager defaultManager] attributesOfItemAtPath:path error:nil];
+    if (!attr || [attr[NSFileSize] unsignedLongLongValue] > maxBytes)
+        return nil;
+    return [NSData dataWithContentsOfFile:path];
+}
+
 // v6.0.8：裁剪掉 UIImage 四周透明留白，返回角色实际内容图（无背景留白，角色才能贴到屏幕边缘）。
 // 读像素检测不透明(alpha)边界，用 CGImageCreateWithImageInRect 裁出内容矩形。
 static UIImage * _trimTransparentPadding(UIImage *img) {
@@ -119,8 +129,13 @@ extern "C" const char *g_hud_char;
 
 
 // v7.0.5：气泡台词双语——读主 App 写的语言文件（/var/mobile/Documents/app_language.txt）
+// fix：文件大小保护（语言标记仅几字符，≤64 字节；超大文件视为注入无效，回落默认中文）
 static BOOL HUDIsZh(void) {
-    NSString *lang = [NSString stringWithContentsOfFile:@"/var/mobile/Documents/app_language.txt" encoding:NSUTF8StringEncoding error:nil];
+    NSString *lang = nil;
+    NSDictionary *attr = [[NSFileManager defaultManager] attributesOfItemAtPath:@"/var/mobile/Documents/app_language.txt" error:nil];
+    if (attr && [attr[NSFileSize] unsignedLongLongValue] <= 64) {
+        lang = [NSString stringWithContentsOfFile:@"/var/mobile/Documents/app_language.txt" encoding:NSUTF8StringEncoding error:nil];
+    }
     return !(lang && [lang hasPrefix:@"en"]);
 }
 
@@ -1510,9 +1525,12 @@ timeGreetings = HUDIsZh() ? @[@"好晚呀... 我困了", @"要睡觉觉啦，晚
     // 独立进程读不到主 App 的 UserDefaults，之前永远默认 0，"切换样式不生效"。
     int bubbleStyle = 0;
     NSString *bsPath = @"/var/mobile/Documents/bubble_style.txt";
-    NSString *bsVal = [NSString stringWithContentsOfFile:bsPath encoding:NSUTF8StringEncoding error:nil];
+    NSData *bsData = HUDConfigData(bsPath, 64);   // fix：文件大小保护（样式值单字节，≤64 字节）
+    NSString *bsVal = bsData ? [[NSString alloc] initWithData:bsData encoding:NSUTF8StringEncoding] : nil;
     if (bsVal.length > 0) {
         bubbleStyle = bsVal.intValue;
+        // fix：值域校验——样式仅 0-3（0=经典 1=椭圆 2=方形 3=爆炸），越界回落默认 0
+        if (bubbleStyle < 0 || bubbleStyle > 3) bubbleStyle = 0;
     } else {
         bubbleStyle = (int)[[NSUserDefaults standardUserDefaults] integerForKey:@"trollmcp2.bubble_style"];
     }
@@ -2260,7 +2278,7 @@ fest = HUDIsZh() ? @[@"周末啦！陪我玩一整天！", @"今天是个好日�
     // v6.1.5-8/10：扇形按钮默认 56pt；孔雀开屏半径 88/172/256（内1 中2 外N-3）
     // v6.1.5-14aq：图标大小可调（40-80pt，设置页"图标大小"滑块）——读取顺序 全局文件 > suite > 默认
     CGFloat fanBtn = 56.0;
-    NSData *szData = [NSData dataWithContentsOfFile:@"/var/mobile/Documents/fanmenu_settings.json"];
+    NSData *szData = HUDConfigData(@"/var/mobile/Documents/fanmenu_settings.json", 64 * 1024);
     if (szData) {
         NSDictionary *szd = [NSJSONSerialization JSONObjectWithData:szData options:0 error:nil];
         if ([szd isKindOfClass:[NSDictionary class]] && szd[@"size"]) fanBtn = [szd[@"size"] doubleValue];
@@ -2273,7 +2291,7 @@ fest = HUDIsZh() ? @[@"周末啦！陪我玩一整天！", @"今天是个好日�
     // v6.1.5-14af：样式读取顺序改为 全局文件 > suite > 默认（与滑块一致）——
     // 原只读 suite：App Group 在独立 HUD 进程上权限不可用时恒为 0 → "切换纵向列表没用"
     NSInteger menuStyle = 0;
-    NSData *styleData = [NSData dataWithContentsOfFile:@"/var/mobile/Documents/fanmenu_settings.json"];
+    NSData *styleData = HUDConfigData(@"/var/mobile/Documents/fanmenu_settings.json", 64 * 1024);
     if (styleData) {
         NSDictionary *sd = [NSJSONSerialization JSONObjectWithData:styleData options:0 error:nil];
         if ([sd isKindOfClass:[NSDictionary class]] && sd[@"style"]) menuStyle = [sd[@"style"] integerValue];
@@ -2284,7 +2302,7 @@ fest = HUDIsZh() ? @[@"周末啦！陪我玩一整天！", @"今天是个好日�
     // v6.1.5-14n：菜单参数（图标整体透明度/散开角度/弧度）——读取顺序 全局文件 > suite > 默认
     // 全局文件由主 App 写（/var/mobile/Documents/fanmenu_settings.json），绕开 App Group 权限不确定性
     CGFloat fanAlpha = 1.0, fanSpan = 90.0, fanArc = 1.0;
-    NSData *stData = [NSData dataWithContentsOfFile:@"/var/mobile/Documents/fanmenu_settings.json"];
+    NSData *stData = HUDConfigData(@"/var/mobile/Documents/fanmenu_settings.json", 64 * 1024);
     if (stData) {
         NSDictionary *st = [NSJSONSerialization JSONObjectWithData:stData options:0 error:nil];
         if ([st isKindOfClass:[NSDictionary class]]) {
@@ -2671,7 +2689,7 @@ static UIImage * _realAppIcon(NSString *bundleId) {
     if (savedApps.count) src = @"suite";
     // v6.1.5-14e：全局文件通道（最不依赖权限：两边都是 no-sandbox，直接读 /var/mobile/Documents）
     if (!savedApps.count) {
-        NSData *jdata = [NSData dataWithContentsOfFile:@"/var/mobile/Documents/fanmenu.json"];
+        NSData *jdata = HUDConfigData(@"/var/mobile/Documents/fanmenu.json", 64 * 1024);
         if (jdata) {
             NSArray *jarr = [NSJSONSerialization JSONObjectWithData:jdata options:0 error:nil];
             if ([jarr isKindOfClass:[NSArray class]] && jarr.count) {
@@ -2765,8 +2783,8 @@ static UIImage * _realAppIcon(NSString *bundleId) {
 - (void)_pollKeyboardFile {
     // 开关：全局文件（设置页写）优先；文件不存在按 HUD 自身 standard 兜底（默认开）
     BOOL enabled = YES;
-    NSString *sw = [NSString stringWithContentsOfFile:@"/var/mobile/Documents/auto_hide_keyboard.txt"
-                                             encoding:NSUTF8StringEncoding error:nil];
+    NSData *swData = HUDConfigData(@"/var/mobile/Documents/auto_hide_keyboard.txt", 64);
+    NSString *sw = swData ? [[NSString alloc] initWithData:swData encoding:NSUTF8StringEncoding] : nil;
     if (sw.length > 0) enabled = [sw hasPrefix:@"1"];
     if (!enabled) {
         // v6.1.5-14ac：开关关闭也要恢复 alpha——原直接 return，键盘弹出时关开关会卡在半透明不恢复
@@ -2779,8 +2797,8 @@ static UIImage * _realAppIcon(NSString *bundleId) {
         return;
     }
     BOOL vis = NO;
-    NSString *kv = [NSString stringWithContentsOfFile:@"/var/mobile/Documents/keyboard_state.json"
-                                            encoding:NSUTF8StringEncoding error:nil];
+    NSData *kvData = HUDConfigData(@"/var/mobile/Documents/keyboard_state.json", 64);
+    NSString *kv = kvData ? [[NSString alloc] initWithData:kvData encoding:NSUTF8StringEncoding] : nil;
     if (kv.length > 0) vis = [kv hasPrefix:@"1"];
     // v6.1.5-14s：键盘弹出时透明降到 0.55（原 0.2 太透明，用户反馈几乎看不见）
     CGFloat target = vis ? 0.55 : (self->_isHidden ? 0.7 : 1.0);
@@ -2874,8 +2892,8 @@ static UIImage *softParticleImage(CGFloat size) {
     // v6.1.5-14ap：粒子开关——读全局文件（设置页"可爱助手→其他→粒子特效"写），
     // 关闭则清空颜色数组 → 走 else _clearParticles；漂浮（入睡呼吸）不受影响
     BOOL particleOn = YES;
-    NSString *pval = [NSString stringWithContentsOfFile:@"/var/mobile/Documents/particle_enabled.txt"
-                                               encoding:NSUTF8StringEncoding error:nil];
+    NSData *pData = HUDConfigData(@"/var/mobile/Documents/particle_enabled.txt", 64);
+    NSString *pval = pData ? [[NSString alloc] initWithData:pData encoding:NSUTF8StringEncoding] : nil;
     if (pval.length > 0) particleOn = [pval hasPrefix:@"1"];
     if (!particleOn) [colors removeAllObjects];
     if (colors.count) {
@@ -3231,7 +3249,7 @@ static UIImage *softParticleImage(CGFloat size) {
     // v7.1.49：读绝对路径共享配置（主 App 写 /var/mobile/Documents/trollmcp2_model_configs.json）
     // ——App Group 容器（containerURL…）在 no-sandbox 进程不可用（实测 sharedFile=NO 一直兜底 401）。
     NSDictionary *payload = nil;
-    NSData *jd = [NSData dataWithContentsOfFile:@"/var/mobile/Documents/trollmcp2_model_configs.json"];
+    NSData *jd = HUDConfigData(@"/var/mobile/Documents/trollmcp2_model_configs.json", 64 * 1024);
     if (jd) payload = [NSJSONSerialization JSONObjectWithData:jd options:0 error:nil];
     NSUserDefaults *appGroup = [[NSUserDefaults alloc] initWithSuiteName:@"group.com.ai.iosxcode"];
     NSData *cfgData = [appGroup dataForKey:@"trollmcp2.model_configs"];
