@@ -177,6 +177,10 @@ struct ConversationDrawerView: View {
             header
             searchBar
             countLabel
+            // v7.4.0-contextui：上下文占用条（当前会话 token/窗口 + 压力着色，点击看详情）
+            ContextUsageBar()
+                .padding(.horizontal, 16)
+                .padding(.bottom, 6)
             conversationList
             bottomWorkbench
         }

@@ -1161,9 +1161,16 @@ final class ConversationStore: ObservableObject {
     }
 
     func delete(at offsets: IndexSet) {
+        let removedIDs = offsets.map { conversations[$0].id }
         conversations.remove(atOffsets: offsets)
         if selectedId != nil && !conversations.contains(where: { $0.id == selectedId }) {
             selectedId = conversations.first?.id
+        }
+        // v7.4.0-fix65：删除会话必须同步清双层（JSONL 文件 + 索引行），否则重启复活；
+        // 先排空保存队列防旧快照把已删会话写回（与 clearAll 同款竞态）。
+        saveQueue.sync {}
+        for id in removedIDs {
+            SessionStore.shared.removeConversation(id: id)
         }
         sortAndSave()
     }

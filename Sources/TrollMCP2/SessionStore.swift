@@ -214,6 +214,19 @@ final class SessionStore {
         }
     }
 
+    /// 删除单个会话（JSONL 文件 + 索引行）——v7.4.0-fix65：delete 会话必须同步清双层，否则重启复活
+    func removeConversation(id: UUID) {
+        lock.lock(); defer { lock.unlock() }
+        _ = open()
+        try? FileManager.default.removeItem(atPath: sessionsDir + "/" + id.uuidString + ".jsonl")
+        guard db != nil else { return }
+        var stmt: OpaquePointer?
+        guard sqlite3_prepare_v2(db, "DELETE FROM sessions WHERE id=?1", -1, &stmt, nil) == SQLITE_OK else { return }
+        defer { sqlite3_finalize(stmt) }
+        sqlite3_bind_text(stmt, 1, id.uuidString, -1, transient)
+        _ = sqlite3_step(stmt)
+    }
+
     // MARK: - 私有
 
     private func messageCountLocked(id: UUID) -> Int {
