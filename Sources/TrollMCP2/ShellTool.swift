@@ -125,7 +125,7 @@ final class ShellExecTool: MCPTool {
                     "cwd: \(TrollRuntimeEngine.cwd)",
                     "iOS system paths visible (/var/containers): \(iosContainers)",
                     "Default: full Alpine Linux aarch64 toolchain (native ARM64 — apk/pipes/dynamic ELF fully supported)",
-                    "iOS paths auto-bind to /ios_* for direct read/write (only Workspace/Containers/System; no iOS-native fallback)",
+                    "iOS paths auto-bind to /ios_* for direct read/write (5 dirs: /ios_workspace /ios_containers /ios_system /ios_appdata /ios_appgroups; no iOS-native fallback)",
                     "Note: no env selection needed — unified. Compound commands (| ; && >) compose normally; missing tools need explicit apk add"
                 ].joined(separator: "\n"),
                 "hint": "env probe: diagnose execution environment issues"
@@ -193,7 +193,7 @@ final class ShellExecTool: MCPTool {
             if let guardMsg = ShellExecTool.alpineIOSPathGuard(boundCmd) {
                 return ["command": trimmed, "exit_code": 1,
                         "stdout": guardMsg,
-                        "hint": "This command runs in the unified env (TrollRuntime) but the iOS path isn't readable (only Workspace/Containers/System three dirs are bound, files have no 2MB limit). Fix: ① copy to Workspace first: `cp <file> /var/mobile/Documents/Workspace/`, then read it via Alpine /ios_workspace; ② for app data containers use bind_app bundle_id:<id> (read-only) → /ios_data_<app>; ③ for binaries use file analyze / binary.symbols."]
+                        "hint": "This command runs in the unified env (TrollRuntime) but the iOS path isn't readable (5 dirs auto-bound: /ios_workspace /ios_containers /ios_system /ios_appdata /ios_appgroups, no 2MB limit). Fix: ① copy to Workspace first: `cp <file> /var/mobile/Documents/Workspace/`, then read it via Alpine /ios_workspace; ② for app data containers use bind_app bundle_id:<id> (read-only) → /ios_data_<app>; ③ for binaries use file analyze / binary.symbols."]
             }
             // v7.1.80: background 模式——命令后台启动立即返回 pid，绕开默认 20s 上限。
             // AI 轮询日志文件判断进度，卡死时 shell.stop pid=<pid> 主动中断。

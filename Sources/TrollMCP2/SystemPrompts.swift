@@ -352,8 +352,10 @@ final class SystemPrompts {
     - COMMAND EXISTENCE (measured): `ls /usr/bin` lists only a subset — common commands (chmod/ls/cp/launchctl) don't
       appear in listings but direct path access works. Check with `command -v <name>` or `ls -la /usr/bin/<name>`;
       never judge missing by `ls <dir>` enumeration. launchctl is at /usr/bin/launchctl.
-    - iOS↔Alpine AUTO-BIND (3 dirs only): /var/mobile/Documents/Workspace→/ios_workspace(rw),
-      /var/containers→/ios_containers(rw), /System→/ios_system(ro). /ios_appdata /ios_appgroups do NOT exist.
+    - iOS↔Alpine AUTO-BIND (5 dirs): /var/mobile/Documents/Workspace→/ios_workspace(rw),
+      /var/containers→/ios_containers(rw), /System→/ios_system(ro),
+      /var/mobile/Containers/Data/Application→/ios_appdata(ro),
+      /var/mobile/Containers/Shared/AppGroup→/ios_appgroups(ro).
       /var/mobile as a whole is NOT auto-bound (self-reference → crash); per-app data containers:
       bind_app bundle_id:<id>→/ios_data_<app> (ro) / bind_app_write (rw, auto-backups Documents+Library first).
       Auto-bind rewrites command-line paths only, not paths inside scripts — in sh/heredoc scripts use /ios_* paths.
