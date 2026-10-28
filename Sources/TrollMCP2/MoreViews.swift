@@ -450,57 +450,6 @@ struct AuditLogView: View {
     }
 }
 
-struct BuildView: View {
-    @State private var token = ""
-
-    var body: some View {
-        CompatNav {
-            List {
-                Section(header: SettingSectionHeader(title: L10n.t("i18n_336"))) {
-                    SettingRowButton(
-                        title: L10n.t("i18n_337"),
-                        subtitle: L10n.t("i18n_338"),
-                        icon: "key.fill",
-                        color: .orange
-                    ) {
-                        if let result = try? ToolRegistry.shared.dispatch(name: "build.runner.token", params: ["action": "generate"]),
-                           let t = result["token"] as? String {
-                            token = t
-                        }
-                    }
-                    if !token.isEmpty {
-                        Section {
-                            Text(token)
-                                .font(.system(.body, design: .monospaced))
-                                .padding(.vertical, 4)
-                        }
-                    }
-                }
-
-                Section(header: SettingSectionHeader(title: L10n.t("i18n_339"))) {
-                    SettingRowButton(
-                        title: L10n.t("i18n_1093"),
-                        subtitle: L10n.t("i18n_1094"),
-                        icon: "doc.badge.plus",
-                        color: .blue
-                    ) {
-                        _ = try? ToolRegistry.shared.dispatch(name: "project.generate_tweak", params: ["name": "MyTweak"])
-                    }
-                }
-
-                Section(header: SettingSectionHeader(title: L10n.t("ui_132"))) {
-                    Text(L10n.t("ui_125"))
-                        .font(.caption)
-                        .foregroundColor(.secondary)
-                        .padding(.vertical, 2)
-                }
-            }
-            .listStyle(.insetGrouped)
-            .navigationTitle(L10n.t("i18n_340"))
-        }
-        .navigationViewStyle(.stack)
-    }
-}
 
 struct SystemCapabilitiesView: View {
     var body: some View {
@@ -516,13 +465,10 @@ struct SystemCapabilitiesView: View {
 
             List {
                 Section(header: SettingSectionHeader(title: L10n.t("i18n_341"))) {
-                    capRow(L10n.t("i18n_342"), "contacts.search", "person.crop.circle", .blue)
                     capRow(L10n.t("i18n_343"), "calendar.list", "calendar", .red)
                     capRow(L10n.t("i18n_344"), "reminder.create", "checkmark.square", .green)
                     capRow(L10n.t("i18n_345"), "location.get", "location", .tmIndigo)
-                    capRow(L10n.t("i18n_346"), "notification.send", "bell", .orange)
-                    capRow(L10n.t("i18n_347"), "scan.qr", "qrcode.viewfinder", .purple)
-                                    }
+                }
 
                 Section(header: SettingSectionHeader(title: L10n.t("ui_132"))) {
                     Text(L10n.t("ui_143"))
@@ -587,13 +533,9 @@ struct ToolPermissionPoliciesView: View {
         "wechat.prepare_message",
         "container.write_text",
         "container.delete",
-        "contacts.search",
         "calendar.list",
         "reminder.create",
         "location.get",
-        "notification.send",
-        "scan.qr",
-        "build.runner.token",
         "project.generate_tweak",
         "model.config",
         "model.selectedProfileID",

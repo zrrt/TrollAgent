@@ -591,57 +591,6 @@ final class MacroExecTool: MCPTool {
     }
 }
 
-// MARK: - v3.1.49: model 大工具 + 子命令 (合并 6 个 model.* 工具）
-
-final class ModelExecTool: MCPTool {
-    let definition = ToolDefinition(
-        name: "model",
-        summary: "Manage LLM model (config/update/auth/list/switch). Use subcommand to specify action. Use for: view/switch model config, update auth. Don't use for: chat (use chat.*). Example: list → model list; switch → model switch name:deepseek. Subcommands: config / update / auth / list / switch / selected.",
-        parameters: [
-            "command": "Subcommand: config / update / auth / list / switch / selected",
-            "name": "Model name (for switch)",
-            "key": "Auth key (for auth)"
-        ],
-        verified: true, category: "system")
-    
-    func invoke(_ params: [String: Any]) throws -> [String: Any] {
-        guard let command = params["command"] as? String else {
-            throw MCPError.invalidParams("command required")
-        }
-        
-        AuditLog.shared.log("model", detail: command)
-        
-        switch command {
-        case "config":
-            return try ModelConfigTool().invoke([:])
-            
-        case "update":
-            return try ModelUpdateTool().invoke([:])
-            
-        case "auth":
-            guard let key = params["key"] as? String else {
-                throw MCPError.invalidParams("key required")
-            }
-            return try ModelAuthenticationTool().invoke(["key": key])
-            
-        case "list":
-            return try ModelListTool().invoke([:])
-            
-        case "switch":
-            guard let name = params["name"] as? String else {
-                throw MCPError.invalidParams("name required")
-            }
-            return try ModelSwitchTool().invoke(["name": name])
-            
-        case "selected":
-            return try ModelSelectedProfileIDTool().invoke([:])
-            
-        default:
-            throw MCPError.invalidParams("Unknown command: \(command). Available: config/update/auth/list/switch/selected")
-        }
-    }
-}
-
 // MARK: - v3.1.50: knowledge 大工具 + 子命令 (合并 4 个 knowledge.* 工具）
 
 final class KnowledgeExecTool: MCPTool {

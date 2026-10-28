@@ -39,7 +39,7 @@ public final class RemoteAgent: ObservableObject {
         "shell.exec", "artifact", "shell.exec", "shell.exec", "shell.exec",
         "shell.exec", "shell.exec", "shell.exec", "shell.exec", "shell.exec",
         "injection.status", "injection.list", "injection.inspect",
-        "build.environment", "model.config", "gateway.status",
+        "model.config", "gateway.status",
         "apps.list", "apps.cache_inspect", "app.info", "app.status",
         "system.cleanup_scan", "cleanup.scan",
         "network.status", "diagnose.startup",

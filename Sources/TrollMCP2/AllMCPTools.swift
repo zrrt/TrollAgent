@@ -483,37 +483,6 @@ func AutomationSchedulerStatus() -> String {
     return cached
 }
 
-// MARK: - M5 系统能力工具
-
-final class ContactsSearchTool: MCPTool {
-    let definition = ToolDefinition(name: "contacts.search", summary: "Search iPhone contacts by name. Use for: find someone's phone number, look up a contact. Don't use for: send message (use other tools), read calendar (use calendar.list). Example: user says 'what is Zhang San phone number' → search contacts.",
-        parameters: ["query": "Name keyword to search (e.g. 'Zhang San' / 'Bob')"], verified: true)
-    func invoke(_ params: [String: Any]) throws -> [String: Any] {
-        let query = params["query"] as? String ?? ""
-        let store = CNContactStore()
-        let keys: [CNKeyDescriptor] = [
-            CNContactGivenNameKey as NSString,
-            CNContactFamilyNameKey as NSString,
-            CNContactPhoneNumbersKey as NSString
-        ]
-        var results: [[String: Any]] = []
-
-        let req = CNContactFetchRequest(keysToFetch: keys)
-        try? store.enumerateContacts(with: req) { contact, stop in
-            let name = "\(contact.givenName)\(contact.familyName)"
-            if query.isEmpty || name.localizedCaseInsensitiveContains(query) {
-                results.append([
-                    "name": name,
-                    "phones": contact.phoneNumbers.map { $0.value.stringValue }
-                ])
-            }
-            if results.count >= 50 { stop.pointee = true }
-        }
-        AuditLog.shared.log("contacts.search", detail: "query=\(query) found=\(results.count)")
-        return ["contacts": results]
-    }
-}
-
 final class LocationGetTool: MCPTool {
     let definition = ToolDefinition(name: "location.get", summary: "Get current GPS location (latitude/longitude). Use for: find where the phone is, location-based tasks. Don't use for: spoof fake location (use device.fake), get device info (use device.info). Example: user says 'where am I now' → get current location.")
     func invoke(_ params: [String: Any]) throws -> [String: Any] {
@@ -523,41 +492,6 @@ final class LocationGetTool: MCPTool {
             "longitude": mgr.longitude ?? 0,
             "available": mgr.available
         ]
-    }
-}
-
-final class ScanQRTool: MCPTool {
-    let definition = ToolDefinition(name: "scan.qr", summary: "Decode QR code or barcode from an image file. Use for: read QR code content from a screenshot/image. Don't use for: OCR text recognition (use ocr.image), take screenshot (use control.screenshot). Example: user says 'what is in this QR code' → decode QR from image.",
-        parameters: ["image_path": "Image file path (in workspace) containing QR code"], verified: true)
-    func invoke(_ params: [String: Any]) throws -> [String: Any] {
-        guard let path = params["image_path"] as? String else { throw MCPError.invalidParams("image_path required") }
-        let url = try Workspace.resolve(path)
-        guard let imgData = try? Data(contentsOf: url),
-              let image = UIImage(data: imgData),
-              let cgImage = image.cgImage else {
-            throw MCPError.failed("cannot load image: \(path)")
-        }
-        let request = VNDetectBarcodesRequest()
-        let handler = VNImageRequestHandler(cgImage: cgImage)
-        try handler.perform([request])
-        let results = request.results?.compactMap { $0.payloadStringValue } ?? []
-        return ["codes": results]
-    }
-}
-
-// MARK: - M6 编译模式工具
-
-final class BuildRunnerTokenTool: MCPTool {
-    let definition = ToolDefinition(name: "build.runner.token", summary: "Generate or verify a build authentication token (for CI builds). Use for: authenticate with build system. Don't use for: trigger GitHub Actions build (use github.trigger_build), check GitHub login (use github.account_status). Example: user says 'generate build token' → generate token.",
-        parameters: ["action": "generate (create new token) or verify (check token validity)"], verified: true)
-    func invoke(_ params: [String: Any]) throws -> [String: Any] {
-        let action = params["action"] as? String ?? "generate"
-        if action == "generate" {
-            let token = UUID().uuidString.replacingOccurrences(of: "-", with: "").prefix(32)
-            AuditLog.shared.log("build.token", detail: "generated")
-            return ["token": String(token), "action": "generate"]
-        }
-        return ["action": "verify", "valid": true]
     }
 }
 

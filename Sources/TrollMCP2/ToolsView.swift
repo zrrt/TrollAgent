@@ -10,8 +10,8 @@ struct ToolsView: View {
             (L10n.t("i18n_278"), "scope", ["probe.inspect", "hook.apply", "device.fake", "device.restore"]),
             ("Gateway", "network", ["gateway.status", "gateway.connect", "gateway.node_invoke", "cron.fire"]),
             (L10n.t("i18n_1193"), "bolt", ["automation.run", "automation.list", "automation.stop", "automation.status"]),
-            (L10n.t("i18n_341"), "gearshape.2", ["contacts.search", "calendar.list", "reminder.create", "location.get", "notification.send", "scan.qr"]),
-            (L10n.t("i18n_280"), "hammer", ["build.runner.token", "project.generate_tweak", "model.config", "ping", "device.info"])
+            (L10n.t("i18n_341"), "gearshape.2", ["calendar.list", "reminder.create", "location.get"]),
+            (L10n.t("i18n_280"), "hammer", ["project.generate_tweak", "model.config", "ping", "device.info"])
         ]
         let map = Dictionary(uniqueKeysWithValues: defs.map { ($0.name, $0) })
         return categories.compactMap { cat, _, names in
