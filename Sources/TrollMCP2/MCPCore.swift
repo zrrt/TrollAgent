@@ -1277,6 +1277,10 @@ public final class ToolRegistry: ObservableObject {
         register(AuditTool())
         // v3.1.44: verify 大工具 + 子命令 (合并 2 个 verify.* 工具）
         register(VerifyExecTool())
+        // v7.4.0-sessionstore：会话索引工具（元数据先行 + 上下文占用可视化数据源）——
+        // DebugDumpConversationsTool 系仅走 RemoteTerminalServer 端点，未进 ToolRegistry；
+        // 本工具显式注册让 AI 可直接调用查看会话清单/token 占用。
+        register(ConversationsIndexTool())
         // v4.5.x: 大文件下载工具（URLSession + 进度条，避开 shell.exec 120s 上限）
         register(DownloadTool())
         // v7.1.107: 子代理（对齐 OpenMinis subagent_task）——委派自包含脏活到隔离会话

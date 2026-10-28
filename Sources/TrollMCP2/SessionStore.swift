@@ -188,6 +188,9 @@ final class SessionStore {
             let needFull = dirty.contains(conv.id) || !FileManager.default.fileExists(atPath: file)
             if needFull {
                 if !rewriteConversation(conv, to: file) { ok = false; continue }
+            } else if conv.messages.count < last {
+                // 消息数回退（降级/并发窗口内删除消息）→ 整会话重写，防已删消息从 JSONL 复活
+                if !rewriteConversation(conv, to: file) { ok = false; continue }
             } else if conv.messages.count > last {
                 let newMsgs = Array(conv.messages.suffix(conv.messages.count - last))
                 if !appendMessages(newMsgs, to: file) { ok = false; continue }
@@ -225,20 +228,34 @@ final class SessionStore {
         return 0
     }
 
-    /// 整会话重写（truncate + 全写）——中间修改（删除/编辑消息）后保序保真
+    /// 整会话重写——先写 .tmp 再原子替换（rename）：失败时旧文件保留，不丢数据
     private func rewriteConversation(_ conv: ChatConversation, to file: String) -> Bool {
-        try? FileManager.default.removeItem(atPath: file)
-        return appendMessages(conv.messages, to: file)
+        let tmp = file + ".tmp"
+        try? FileManager.default.removeItem(atPath: tmp)
+        guard appendMessages(conv.messages, to: tmp) else {
+            try? FileManager.default.removeItem(atPath: tmp)
+            return false
+        }
+        do {
+            if FileManager.default.fileExists(atPath: file) {
+                try FileManager.default.removeItem(atPath: file)
+            }
+            try FileManager.default.moveItem(atPath: tmp, toPath: file)
+            return true
+        } catch {
+            try? FileManager.default.removeItem(atPath: tmp)
+            return false
+        }
     }
 
-    /// 追加消息行（append-only，逐行一条 ChatMessage JSON）
+    /// 追加消息行（append-only，逐行一条 ChatMessage JSON；空消息也落盘为空文件——空会话可持久化）
     private func appendMessages(_ msgs: [ChatMessage], to file: String) -> Bool {
-        guard !msgs.isEmpty else { return true }
         let fm = FileManager.default
         let url = URL(fileURLWithPath: file)
         if !fm.fileExists(atPath: file) {
             guard fm.createFile(atPath: file, contents: nil) else { return false }
         }
+        guard !msgs.isEmpty else { return true }
         guard let handle = try? FileHandle(forWritingTo: url) else { return false }
         defer { try? handle.close() }
         handle.seekToEndOfFile()

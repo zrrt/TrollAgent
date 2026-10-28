@@ -1152,9 +1152,10 @@ final class ConversationStore: ObservableObject {
     func clearAll() {
         conversations.removeAll()
         selectedId = nil
-        // v7.4.0-sessionstore：同步清双层（JSONL 会话文件 + SQLite 索引行）
+        dirtySessions.removeAll()
+        // v7.4.0-sessionstore：先排空保存队列再清双层——防异步旧快照把已删文件写回（竞态）
+        saveQueue.sync {}
         SessionStore.shared.clearAll()
-        save()
         // v6.0.28：清空会话同样停掉 TTS 队列，避免残留音频读旧内容
         TTSService.shared.stop()
     }
