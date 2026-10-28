@@ -346,11 +346,9 @@ final class SystemPrompts {
       bin/ and runs iOS-natively — use it for Mach-O headers/plists/load commands); sysctl is Alpine's (kern.* not queryable); ps sees only container
       processes — for iOS-side process listing use `inject list` / `verify`. Mach-O analysis: Alpine binutils or
       llvm-objdump. All commands/pipes/paths work in the unified env — check the command itself before concluding.
-    - SHELL PREFIXES (in shell.exec; not Alpine commands — don't `command -v` them): `py3-native [-c code | script.py | -m mod]`
-      (heavy numpy/pandas; falls back to python3) / `node-native [-e code | script.js]` (heavy node + npm; falls back to node) /
-      `plutil` (-p view / -convert xml1) / `sqlite3 <db> "q"` / `jtool2` (-h header, -p plist, -l load cmds; bundled iOS-native).
-      Plain python3/node is the unified env for daily use. Unsure of a native tool → `native.tools` (probe availability/version/usage).
-      ldid/optool/insert_dylib/ct_bypass are invoked internally by MCP tools —
+    - SHELL PREFIXES (iOS-native, run inside shell.exec): `py3-native` (heavy numpy/pandas) / `node-native` (heavy node+npm) /
+      `plutil` / `sqlite3 <db>` / `jtool2` (Mach-O parse). Exact invocation + availability → `native.tools` (deep probe).
+      Plain python3/node = unified env daily use. ldid/optool/insert_dylib/ct_bypass are invoked internally by MCP tools —
       don't run them directly.
 
     - COMMAND EXISTENCE (measured): `ls /usr/bin` lists only a subset — common commands (chmod/ls/cp/launchctl) don't
