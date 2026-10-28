@@ -738,7 +738,8 @@ struct ChatView: View {
                             .clipShape(Circle())
                     }
                     .buttonStyle(.plain)
-                    .disabled(inputText.isEmpty)
+                    // v7.4.0-fix71：会话异步加载完成前禁用发送（防 conversations 为空时丢消息）
+                    .disabled(inputText.isEmpty || store.isLoadingData)
                 }
             }
             .padding(.horizontal, 10)
@@ -898,6 +899,8 @@ struct ChatView: View {
     }
 
     private func send() {
+        // v7.4.0-fix71：会话异步加载完成前直接拦截（按钮 disabled 之外的双保险）
+        guard !store.isLoadingData else { return }
         guard let cfg = modelStore.defaultConfig,
               (!inputText.isEmpty || !pendingAttachments.isEmpty || !pendingImages.isEmpty) else { return }
         // v3.1.5: 自动提取关键信息（App 名、bundle id、文件路径等）

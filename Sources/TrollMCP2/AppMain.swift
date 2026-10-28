@@ -55,6 +55,14 @@ final class AppDelegate: UIResponder, UIApplicationDelegate {
         // 导致输入框高度过大；全局清零后 TextEditor 高度紧贴文字。
         UITextView.appearance().textContainerInset = .zero
 
+        // v7.4.0-fix71：导航栏滚动边缘固定不透明——修复 AI 发消息/执行命令自动滚动时
+        // 列表处于顶部边缘 → iOS 15 默认 scrollEdgeAppearance 透明导致导航栏闪变透明
+        if #available(iOS 13.0, *) {
+            let appearance = UINavigationBarAppearance()
+            appearance.configureWithOpaqueBackground()
+            UINavigationBar.appearance().scrollEdgeAppearance = appearance
+        }
+
         // v7.0.4.5: 自举 root helper 开 JIT（照抄 TrollStore RootHelper/jit.m——PT_ATTACHEXC+100ms+PT_DETACH）。
         // jit_helper 是独立 root 进程（spawnRoot persona uid 0），外部 attach 主进程 = 有效（区别于 self-attach）。
         // 成功（rc=0，等价 TrollStore 手动开 JIT）→ 不调 URL（零闪切）；失败 → TrollStore URL 兜底。

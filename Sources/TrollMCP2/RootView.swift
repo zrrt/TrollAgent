@@ -260,9 +260,20 @@ struct ConversationDrawerView: View {
     }
 
     private var conversationList: some View {
+        // v7.4.0-fix71：异步加载期间显示加载中占位（loadAll 后台解码，避免列表空白等待）
+        if store.isLoadingData {
+            return AnyView(
+                VStack(spacing: 8) {
+                    ProgressView()
+                    Text("加载会话中…").font(.footnote).foregroundColor(.secondary)
+                }
+                .frame(maxWidth: .infinity)
+                .padding(.top, 40)
+            )
+        }
         // 用 ScrollView + LazyVStack 替代 List，去掉行间分隔线（v2.9.9）
         // v2.9.10：选中行加渐变圆角卡片
-        ScrollView {
+        return AnyView(ScrollView {
             LazyVStack(spacing: 6) {
                 ForEach(filtered) { conv in
                     Button(action: {
@@ -291,7 +302,7 @@ struct ConversationDrawerView: View {
                 }
             }
             .padding(.horizontal, 10)
-        }
+        })
     }
 
     private func deleteSingle(_ id: UUID) {

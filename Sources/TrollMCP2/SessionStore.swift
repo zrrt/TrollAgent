@@ -151,13 +151,15 @@ final class SessionStore {
             sqlite3_finalize(stmt)
         }
         var out: [ChatConversation] = []
+        // v7.4.0-fix71：复用 decoder（逐行新建 decoder 有构造开销；loadAll 在 lock 内单线程，复用安全）
+        let decoder = JSONDecoder()
         for f in files.sorted() where f.hasSuffix(".jsonl") {
             let id = String(f.dropLast(".jsonl".count))
             guard let data = try? Data(contentsOf: URL(fileURLWithPath: sessionsDir + "/" + f)) else { continue }
             let lines = String(decoding: data, as: UTF8.self).split(separator: "\n")
             var msgs: [ChatMessage] = []
             for line in lines {
-                if let m = try? JSONDecoder().decode(ChatMessage.self, from: Data(String(line).utf8)) {
+                if let m = try? decoder.decode(ChatMessage.self, from: Data(String(line).utf8)) {
                     msgs.append(m)
                 }
             }

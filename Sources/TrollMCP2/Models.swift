@@ -1035,8 +1035,34 @@ final class ConversationStore: ObservableObject {
     // v7.4.0-sessionstore：中间修改标记（主线程独占——UI 事件线程）。
     // 尾部追加走增量路径；删除/编辑消息标记 dirty → save() 时整会话重写 JSONL（保序保真）。
     private var dirtySessions = Set<UUID>()
+    // v7.4.0-fix71：会话异步加载中（加载完成前 UI 显示加载中、发送按钮禁用）
+    @Published var isLoadingData = true
 
-    init() { load() }
+    init() {
+        // v7.4.0-fix71：会话异步加载——loadAll 逐会话 JSONL 全量解码（含大图 base64）
+        // 在 init 同步执行会阻塞主线程数百 ms~数秒 → 侧边栏列表延迟出现（"等一会儿才加载出来"）。
+        // 后台解码，主线程 applyLoaded；isLoadingData 期间 UI 显示加载中并禁用发送。
+        DispatchQueue.global(qos: .userInitiated).async { [weak self] in
+            guard let self else { return }
+            let fm = FileManager.default
+            var decoded: [ChatConversation]?
+            if !fm.fileExists(atPath: self.storeDir + "/.fallback_flag"),
+               SessionStore.shared.hasData() {
+                decoded = SessionStore.shared.loadAll()
+            }
+            if let d = decoded, !d.isEmpty {
+                DispatchQueue.main.async {
+                    self.applyLoaded(d)
+                    self.isLoadingData = false
+                }
+                return
+            }
+            DispatchQueue.main.async {
+                self.loadLegacy()
+                self.isLoadingData = false
+            }
+        }
+    }
 
     var selectedIndex: Int? {
         conversations.firstIndex { $0.id == selectedId }
@@ -2730,20 +2756,10 @@ final class ConversationStore: ObservableObject {
         if cleaned { save() }   // 持久化清理结果，避免下次启动重复标记
     }
 
-    private func load() {
+    /// v7.4.0-fix71：旧路径（文件/备份/UserDefaults 迁移）——同步、主线程调用；
+    /// 原 JSONL 双层优先分支已移入 init 的后台异步（loadAll 全量解码不阻塞主线程）
+    private func loadLegacy() {
         let fm = FileManager.default
-        // v7.4.0-sessionstore：双层优先——JSONL 真源已有数据则直接重建
-        // （崩溃清理逻辑与旧路径共用 applyLoaded；列表/元数据来自 SQLite 索引）。
-        // 降级标记存在时跳过 JSONL 优先：conversations.json 是降级期间最新权威
-        // （JSONL 可能停留在降级前状态，读它会丢降级窗口内消息）。
-        if !fm.fileExists(atPath: storeDir + "/.fallback_flag"),
-           SessionStore.shared.hasData() {
-            let decoded = SessionStore.shared.loadAll()
-            if !decoded.isEmpty {
-                applyLoaded(decoded)
-                return
-            }
-        }
         // 1. 文件主数据
         if fm.fileExists(atPath: storeFile), let d = decodeFile(storeFile), !d.isEmpty {
             applyLoaded(d); return
