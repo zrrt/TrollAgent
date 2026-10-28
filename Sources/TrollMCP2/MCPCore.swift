@@ -472,7 +472,9 @@ public final class ToolRegistry: ObservableObject {
         // v4.3.66：GitHub CI 工具（tool.install 触发 CI 后的查进度/取产物闭环）
         "github",
         // v4.5.x：大文件下载（URLSession + 进度条）
-        "download"
+        "download",
+        // v7.2.5-fix60：原生工具能力探测（AI 不确定时查 py3-native/node-native/jtool2 等可用性与用法）
+        "native.tools"
     ]
 
     /// v2.9.31：常驻核心工具名集合 (UI 用只读访问）
@@ -1268,6 +1270,8 @@ public final class ToolRegistry: ObservableObject {
         // v4.4.x(优化): 重新启用 SystemOverviewTool——tool_categories 已改为从注册表动态生成
         //   (只列真实注册的大工具 + 版本从 Bundle 读)，给 AI 一个无幽灵工具名的真实目录。
         register(SystemOverviewTool())
+        // v7.2.5-fix60: native.tools——原生工具能力探测（AI 不确定时查可用性/版本/用法）
+        register(NativeToolsTool())
         // v4.4.x(优化): tools.audit——工具注册表一致性审计（检测 summary/prerequisites 里引用
         //   但未注册的"幽灵工具名"，防文档漂移，AI 分不清工具的根因之一）。
         register(AuditTool())

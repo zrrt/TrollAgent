@@ -349,8 +349,8 @@ final class SystemPrompts {
     - SHELL PREFIXES (in shell.exec; not Alpine commands — don't `command -v` them): `py3-native [-c code | script.py | -m mod]`
       (heavy numpy/pandas; falls back to python3) / `node-native [-e code | script.js]` (heavy node + npm; falls back to node) /
       `plutil` (-p view / -convert xml1) / `sqlite3 <db> "q"` / `jtool2` (-h header, -p plist, -l load cmds; bundled iOS-native).
-      Plain python3/node
-      is the unified env for daily use. ldid/optool/insert_dylib/ct_bypass are invoked internally by MCP tools —
+      Plain python3/node is the unified env for daily use. Unsure of a native tool → `native.tools` (probe availability/version/usage).
+      ldid/optool/insert_dylib/ct_bypass are invoked internally by MCP tools —
       don't run them directly.
 
     - COMMAND EXISTENCE (measured): `ls /usr/bin` lists only a subset — common commands (chmod/ls/cp/launchctl) don't
