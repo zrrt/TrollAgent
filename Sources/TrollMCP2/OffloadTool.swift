@@ -49,7 +49,7 @@ enum OffloadRouter {
             return listHelp(raw)
         }
         if first == "version" || first == "--version" {
-            return ["command": raw, "exit_code": 0, "stdout": "ta offload router 1.0 (TrollAgent)", "hint": "ta list / ta help <tool> / ta <tool> <key:value...>"]
+            return ["command": raw, "exit_code": 0, "stdout": "ta offload 1.0 (TrollAgent)", "hint": "ta list / ta help <tool> / ta <tool> <key:value...>"]
         }
         // 其它：当成工具名
         let toolName = first
