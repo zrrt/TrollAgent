@@ -2261,3 +2261,152 @@ final class SystemExecRootTool: MCPTool {
         return result
     }
 }
+
+// MARK: - native.tools：原生工具能力探测（v7.2.5-fix60）
+/// 只读环境能力清单——AI 不确定原生工具时调用一次即得：可用性 + 版本 + 用法。
+/// 与 system.overview（工具列表）区分：本工具是"环境能力"探测，运行时真实检查 bin/ 与 site-packages。
+final class NativeToolsTool: MCPTool {
+    let definition = ToolDefinition(
+        name: "native.tools",
+        summary: "Probe iOS-native toolchain availability (ARM64 Mach-O bundled in bin/ + Python runtime). Use for: when you need to know WHICH native tools exist and HOW to call them — py3-native / node-native / jtool2 / plutil / sqlite3 / ldid / optool status, versions, and exact invocation forms. Don't use for: listing MCP tools (use system.overview). Example: 'native.tools' → availability matrix; 'native.tools name:\"py3-native\"' → one tool detail. Native tools are NOT PATH commands — invoke inside shell.exec with the usage form returned here.",
+        parameters: ["name": "Optional: filter to one native tool (py3-native / node-native / jtool2 / plutil / sqlite3 / ldid / optool / insert_dylib / ct_bypass / opainject / install_name_tool / nmap / nscan.py). Empty = all."],
+        verified: true, category: "system")
+
+    private let binDir: String = Bundle.main.bundlePath + "/bin"
+
+    func invoke(_ params: [String: Any]) throws -> [String: Any] {
+        let filter = params["name"] as? String
+        var items: [[String: Any]] = []
+
+        // ---- 1. py3-native：原生 Python（numpy/pandas 深度计算）----
+        let py3 = self.probePython(filter: filter)
+        if let py3 = py3 { items.append(py3) }
+
+        // ---- 2. node-native：原生 node（V8 + npm）----
+        let node = self.probeNode(filter: filter)
+        if let node = node { items.append(node) }
+
+        // ---- 3. jtool2：Mach-O 解析专长 ----
+        let jtool = self.probeJtool2(filter: filter)
+        if let jtool = jtool { items.append(jtool) }
+
+        // ---- 4. plutil / sqlite3：iOS 系统命令 ----
+        if filter == nil || filter == "plutil" {
+            items.append(["name": "plutil",
+                          "available": FileManager.default.fileExists(atPath: "/usr/bin/plutil"),
+                          "type": "ios-system",
+                          "usage": "plutil -p <plist> | plutil -convert xml1 <plist>",
+                          "note": "iOS system binary, direct in shell.exec (native command table)"])
+        }
+        if filter == nil || filter == "sqlite3" {
+            items.append(["name": "sqlite3",
+                          "available": FileManager.default.fileExists(atPath: "/usr/bin/sqlite3"),
+                          "type": "ios-system",
+                          "usage": "sqlite3 <db> \"q\"",
+                          "note": "iOS system binary, direct in shell.exec (native command table)"])
+        }
+
+        // ---- 5. bin/ 注入链工具：MCP 内部调用，不直接跑 ----
+        let internalTools = ["ldid", "optool", "insert_dylib", "ct_bypass", "opainject", "install_name_tool"]
+        for t in internalTools {
+            if filter == nil || filter == t {
+                items.append(["name": t,
+                              "available": FileManager.default.fileExists(atPath: binDir + "/" + t),
+                              "type": "bundled-macho",
+                              "usage": "internal — invoked by MCP tools (inject/verify), do NOT run directly",
+                              "note": "bundled in bin/, signed, cryptid=0"])
+            }
+        }
+
+        // ---- 6. nmap：无原生版（明确告知，防 AI 误以为可用）----
+        if filter == nil || filter == "nmap" {
+            items.append(["name": "nmap",
+                          "available": false,
+                          "type": "no-native-build",
+                          "usage": "nscan.py script (Python) or `apk add nmap` (Alpine ELF in unified env)",
+                          "note": "NO iOS-native nmap exists — native-nmap CI artifact is nscan.py (nmap-lite)"])
+        }
+
+        // ---- 7. nscan.py：nmap-lite 脚本 ----
+        if filter == nil || filter == "nscan.py" {
+            items.append(["name": "nscan.py",
+                          "available": FileManager.default.fileExists(atPath: binDir + "/nscan.py"),
+                          "type": "script",
+                          "usage": "python3 <bin>/nscan.py <target> [ports]",
+                          "note": "Python TCP port scanner (nmap-lite)"])
+        }
+
+        if items.isEmpty {
+            return ["error": "no native tool named '\(filter ?? "")' — call native.tools with no name for the full matrix"]
+        }
+        return ["tools": items, "count": items.count,
+                "note": "Native tools run INSIDE shell.exec (prefix/invocation form in usage). Versions from runtime probe."]
+    }
+
+    // ---- 探测实现 ----
+
+    private func probePython(filter: String?) -> [String: Any]? {
+        if let f = filter, f != "py3-native" { return nil }
+        let pyPath = binDir + "/python3"
+        let exists = FileManager.default.isExecutableFile(atPath: pyPath)
+        var ver = ""
+        if exists {
+            let r = BuildRunner.shared.run(executable: pyPath, args: ["-V"], env: ["PYTHONIOENCODING": "utf-8"], timeout: 10)
+            ver = r.stdout.trimmingCharacters(in: .whitespacesAndNewlines)
+            if ver.isEmpty { ver = r.stderr.trimmingCharacters(in: .whitespacesAndNewlines) }
+        }
+        // numpy/pandas：目录存在性（不 import，保持探测快）
+        let libBase = Bundle.main.bundlePath + "/python/lib"
+        let pyDirs = (try? FileManager.default.contentsOfDirectory(atPath: libBase)) ?? []
+        let sp = pyDirs.first(where: { $0.hasPrefix("python3") }).map { libBase + "/" + $0 + "/site-packages" }
+        let numpy = sp.map { FileManager.default.fileExists(atPath: $0 + "/numpy") } ?? false
+        let pandas = sp.map { FileManager.default.fileExists(atPath: $0 + "/pandas") } ?? false
+        return ["name": "py3-native",
+                "available": exists,
+                "type": "bundled-macho",
+                "version": ver.isEmpty ? "n/a" : ver,
+                "numpy": numpy,
+                "pandas": pandas,
+                "usage": "py3-native [-c code | script.py | -m mod]  (inside shell.exec)",
+                "note": "heavy numpy/pandas compute on-chip; falls back to python3 (Alpine) if missing"]
+    }
+
+    private func probeNode(filter: String?) -> [String: Any]? {
+        if let f = filter, f != "node-native" { return nil }
+        let nodePath = binDir + "/node"
+        let exists = FileManager.default.isExecutableFile(atPath: nodePath)
+        var ver = ""
+        if exists {
+            let r = BuildRunner.shared.run(executable: nodePath, args: ["-v"], env: ["PATH": binDir], timeout: 10)
+            ver = r.stdout.trimmingCharacters(in: .whitespacesAndNewlines)
+            if ver.isEmpty { ver = r.stderr.trimmingCharacters(in: .whitespacesAndNewlines) }
+        }
+        return ["name": "node-native",
+                "available": exists,
+                "type": "bundled-macho",
+                "version": ver.isEmpty ? "n/a" : ver,
+                "npm": exists,   // NodeMobile.framework 捆绑 npm 运行时
+                "usage": "node-native [-e code | script.js]  (inside shell.exec)",
+                "note": "V8 on-chip, npm included (NodeMobile); falls back to node (Alpine nodejs) if missing"]
+    }
+
+    private func probeJtool2(filter: String?) -> [String: Any]? {
+        if let f = filter, f != "jtool2" { return nil }
+        let jPath = binDir + "/jtool2"
+        let exists = FileManager.default.isExecutableFile(atPath: jPath)
+        var ver = ""
+        if exists {
+            // jtool2 无参打印欢迎横幅（含版本行）——首行截取
+            let r = BuildRunner.shared.run(executable: jPath, args: [], env: [:], timeout: 10)
+            ver = r.stdout.trimmingCharacters(in: .whitespacesAndNewlines)
+            if ver.isEmpty { ver = r.stderr.trimmingCharacters(in: .whitespacesAndNewlines) }
+            if ver.count > 80 { ver = String(ver.prefix(80)) }
+        }
+        return ["name": "jtool2",
+                "available": exists,
+                "type": "bundled-macho",
+                "version": ver.isEmpty ? "n/a" : ver,
+                "usage": "jtool2 -h <macho> | -p <macho> | -l <macho>  (inside shell.exec)",
+                "note": "Mach-O headers/plists/load commands; iOS-native, no Alpine equivalent"]
+    }
+}
