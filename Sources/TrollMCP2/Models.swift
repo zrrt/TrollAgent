@@ -1037,6 +1037,8 @@ final class ConversationStore: ObservableObject {
     private var dirtySessions = Set<UUID>()
     // v7.4.0-fix71：会话异步加载中（加载完成前 UI 显示加载中、发送按钮禁用）
     @Published var isLoadingData = true
+    // v7.4.0-fix73：当前在途请求上下文快照（切后台 handoff 用）——runLoop 每次发送前更新
+    private var lastRequestContext: (messages: [ChatMessage], tools: [[String: Any]]?, config: ModelConfig)?
 
     init() {
         // v7.4.0-fix71：会话异步加载——loadAll 逐会话 JSONL 全量解码（含大图 base64）
@@ -1332,6 +1334,66 @@ final class ConversationStore: ObservableObject {
         }
     }
 
+    // MARK: - v7.4.0-fix73 后台非流式代传（BackgroundLLM）
+
+    /// 切后台：在途流式请求转交 background session 系统代传。
+    /// 成功接管 → cancel 原流式（-999 静默，不弹错误气泡）；不支持（协议/中转）→ 不动，靠 fix72 前台重试。
+    func handoffActiveRequestToBackground() {
+        guard isLoading, currentClient != nil,
+              let ctx = lastRequestContext,
+              BackgroundLLM.shared.handoff(messages: ctx.messages, tools: ctx.tools, config: ctx.config) else { return }
+        currentClient?.cancel()
+        currentClient = nil
+        statusText = "切后台：请求已转后台代传，回前台自动收结果"
+    }
+
+    /// 回前台：收取后台代传结果并展示/继续执行。
+    func consumeBackgroundResult() {
+        guard let result = BackgroundLLM.shared.consumeResult() else { return }
+        guard isLoading else { return }
+        if let err = result.error, !err.isEmpty {
+            let errMsg = ChatMessage(role: "assistant", content: "⚠️ \(err)", isError: true)
+            appendToCurrent(errMsg)
+            isLoading = false
+            currentClient = nil
+            activeConvId = nil
+            statusText = nil
+            TaskNotify.shared.endBackground()
+            return
+        }
+        if result.toolCalls.isEmpty {
+            var msg = ChatMessage(role: "assistant", content: result.text)
+            msg.thinking = result.thinking
+            appendToCurrent(msg)
+            TaskNotify.shared.endBackground()
+            TaskNotify.shared.notifyIfBackground(title: "✅ AI replied", body: String(result.text.prefix(60)))
+            isLoading = false
+            currentClient = nil
+            activeConvId = nil
+            statusText = nil
+            trailStep(.done(.note, "AI reply done (background)", detail: String(result.text.prefix(80))))
+            attachTrail(to: msg.id)
+            return
+        }
+        // 后台请求返回工具调用 → 继续执行工具链（复用 runLoop 递归）
+        guard let ctx = lastRequestContext else {
+            let asst = ChatMessage(role: "assistant", content: result.text, toolCalls: result.toolCalls)
+            appendToCurrent(asst)
+            isLoading = false
+            currentClient = nil
+            activeConvId = nil
+            statusText = nil
+            return
+        }
+        let asst = ChatMessage(role: "assistant", content: result.text, toolCalls: result.toolCalls)
+        appendToCurrent(asst)
+        isLoading = false
+        currentClient = nil
+        processToolCalls(result.toolCalls, index: 0, toolMessages: [], newlyDisclosed: [],
+                         config: ctx.config, tools: ctx.tools, disclosed: [], depth: 0,
+                         reasoningLevel: 0, thinkText: result.text)
+    }
+
     /// v2.9.127：新一轮请求开始——清空实时轨迹
     func beginTrail() {
         DispatchQueue.main.async {
@@ -1468,6 +1530,8 @@ final class ConversationStore: ObservableObject {
             self.pendingEmptyReplyCorrection = nil
         }
 
+        // v7.4.0-fix73：记录在途请求上下文（切后台 handoff 用；含已组装 system 前缀与压缩结果）
+        lastRequestContext = (history, effectiveTools, config)
         client.send(messages: history, compactSource: prepared.compactSource, tools: effectiveTools, onStatus: { status in
             DispatchQueue.main.async {
                 // v2.9.34：带轮次前缀；v4.3.71 无上限 (requestRounds==0) 时不显示 "/0"

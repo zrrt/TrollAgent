@@ -218,6 +218,8 @@ final class AppDelegate: UIResponder, UIApplicationDelegate {
         }
         // v2.9.136：切后台提交 BGTask 周期刷新（系统调度窗口内保持存活）
         BackgroundKeepAlive.scheduleRefresh()
+        // v7.4.0-fix73：在途流式请求 → background session 系统代传（App 挂起/被杀也能完成）
+        ConversationStore.shared.handoffActiveRequestToBackground()
     }
 
     func applicationWillEnterForeground(_ application: UIApplication) {
@@ -226,6 +228,8 @@ final class AppDelegate: UIResponder, UIApplicationDelegate {
             backgroundTask = .invalid
         }
         BackgroundKeepAlive.cancelRefresh()
+        // v7.4.0-fix73：收取后台代传结果（完整回复/工具调用继续执行）
+        ConversationStore.shared.consumeBackgroundResult()
         // v6.1.5-5：回前台先做 HUD 版本同步（覆盖安装后自动换新 HUD 进程）
         HUDManager.shared.syncAfterUpdate()
         // v6.0.7：锁屏久了 HUD 进程可能被系统清理；回前台自动检查，若可爱助手开着但悬浮没跑则拉起
@@ -239,8 +243,15 @@ final class AppDelegate: UIResponder, UIApplicationDelegate {
     // MARK: v2.9.126 —— 深链导入模型 API 配置（对齐 cc-switch DeepLinkImportDialog）
     // 链接格式: trollagent://import?baseURL=...&apiKey=...&model=...&name=...&auth=Bearer&group=默认
     // 解析后存 pendingImport 并发通知，由 SwiftUI 层弹确认页（防误导入）
-    func application(_ app: UIApplication, open url: URL, options: [UIApplication.OpenURLOptionsKey: Any] = [:]) -> Bool {
-        guard url.scheme?.lowercased() == "trollagent" else { return false }
+    /// v7.4.0-fix73：background session 全部任务结束的系统回调——必须实现并保存 completionHandler，
+    /// 否则后台代传结果不会回调（App 挂起期间由系统代传，完成后唤醒执行）
+    func application(_ application: UIApplication,
+                     handleEventsForBackgroundURLSession identifier: String,
+                     completionHandler: @escaping () -> Void) {
+        BackgroundLLM.shared.onAllTasksFinished = completionHandler
+    }
+
+    func application(_ app: UIApplication, open url: URL, options: [UIApplication.OpenURLOptionsKey: Any] = [:]) -> Bool {        guard url.scheme?.lowercased() == "trollagent" else { return false }
         guard let comps = URLComponents(url: url, resolvingAgainstBaseURL: false),
               let items = comps.queryItems else { return false }
 

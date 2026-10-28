@@ -1778,6 +1778,49 @@ final class OpenAIClient {
         task.resume()
     }
 
+    // MARK: - v7.4.0-fix73 后台非流式请求构建（BackgroundLLM 切后台代传用）
+
+    /// 切后台时把在途请求转成非流式请求（复用现有 body/鉴权/别名构建）——
+    /// 由 background session 系统代传（App 挂起/被杀也能完成）。
+    /// 仅支持 OpenAI Chat + Responses（覆盖绝大多数中转）；Gemini/Anthropic
+    /// 返回 nil → BackgroundLLM 跳过 → 由 fix72 回前台自动重试兜底。
+    func makeBackgroundRequest(messages: [ChatMessage], tools: [[String: Any]]?) -> URLRequest? {
+        let base = config.baseURL.trimmingCharacters(in: CharacterSet(charactersIn: "/"))
+        if config.apiProtocol == "OpenAI Responses" {
+            guard let url = URL(string: base + "/responses") else { return nil }
+            var request = URLRequest(url: url, timeoutInterval: 120)
+            setHTTPMethod("POST", on: &request)
+            request.setValue("application/json", forHTTPHeaderField: "Content-Type")
+            applyAuth(to: &request)
+            var body: [String: Any] = [
+                "model": config.model,
+                "input": responsesInput(from: messages),
+                "max_output_tokens": config.maxTokens,
+                "stream": false
+            ]
+            if config.isReasoningModel { body["reasoning"] = ["effort": reasoningEffortName()] }
+            if let tools = tools, !tools.isEmpty {
+                body["tools"] = tools.map { responsesToolSchema($0) }
+                body["tool_choice"] = "auto"
+            }
+            injectBodyAuth(into: &body)
+            applyParamAliases(into: &body)
+            request.httpBody = try? JSONSerialization.data(withJSONObject: body)
+            return request
+        }
+        // OpenAI Chat（默认）——chat/completions 非流式（该路径无 stream 字段）
+        guard let url = URL(string: base + "/chat/completions") else { return nil }
+        var request = URLRequest(url: url, timeoutInterval: 120)
+        setHTTPMethod("POST", on: &request)
+        request.setValue("application/json", forHTTPHeaderField: "Content-Type")
+        applyAuth(to: &request)
+        var body = buildBody(level: 0, messages: messages, tools: tools)
+        injectBodyAuth(into: &body)
+        applyParamAliases(into: &body)
+        request.httpBody = try? JSONSerialization.data(withJSONObject: body)
+        return request
+    }
+
     // MARK: - Anthropic
 
     private func performAnthropic(messages: [ChatMessage], tools: [[String: Any]]? = nil, completion: @escaping (Result<ChatResult, Error>) -> Void) {
