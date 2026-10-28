@@ -1212,6 +1212,8 @@ final class ConversationStore: ObservableObject {
         TaskNotify.shared.beginBackground()
         // v2.9.87：新一轮请求重置网络重试状态
         retriedNetworkOnce = false
+        // v7.4.0-fix72：后台挂起重试标记同周期重置（每轮请求一次机会，防跨轮失效）
+        retriedBackgroundOnce = false
         cancelNetworkRetry()
         // v3.1.70：请求绑定到发起时的会话——中途切换会话，输出仍写回该会话 (修复输出错位）
         activeConvId = selectedId
@@ -1287,6 +1289,46 @@ final class ConversationStore: ObservableObject {
         if let o = retryObserver {
             NotificationCenter.default.removeObserver(o)
             retryObserver = nil
+        }
+        cancelForegroundRetry()
+    }
+
+    // MARK: - v7.4.0-fix72 后台挂起自动重试
+
+    /// 切后台被系统挂起导致的请求失败（非真断网）——回前台自动重试一次。
+    /// 判定：失败时 App 仍在后台，或刚回前台（5s 窗口内）→ URLSession 后台挂起/恢复抖动，
+    /// 不是网络故障，不应弹"网络连接已中断"错误气泡。
+    private var retriedBackgroundOnce = false
+    private var foregroundRetryObserver: NSObjectProtocol?
+
+    private func isBackgroundSuspensionFailure() -> Bool {
+        guard !retriedBackgroundOnce else { return false }
+        if UIApplication.shared.applicationState != .active { return true }
+        let sinceForeground = Date().timeIntervalSince(AppLifecycleMonitor.lastForegroundAt)
+        return sinceForeground >= 0 && sinceForeground < 5
+    }
+
+    private func scheduleRetryOnForeground(config: ModelConfig, tools: [[String: Any]]?, disclosed: [String], depth: Int, reasoningLevel: Int, personaPrompt: String? = nil) {
+        retriedBackgroundOnce = true
+        foregroundRetryObserver = NotificationCenter.default.addObserver(
+            forName: AppLifecycleMonitor.willEnterForeground,
+            object: nil, queue: .main
+        ) { [weak self] _ in
+            guard let self = self else { return }
+            if let o = self.foregroundRetryObserver {
+                NotificationCenter.default.removeObserver(o)
+                self.foregroundRetryObserver = nil
+            }
+            self.statusText = "Foreground restored, auto-retrying…"
+            self.isLoading = true
+            self.runLoop(config: config, tools: tools, disclosed: disclosed, depth: depth, reasoningLevel: reasoningLevel, personaPrompt: personaPrompt)
+        }
+    }
+
+    private func cancelForegroundRetry() {
+        if let o = foregroundRetryObserver {
+            NotificationCenter.default.removeObserver(o)
+            foregroundRetryObserver = nil
         }
     }
 
@@ -1717,6 +1759,13 @@ final class ConversationStore: ObservableObject {
                     if self.shouldRetryOnNetworkRestore(nsErr) {
                         self.statusText = "Network unavailable, auto-retrying after recovery…"
                         self.scheduleRetryAfterNetworkRestore(config: config, tools: tools, disclosed: disclosed, depth: depth, reasoningLevel: reasoningLevel, personaPrompt: personaPrompt)
+                        return
+                    }
+                    // v7.4.0-fix72：后台挂起失败（非真断网）——不弹"网络连接已中断"，
+                    // 回前台自动重试（仅一次防死循环；cancelNetworkRetry 一并清理）
+                    if self.isBackgroundSuspensionFailure() {
+                        self.statusText = "Background suspension, auto-retrying on foreground…"
+                        self.scheduleRetryOnForeground(config: config, tools: tools, disclosed: disclosed, depth: depth, reasoningLevel: reasoningLevel, personaPrompt: personaPrompt)
                         return
                     }
                     // v2.9.82：failed通知 (后台时）
