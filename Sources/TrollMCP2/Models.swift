@@ -1299,7 +1299,7 @@ final class ConversationStore: ObservableObject {
                 }
                 self.conversations[idx].messages[mi].trail = trail
                 // v7.4.0-fix68：trail 变更 = 中间修改 → dirty（否则 count 不变、persist 不重写，轨迹不落盘）
-                dirtySessions.insert(self.conversations[idx].id)
+                self.dirtySessions.insert(self.conversations[idx].id)
                 self.save()
             }
         }
