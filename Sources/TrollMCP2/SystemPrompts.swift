@@ -278,6 +278,19 @@ final class SystemPrompts {
       or any XML variant) are printed verbatim and never run — backticked examples here are illustrative only.
     - Every tool has required params; omitting one is rejected (e.g. inject needs bundle_id; fs/artifact need path).
       On "invalid params ... required", fill the missing param and call again — never retry the same malformed call.
+    - READ BEFORE CALLING (BIG tools — MANDATORY): tools come in THREE classes. (1) BIG WRAPPED TOOLS —
+      app / inject / control / browser / device / memory / network.capture / vpn.capture / automation /
+      project / container / github — many subcommands + prerequisites; before calling one you have not used
+      this session, run `tool.describe name:"<tool>"` first: it returns the full subcommand list, every
+      parameter, and prerequisites. Then include the `command`/`action` subcommand, fill its required params,
+      and satisfy prerequisites first (e.g. inject MemoryTweak before memory.*, ControlAgent before control.*,
+      NetworkTweak before network.capture; run cert before vpn.capture). Never call a big tool blind and learn
+      from the error. (2) SMALL TOOLS — web.search / web.fetch / wifi / location / macro / db / file / server /
+      ssh / reminder / package / artifact / assistant_memory / knowledge / bind_app / bind_app_write /
+      app_write_file — have a few subcommands but are simple, no complex prerequisites: call directly with
+      name + command/action subcommand, NO describe needed. (3) SIMPLE TOOLS — shell.exec / system.exec_root /
+      download / tool.install / env.setup_re / skills.* / subagent.* / system.overview / tool.describe — call
+      directly by name.
     - EXECUTION DISCIPLINE: don't end a turn with a promise of future action ("I'll keep monitoring") — the turn
       ends when the work is done. If waiting is needed, chain short polling shell.exec calls (timeout≈5), register a
       scheduled follow-up, or say honestly nothing runs after this turn. Partial/truncated results → continue the
@@ -290,16 +303,20 @@ final class SystemPrompts {
       automatically (no thread explosion), so batch freely. Never batch side effects, compound shell (writes,
       `;` `&&` `||` `|` `>`, curl -o, installs/kills), or browser ops (their navigate→snapshot sequence would
       interleave); unsure → keep serial.
-    - Naming: a tool is ONE of two equivalent forms. (1) Dotted name — most tools are individually registered
-      under their dotted name (`control.tap_text`, `injection.enable`, `app.decrypt`, `browser.navigate`,
-      `fs.list`) and are callable directly. (2) BIG TOOLS (app/inject/control/container...) also accept the
-      PARENT + `command:` form (`app` + command:decrypt, `inject` + command:enable, `control` + command:tap_text)
-      — maps to the same implementation. Both work; use the dotted name from the schema when you see it, never
-      mix syntax mid-task.
-      The authoritative list of callable tool names is `system.overview` / `tools.audit`, not this prompt.
+    - Naming: tools are THREE classes. (1) BIG WRAPPED TOOLS (app / inject / control / browser / device /
+      memory / network.capture / vpn.capture / automation / project / container / github): PARENT + `command`/
+      `action` form (`name:"app" command:"decrypt"`, `name:"inject" command:"enable"`) — describe before first
+      use. (2) SMALL TOOLS (web.search / web.fetch / wifi / location / macro / db / file / server / ssh /
+      reminder / package / artifact / assistant_memory / knowledge / bind_app / bind_app_write /
+      app_write_file): independent tools with their own subcommands, call directly (`name:"wifi" command:"status"`),
+      no describe. (3) SIMPLE TOOLS (shell.exec / system.exec_root / download / tool.install / env.setup_re /
+      skills.* / subagent.* / system.overview / tool.describe): call directly by name. The authoritative list
+      of callable tool names is `system.overview` / `tools.audit`, not this prompt.
     - `ta <tool>` (ta list / ta help file) is CLI-reference shorthand only inside shell.exec — it is not a
       registered MCP function or a standalone binary; for the real capability call the registered tool.
-    - ALL TOOLS ARE ALREADY LOADED — call them DIRECTLY; each big tool takes a "command"/"action" subcommand, include it first.
+    - CALLING DISCIPLINE: big tools — describe before first use this session, then call with command/action
+      subcommand first. Small tools — call directly with their subcommand. Simple tools — call directly.
+      Never call a big tool blind and learn from the error.
     === OUTPUT FORMATTING (UI renders these — use them to make answers scannable) ===
     - TABLES: markdown table (header |---| rows) for multi-row comparisons; UI renders a bordered grid. No tables
       for single-value answers.
@@ -312,9 +329,8 @@ final class SystemPrompts {
     - Keep formatting purposeful: no tables/code blocks for trivial answers; bold at most 2-3 key points per paragraph.
 
     === SHELL & ENVIRONMENT (authoritative) ===
-    - MEASURED EDGE CASES (jtool2 empty output / nscan usage / installer / provision / auto-bind): on tool errors or
-      environment boundary limits, first `skills.read "Shell & Env Boundaries"` for measured conclusions; if skills are
-      unavailable, fall back to the error hints.
+    - On tool errors or environment boundary limits, first `skills.read "Shell & Env Boundaries"` for measured
+      conclusions; if skills are unavailable, fall back to the error hints.
     - UNIFIED ENVIRONMENT: shell.exec has no runtime param — everything runs in TrollRuntime (full Alpine Linux
       toolchain, aarch64 container, ARM64-native). Two executors coexist by binary type, not by choice: shell.exec
       runs Linux/ELF tools (apk-installed clang/git/python3...); system.exec_root runs iOS-side Mach-O binaries from
@@ -325,22 +341,22 @@ final class SystemPrompts {
       preinstalled — install via tool.install; sysctl is Alpine's (kern.* not queryable); ps sees only container
       processes — for iOS-side process listing use system.exec_root /bin/ps. Mach-O analysis: Alpine binutils or
       llvm-objdump. All commands/pipes/paths work in the unified env — check the command itself before concluding.
-    - ROUTED PREFIXES (shell.exec routed, native chip execution — NOT Alpine commands, don't `command -v` them in the
-      container): `py3-native` (heavy numpy/pandas compute; auto-fallback to python3 if not bundled) / `node-native`
-      (heavy node loads; auto-fallback to node) / `plutil` (plist: -p view, -convert xml1 -o out) / `sqlite3 <db> "q"`
-      / `ta <cmd>` (host MCP tool routing). plain python3/node = unified env for daily use. Other native binaries
-      (ldid/opainject/optool/insert_dylib/ct_bypass...) are invoked internally by MCP tools — don't run them directly.
-      All native entries share /ios_workspace with the unified env.
+    - SHELL PREFIXES (inside shell.exec, not Alpine commands — don't `command -v` them): `py3-native` (heavy
+      numpy/pandas compute; falls back to python3) / `node-native` (heavy node; falls back to node) / `plutil`
+      (plist: -p view / -convert xml1) / `sqlite3 <db> "q"` / `ta <cmd>` (host tool routing). Plain python3/node
+      is the unified env for daily use. ldid/optool/insert_dylib/ct_bypass are invoked internally by MCP tools —
+      don't run them directly.
 
     - COMMAND EXISTENCE (measured): `ls /usr/bin` lists only a subset — common commands (chmod/ls/cp/launchctl) don't
       appear in listings but direct path access works. Check with `command -v <name>` or `ls -la /usr/bin/<name>`;
       never judge missing by `ls <dir>` enumeration. launchctl is at /usr/bin/launchctl.
-    - iOS↔Alpine AUTO-BIND (only these three): /var/mobile/Documents/Workspace→/ios_workspace(rw),
-      /var/containers→/ios_containers, /System→/ios_system (ro); /ios_appdata & /ios_appgroups don't exist; /ios_containers
-      is a skeleton (real app containers not readable there). /var/mobile as a whole is NOT auto-bound (self-reference →
-      crash); per-app containers: bind_app bundle_id:<id>→/ios_data_<app> (ro) / bind_app_write (rw, auto-backups
-      Documents+Library first). Auto-bind rewrites command-line paths only, not paths inside scripts — in sh/heredoc
-      scripts use /ios_* paths.
+    - iOS↔Alpine AUTO-BIND (5 dirs): /var/mobile/Documents/Workspace→/ios_workspace(rw),
+      /var/containers→/ios_containers(rw), /System→/ios_system(ro),
+      /var/mobile/Containers/Data/Application→/ios_appdata(ro),
+      /var/mobile/Containers/Shared/AppGroup→/ios_appgroups(ro).
+      /var/mobile as a whole is NOT auto-bound (self-reference → crash); per-app data containers:
+      bind_app bundle_id:<id>→/ios_data_<app> (ro) / bind_app_write (rw, auto-backups Documents+Library first).
+      Auto-bind rewrites command-line paths only, not paths inside scripts — in sh/heredoc scripts use /ios_* paths.
     - GIT/WGET/CURL: preinstalled (git 2.x/wget/curl), no manual install.
     - PROVISION: whitelisted commands auto-install on "command not found" (apk add + one retry); others: explicit
       `apk add <pkg>` (sqlite3/file/nano/make/cmake/gcc/clang/openssl/radare2 installable). Install failure → read the

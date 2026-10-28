@@ -752,7 +752,7 @@ enum TrollRuntimeEngine {
     /// 白名单外（如 jtool2 这类 iOS 逆向工具，Alpine 无此包）返回 unknown，
     /// 调用方跳过自动装包并给 AI 明确提示，避免 apk 拉索引卡网络/假死。
     /// v6.1.5-14bp：重包禁止自动装——git/wget/make/cmake/gcc/clang/build-base/emacs 等
-    /// 体积大/依赖深，apk add 时 iSH x86 模拟高 CPU，实测触发 iOS watchdog(≈13s CPU)杀 App=闪退。
+    /// 体积大/依赖深，apk add 时 guest 解释器高 CPU，实测触发 iOS watchdog(≈13s CPU)杀 App=闪退。
     /// 改为 known=false 跳过自动装，调用方给明确提示（手动 tool.install / 手动 apk add）。
     static func autoProvision(_ output: String) -> (pkg: String?, known: Bool) {
         let map: [(cmd: String, pkg: String)] = [

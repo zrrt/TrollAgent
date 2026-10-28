@@ -1,12 +1,12 @@
 import Foundation
 
-// MARK: - v4.3.3 原生可写通道（绕开 iSH fakefs 只读挂载）
-/// 背景：bind_app_write 的"可写"绑定实测写不进（fakefs bind mount 对 iOS 真实文件固定只读，
-/// 即使 cish_bind_mount 传 read_only=0，写仍报 Errno 30 Read-only file system —— iSH 内核
-/// 预编译、仓库无源码、重编需 Xcode，无法在内核层修复）。
-/// 根治：写 App 数据容器【不走 Alpine 挂载】，直接用 iOS 原生 FileManager 写（TrollStore root
+// MARK: - v4.3.3 原生可写通道（绕开 bind 只读挂载）
+/// 背景：bind_app_write 的"可写"绑定实测写不进（bind mount 对 iOS 真实文件固定只读，
+/// 即使 cish_bind_mount 传 read_only=0，写仍报 Errno 30 Read-only file system —— guest 内核
+/// 无法在内核层修复）。
+/// 根治：写 App 数据容器【不走 guest 挂载】，直接用 iOS 原生 FileManager 写（TrollStore root
 /// 权限可写任意容器路径）。本工具即该原生写通道：解析 bundle_id 容器 → 写容器内文件，写前
-/// 自动把目标文件备份到 Workspace/backups/，改坏可还原。与 bind_app/bind_app_write(只读读) 配套。
+/// 自动把目标文件备份到 Workspace/backups/，改坏可还原。与 bind_app/bind_app_write(只读) 配套。
 final class AppWriteFileTool: MCPTool {
     let definition = ToolDefinition(
         name: "app_write_file",

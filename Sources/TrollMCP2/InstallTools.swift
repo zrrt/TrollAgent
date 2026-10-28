@@ -14,7 +14,7 @@ import Foundation
 final class ToolInstallTool: MCPTool {
     let definition = ToolDefinition(
         name: "tool.install",
-        summary: "Unified tool installation entry. Params: name(tool name) / profile(re=reverse-eng, dev=development, network=batch) / source(native iOS binary GitHub repo URL, triggers CI build-tool.yml). Install chain: Alpine apk (install-and-use, auto-bind reads iOS files) → pip → CI. Use for: one-click install when AI lacks a tool. Tweaks via github.trigger_build; dylibs via inject.",
+        summary: "Unified tool installation entry. Params: name(tool name) / profile(re=reverse-eng, dev=development, network=batch) / source(native iOS binary GitHub repo URL, triggers CI build-tool.yml). Install chain: Alpine apk (install-and-use) → pip → CI. Use for: one-click install when AI lacks a tool. Tweaks via github.trigger_build; dylibs via inject.",
         parameters: [
             "name": "Tool name to install (e.g. jq / jtool2 / class-dump)",
             "profile": "Optional curated batch: re(reverse-eng toolchain) / dev(dev environment) / network(networking tools)",

@@ -43,7 +43,7 @@ final class BindAppTool: MCPTool {
 final class BindAppWriteTool: MCPTool {
     let definition = ToolDefinition(
         name: "bind_app_write",
-        summary: "Writable on-demand bind of an app's data container → /ios_data_<app>, for modifying the app's data in place (IAP state/values/settings/receipts). Before binding, Documents+Library are auto-backed up to workspace backups/; restore from backup if broken. Risk: corrupting the app's data container may stop that app from launching (only affects the target app, not the AI env). NEVER bind the own container or the whole /var/mobile (self-reference crash source). For read-only analysis use bind_app. Example: bind_app_write bundle_id:com.appstudio.Jinx → /ios_data_com_appstudio_jinx + backup path.",
+        summary: "Writable on-demand bind of an app's data container → /ios_data_<app>, for modifying the app's data in place (IAP state/values/settings/receipts). Before binding, Documents+Library are auto-backed up to workspace backups/; restore from backup if broken. Risk: corrupting the app's data container may stop that app from launching (only affects the target app, not the AI env). NEVER bind a container containing the alpine rootfs (self-reference crash source). For read-only analysis use bind_app. Example: bind_app_write bundle_id:com.appstudio.Jinx → /ios_data_com_appstudio_jinx + backup path.",
         parameters: [
             "bundle_id": "App bundle ID (required)"
         ], verified: true, category: "filesystem")

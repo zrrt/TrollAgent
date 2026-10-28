@@ -34,7 +34,7 @@ final class SystemOverviewTool: MCPTool {
             "system": "TrollAgent",
             "version": ver,
             "total_tools": names.count,
-            "important_note": "All dotted tools below (app.decrypt, injection.enable, browser.navigate...) are individually registered and callable directly. The BIG TOOLS (app/inject/control/container...) additionally accept `name` + `command`/`action` subcommand syntax (e.g. `app` + command:decrypt) which maps to the same implementation — both syntaxes are equivalent, prefer the dotted tool from the schema. Single tools callable as-is include shell.exec, web.search, web.fetch, network.capture, vpn.capture, skills.read, env.setup_re.",
+            "important_note": "Tools are THREE classes. (1) BIG WRAPPED TOOLS — app / inject / control / browser / device / memory / network.capture / vpn.capture / automation / project / container / github: many subcommands + prerequisites; run `tool.describe name:\"<tool>\"` before first use this session, then call with `command`/`action` subcommand. (2) SMALL TOOLS — web.search / web.fetch / wifi / location / macro / db / file / server / ssh / reminder / package / artifact / assistant_memory / knowledge / bind_app / bind_app_write / app_write_file: independent tools with their own subcommands; call directly (e.g. name:\"wifi\" command:\"status\"), no describe. (3) SIMPLE TOOLS — shell.exec / system.exec_root / download / tool.install / env.setup_re / skills.* / subagent.* / system.overview / tool.describe: call directly by name.",
             "tool_categories": cats,
             "ios_version_support": [
                 "trollstore_supported": [
@@ -84,11 +84,11 @@ final class SystemOverviewTool: MCPTool {
                 ]
             ],
             "tips": [
-                "Dotted tools in the schema (app.decrypt etc.) are callable directly; BIG TOOLS (app/inject/control) also accept `name`+command: syntax — equivalent, don't switch syntax mid-task.",
+                "Big tools (app/inject/control/browser/device/memory/network.capture/vpn.capture/automation/project/container/github): tool.describe before first use, then name + command/action. Small tools (web.search/wifi/location/macro/db/file/server/ssh/reminder/package/...): call directly with their subcommand. Simple tools (shell.exec, web.fetch, ...): call directly.",
                 "If you're stuck after 2 tries, ask the user for clarification.",
                 "Don't repeat the same tool with the same params — it's a loop.",
-                "Before injecting dylib, call device.info or device + command:info to detect environment.",
-                "TrollStore + iOS ≤17.0: injection.enable (ct_bypass runtime); iOS 17.0.1+: injection static or inject + command:static."
+                "Before injecting dylib, call device + command:info (or device.info) to detect environment.",
+                "TrollStore + iOS ≤17.0: inject + command:enable (ct_bypass runtime); iOS 17.0.1+: inject + command:static or static injection."
             ]
         ]
     }

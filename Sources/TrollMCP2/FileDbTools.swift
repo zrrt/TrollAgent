@@ -6,7 +6,7 @@ import Foundation
 final class FileExecTool: MCPTool {
     let definition = ToolDefinition(
         name: "file",
-        summary: "High-level file inspection (auto-bind: unified env reads iOS files directly). Subcommands: inspect / analyze. inspect=native metadata: size, magic type (sqlite/zip/macho/elf/text); Mach-O additionally gives fat/thin, arch(arm64/x86_64), filetype(executable/dylib). analyze=in-env `file`+`strings` (first 80 lines). REQUIRED: path (iOS absolute path). Use for: identify file type / extract strings from a decrypted binary or db; for editing files use shell.",
+        summary: "High-level file inspection (unified env reads iOS files directly). Subcommands: inspect / analyze. inspect=native metadata: size, magic type (sqlite/zip/macho/elf/text); Mach-O additionally gives fat/thin, arch(arm64/x86_64), filetype(executable/dylib). analyze=in-env `file`+`strings` (first 80 lines). REQUIRED: path (iOS absolute path). Use for: identify file type / extract strings from a decrypted binary or db; for editing files use shell.",
         parameters: [
             "command": "Subcommand (required): inspect / analyze",
             "path": "iOS absolute file path (required)"
@@ -135,7 +135,7 @@ final class FileExecTool: MCPTool {
 final class DbExecTool: MCPTool {
     let definition = ToolDefinition(
         name: "db",
-        summary: "SQLite analysis (auto-bind iOS .db into the unified env and run sqlite3). Subcommands: list / schema / query. list=table names; schema=CREATE statements; query=run SQL SELECT. REQUIRED: path; query needs sql. Use for: inspect/query .db files on iOS (WeChat/Alipay etc.); don't use this tool to alter schema/data.",
+        summary: "SQLite analysis (run sqlite3 in the unified env). Subcommands: list / schema / query. list=table names; schema=CREATE statements; query=run SQL SELECT. REQUIRED: path; query needs sql. Use for: inspect/query .db files on iOS (WeChat/Alipay etc.); don't use this tool to alter schema/data.",
         parameters: [
             "command": "Subcommand (required): list / schema / query",
             "path": "iOS absolute db path (required, auto-bind Alpine reads directly)",

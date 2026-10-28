@@ -477,7 +477,7 @@ final class AppInjectPackageTool: MCPTool {
             }
         }
 
-        // 5. 打包 ipa (含 Payload/ 顶层) —— ZipStorer Swift 原生 (iOS 路径, 不依赖系统 zip / iSH 挂载)
+        // 5. 打包 ipa (含 Payload/ 顶层) —— ZipStorer Swift 原生 (iOS 路径, 不依赖系统 zip / guest 挂载)
         let outIpa = ws + "/" + newBid + ".ipa"
         _ = try? FileManager.default.removeItem(atPath: outIpa)
         guard ZipStorer.createZip(at: outIpa, fromDirectory: workDir),

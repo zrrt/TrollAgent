@@ -143,7 +143,7 @@ final class ShellExecTool: MCPTool {
         
         // v6.1.5-14bp2：工具探测拦截——在任何路由之前先识别"版本/存在性检查类"命令
         // （git/vim/curl/wget --version、command -v git、which git 等）→ 原生文件系统探测，
-        // 不触发 iSH。根因：git 等未装 → 自动 apk add → iSH x86 模拟高 CPU → iOS watchdog 杀 App=闪退。
+        // 不启动 guest。根因：git 等未装 → 自动 apk add → guest 高 CPU → iOS watchdog 杀 App=闪退。
         // python3 有原生执行器走原生；其余探测不执行任何 Alpine 二进制。
         if let probe = ShellExecTool.nativeToolProbe(trimmed) {
             AuditLog.shared.log("shell.exec (native tool probe)", detail: String(trimmed.prefix(100)))
@@ -309,11 +309,11 @@ final class ShellExecTool: MCPTool {
         // readelf/size/strings 等全部内置工具）。之前只枚举 lua/node/r2/cstool，llvm 家族单段落 Alpine
         // not found。放 python3/470 分支之后，互不冲突；含 / 或 .. 的路径不匹配（防误判）。
         // fix3cl5: 排除"文件操作/签名/管理"类——这些 bin/ 原生版处理 iOS 路径，而 AI 惯用 Alpine
-        // 路径（/root/... 等，经 iSH bind 映射）。误切原生会让 cp/mv/rm /root/x 回归失败。
+        // 路径（/root/... 等，guest 路径）。误切原生会让 cp/mv/rm /root/x 回归失败。
         // 它们继续走原 Alpine/默认路由；通用路由只对分析/脚本类生效。
         // fix3cu: 判断改为基于命令名(firstWord)而非整个命令——原 !iosCmd.contains("/") 会误伤所有
         // 带路径参数的命令(如 kfd_helper /private/var/... 整条含 / → 跳过原生路由 → 落 Alpine
-        // Permission denied, iSH 跑不了 arm64 iOS 二进制)。命令名本身不含 / 且 bin 存在 → 原生直跑。
+        // Permission denied, guest 跑不了 arm64 iOS 二进制)。命令名本身不含 / 且 bin 存在 → 原生直跑。
         let genRouteExcludes: Set<String> = ["cp", "mv", "rm", "mkdir", "chown", "install_name_tool",
                                               "ldid", "optool", "insert_dylib", "jtool2"]
         let firstWord = iosCmd.split(separator: " ").first.map(String.init) ?? ""
@@ -326,7 +326,7 @@ final class ShellExecTool: MCPTool {
             }
         }
         
-        // v3.0.41：iSH 为唯一引擎 (ios_system 已删除）。初始化failed直接报错，不再回退。
+        // 统一环境：TrollRuntime 初始化失败直接报错，不回退旧引擎。
         let (output, exitCode, timedOut) = TrollRuntimeEngine.exec(command, timeout: timeout)
 
         // v4.3.76：单命令 Alpine 兜底同样享受"缺工具自动装"——objdump/jq/xxd/readelf/rabin2 等
@@ -719,7 +719,7 @@ final class ShellExecTool: MCPTool {
         default:
             // fix3s: 内置 bin 兜底——命令名在 App bin/ 或 Resources/bin/ 存在可执行 → 原生直跑。
             // 覆盖：AI 下载放置的 arm64 iOS 工具、未列白名单的内置注入工具(ldid/optool/insert_dylib/
-            // install_name_tool/chown/mkdir/mv/rm/cp 等)。Alpine(iSH x86) 跑不了 arm64 原生二进制，
+            // install_name_tool/chown/mkdir/mv/rm/cp 等)。Alpine guest 跑不了 arm64 原生二进制，
             // 此兜底让"下载→ldid 签名→放置→调用"闭环。路径含 / 或 .. 的不匹配(防误判)。
             if !word.contains("/"), !word.contains("..") {
                 // 14c8: TrollStore 覆盖/重装不替换 bin/（实证：新包 efaa847 装后 bin/elf-runner 仍旧 92611，

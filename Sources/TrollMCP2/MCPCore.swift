@@ -51,6 +51,27 @@ public struct ToolDefinition {
         uiSummary.isEmpty ? summary : uiSummary
     }
 
+    /// 渐进式披露：精简的一句话用途（初始 schema 用）。
+    /// 完整说明（长 summary + 全部 parameters + prerequisites）通过 tool.describe 按需加载，
+    /// AI 调用本工具前先 describe 读取，避免全量说明占上下文。
+    public var shortSummary: String {
+        // 在这些"说明性枚举"标记处截断，只留核心用途
+        let markers = ["Use for:", "Use for ", "Don't use", "Don’t use",
+                       "Subcommands:", "Params:", "Commands:", "Example:",
+                       " action:", " command:", "command:"]
+        var cut = summary
+        for marker in markers {
+            if let r = cut.range(of: marker), r.lowerBound < cut.endIndex {
+                cut = String(cut[cut.startIndex..<r.lowerBound])
+            }
+        }
+        // 同时在第一个句末 ". " 处截断（不切断 e.g./i.e. —— 它们后面不跟句末空格的场景已由 markers 覆盖）
+        if let r = cut.range(of: ". ") {
+            cut = String(cut[cut.startIndex..<r.lowerBound])
+        }
+        return cut.trimmingCharacters(in: .whitespacesAndNewlines)
+    }
+
     /// 展示用标记：已验证的工具前缀 ✅已检验
     public var verifiedMark: String {
         verified ? "✅ verified " : ""
@@ -441,6 +462,8 @@ public final class ToolRegistry: ObservableObject {
         // skills.* 让技能系统真正按需加载生效
         "file", "db", "package", "vpn.capture",
         "skills.list", "skills.read", "skills.set_enabled",
+        // 渐进式披露：调用工具前先 tool.describe 读完整说明（默认启用）
+        "tool.describe",
         // v4.3.65：恢复注册的联网检索工具（多引擎回退 + 多 query 并行 + 正文抽取）
         "web.search", "web.fetch",
         // v4.3.66：按需绑定 App 数据容器（bind_app 只读安全，bind_app_write 可写先备份，
@@ -559,11 +582,14 @@ public final class ToolRegistry: ObservableObject {
             // v3.1.69：显式找 command/action 键——Dictionary.keys 是哈希顺序，prefix(1) 可能
             // 落到任意参数 (如 artifact 的 name），导致 AI 被迫填无关参数 (AI 反馈实锤）。
             let selectorKey = def.parameters.keys.first { $0 == "command" || $0 == "action" }
-            // v3.2.0：description 追加前置条件——AI 看到工具定义即知依赖顺序，不用撞错误才知道
-            var desc = def.summary
-            if !def.prerequisites.isEmpty {
-                desc += " Prerequisites: " + def.prerequisites.joined(separator: "; ") + ". Run the prerequisite steps first, then call this tool — don't call it directly."
-            }
+            // 是否大工具：查权威白名单 BigToolCatalog（ToolDescribeTool.swift）。
+            // 只有真正复杂的大工具（app/inject/control/browser/device/memory/network.capture/
+            // vpn.capture/automation/project/container/github）初始 schema 精简、调用前必须
+            // tool.describe。小工具（web.search/web.fetch/wifi/location/macro/db/file/server/ssh/
+            // reminder/package 等）虽有 command/action 选择器但说明短、无复杂前置——保留完整
+            // summary 直接调，不为它们绕 describe。简单工具（shell.exec 等）同样直接调。
+            let isWrapped = BigToolCatalog.isWrapped(def.name)
+            let desc = (def.name == "tool.describe" || !isWrapped) ? def.summary : def.shortSummary
             result.append([
                 "type": "function",
                 "function": [
@@ -1371,6 +1397,9 @@ public final class ToolRegistry: ObservableObject {
         register(SkillsListTool())        // v2.9.17：技能可被 AI 发现（按需搜索，不塞全量）
         register(SkillsReadTool())        // v2.9.17：技能可被 AI 读取（完整指令）
         register(SkillsSetEnabledTool())  // 技能启停
+        // 渐进式披露：工具说明按需加载——初始 schema 只下发"工具名 + 一句话用途"，
+        // AI 调用某工具前先 tool.describe 读取完整说明（长 summary + parameters + prerequisites）。
+        register(ToolDescribeTool())
         // v3.1.31: 之前 shell 是 Alpine，访问不到 iOS 文件系统，所以 fs.* 工具加回来了
         // v3.1.46: 现在 shell.exec 已经做了 iOS 原生命令，可以访问 iOS 文件系统了！
         // 删掉 12 个 fs.* 工具 (shell.exec 可以实现）
