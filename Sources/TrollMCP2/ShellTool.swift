@@ -2171,7 +2171,14 @@ final class SystemExecRootTool: MCPTool {
         guard let path = params["path"] as? String, !path.isEmpty else {
             throw MCPError.invalidParams("path required")
         }
-        let args = params["args"] as? [String] ?? []
+        let args: [String] = {
+            if let a = params["args"] as? [String] { return a }
+            // v7.2.4：兼容 AI/客户端按旧 schema 传的字符串形式（如 "-S /path"）——按空格拆分，
+            // 防 argc=1（子进程只收 argv[0]，python3 自报 code=NULL）。schema 类型已修复，
+            // 数组会正确传递，此分支仅兜底旧行为。
+            if let s = params["args"] as? String, !s.isEmpty { return s.split(separator: " ").map(String.init) }
+            return []
+        }()
         let timeout = (params["timeout"] as? Double) ?? 60
         let outLimit = (params["limit"] as? Int) ?? 16000
         let extraEnv = params["env"] as? [String: String]

@@ -548,6 +548,18 @@ public final class ToolRegistry: ObservableObject {
         definitions.filter { isEnabled(name: $0.name) && !$0.remoteOnly }
     }
 
+    /// v7.2.4：从参数描述推断 JSON Schema 类型（工具描述按约定含类型词：
+    /// "array" / "dict"/"object"/"json" / "Bool" / "Int"/"seconds"/"number"）。
+    /// 返回 string 兜底，保持与旧行为一致（纯文本参数不受影响）。
+    static func inferParamType(_ desc: String) -> String {
+        let d = desc.lowercased()
+        if d.contains("array") || d.contains("list of") { return "array" }
+        if d.contains("dict") || d.contains("object") || d.contains("json") { return "object" }
+        if d.contains("bool") { return "boolean" }
+        if d.contains("integer") || d.contains("int:") || d.contains("seconds") || d.contains("number") { return "integer" }
+        return "string"
+    }
+
     /// v2.9.1：生成给 OpenAI API 用的工具 schema，同时建立 apiName → 原名映射，
     /// 供 dispatch 把模型返回的安全名转回真实工具名。
     /// v3.1.66：全量加载所有已启用工具 (tool_search 已删除，不再按 isCore 渐进披露）。
@@ -569,9 +581,15 @@ public final class ToolRegistry: ObservableObject {
             used.insert(safe)
             map[safe] = def.name
 
-            var props: [String: [String: String]] = [:]
+            var props: [String: [String: Any]] = [:]
             for (k, v) in def.parameters {
-                props[k] = ["type": "string", "description": v]
+                // v7.2.4：按描述推断 JSON Schema 类型——修复"全参数一律 string"导致
+                // args/env 等数组/对象参数被 AI/客户端按 string 传、invoke 侧 as? [String]
+                // 强转失败 → 子进程 argc=1 只收 argv[0]（jtool2/ldid/cp/mkdir/python3 全中招）。
+                let ptype = Self.inferParamType(v)
+                var p: [String: Any] = ["type": ptype, "description": v]
+                if ptype == "array" { p["items"] = ["type": "string"] }
+                props[k] = p
             }
             // v7.2.3-fix19：全工具统一注入 tool_title（对齐 OpenMinis）——模型每次调用
             // 输出 5-10 字行为摘要，工具卡主标题用它（AI 传，不带工具名）。
