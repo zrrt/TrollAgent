@@ -1938,25 +1938,45 @@ struct MessageBubble: View {
             .padding(.bottom, 10)
     }
 
-    // fix73j：子代理完成卡——[SUBAGENT-DONE] 回传的 user 消息渲染为可点开卡片，
-    // 点击进入 SubAgentDetailView 看完整轨迹（对齐豆包任务卡/Claude Code 结果回传 UI）
-    private var subAgentCompleteCard: some View {
+    // fix73j：子代理状态卡——[SUBAGENT-RUNNING]/[SUBAGENT-DONE] 回传的 user 消息
+    // 渲染为可点开卡片，点击进入 SubAgentDetailView 看完整轨迹
+    // （对齐豆包任务卡/Claude Code 结果回传 UI；状态文案：执行中/已完成/失败/已停止/已中断）
+    private var subAgentStatusCard: some View {
         let parsed = SubAgentCompleteCard.parse(message.content)
-        let ok = parsed["status"] as? String != "failed"
+        let isRunning = message.content.hasPrefix("[SUBAGENT-RUNNING]")
+        let status = parsed["status"] as? String ?? (isRunning ? "running" : "done")
+        let statusZh = SubAgentStatusText.zh(status)
+        let ok = status == "done"
+        let fail = status == "failed" || status == "interrupted"
+        let icon = isRunning ? "hourglass"
+            : (ok ? "checkmark.circle.fill" : "xmark.circle.fill")
+        let iconColor: Color = isRunning ? .blue : (ok ? .green : .red)
+        let agent = parsed["agent_type"] as? String ?? "general"
+        let rounds = parsed["rounds"] as? Int ?? 0
+        let elapsed = parsed["elapsed_secs"] as? Int ?? 0
+        let result = (parsed["result"] as? String)?
+            .replacingOccurrences(of: "\n", with: " ")
+        let summary: String
+        if isRunning {
+            summary = "\(agent) · \(rounds) 轮 · \(elapsed)s"
+        } else {
+            summary = "\(agent) · \(rounds) 轮 · \(elapsed)s\(result.map { " · " + String($0.prefix(60)) } ?? "")"
+        }
         return Button(action: {
             onOpenSubAgent?(parsed["task_id"] as? String ?? "", message.content)
         }) {
             HStack(spacing: 10) {
-                Image(systemName: "person.crop.circle.badge.checkmark")
+                Image(systemName: icon)
                     .font(.system(size: 22, weight: .medium))
-                    .foregroundColor(ok ? .green : .red)
+                    .foregroundColor(iconColor)
+                    .opacity(isRunning ? 0.85 : 1)
                 VStack(alignment: .leading, spacing: 3) {
-                    Text(message.toolTitle ?? "子代理完成")
+                    Text(message.toolTitle ?? "子代理 \(parsed["task_id"] as? String ?? "") · \(statusZh)")
                         .font(.subheadline)
                         .fontWeight(.semibold)
                         .foregroundColor(.primary)
                         .lineLimit(1)
-                    Text(SubAgentCompleteCard.summary(parsed))
+                    Text(summary)
                         .font(.caption)
                         .foregroundColor(.secondary)
                         .lineLimit(3)
@@ -2492,9 +2512,10 @@ struct MessageBubble: View {
             // v3.5.12 修订：解说=单独长气泡(一长)。模型"先解说后执行"的正文就作为普通 assistant 气泡
             // 显示在工具卡上方；工具卡标题=机械短标签(一短,见 toolShortLabel)，两者分开、不重复。
             // 模型本轮没写解说(content空)则无气泡，卡片标题仍显示机械短标签，不落空。
-            // fix73j：子代理完成回传——[SUBAGENT-DONE] 前缀的 user 消息渲染为可点开的完成卡
-            if message.role == "user", message.content.hasPrefix("[SUBAGENT-DONE]") {
-                subAgentCompleteCard
+            // fix73j：子代理状态卡——[SUBAGENT-RUNNING] 执行中 / [SUBAGENT-DONE] 完成回传，
+            // 均渲染为可点开的卡片（点击进入 SubAgentDetailView 看实时/完整轨迹）
+            if message.role == "user", message.content.hasPrefix("[SUBAGENT-") {
+                subAgentStatusCard
             } else if !message.content.isEmpty {
                 // v7.1.109-peers：打字机——isStreaming 或 forceType 都按 revealedCount 逐字显示；
                 // 此前只有 isStreaming 才走前缀，forceType(内容在出现前已定好、isStreaming=false)走了全文分支，

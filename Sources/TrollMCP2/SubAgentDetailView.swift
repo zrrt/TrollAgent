@@ -4,23 +4,24 @@ import SwiftUI
 // 入口：主会话"子代理完成卡"点击。数据源：SubAgentManager.status(taskID) 的
 // task.trace（终态快照）；App 重启后 tasks 丢失 → 回退渲染消息内的摘要 JSON。
 
-/// [SUBAGENT-DONE] 前缀消息解析（完成回传载荷）
+/// [SUBAGENT-RUNNING]/[SUBAGENT-DONE] 前缀消息解析（子代理状态载荷）
 struct SubAgentCompleteCard {
     static func parse(_ content: String) -> [String: Any] {
-        guard content.hasPrefix("[SUBAGENT-DONE]") else { return [:] }
-        let json = String(content.dropFirst("[SUBAGENT-DONE]".count))
+        guard content.hasPrefix("[SUBAGENT-") else { return [:] }
+        let markerLen = content.hasPrefix("[SUBAGENT-RUNNING]")
+            ? "[SUBAGENT-RUNNING]".count : "[SUBAGENT-DONE]".count
+        let json = String(content.dropFirst(markerLen))
         guard let d = json.data(using: .utf8),
               let o = try? JSONSerialization.jsonObject(with: d) as? [String: Any] else { return [:] }
         return o
     }
     static func summary(_ d: [String: Any]) -> String {
-        let status = d["status"] as? String ?? "?"
         let agent = d["agent_type"] as? String ?? "?"
         let rounds = d["rounds"] as? Int ?? 0
         let elapsed = d["elapsed_secs"] as? Int ?? 0
         let result = (d["result"] as? String)?
             .replacingOccurrences(of: "\n", with: " ")
-        return "\(agent) · \(status) · \(rounds) 轮 · \(elapsed)s\(result.map { " · " + String($0.prefix(80)) } ?? "")"
+        return "\(agent) · \(rounds) 轮 · \(elapsed)s\(result.map { " · " + String($0.prefix(80)) } ?? "")"
     }
 }
 
@@ -131,7 +132,7 @@ private struct SubAgentStatusHeader: View {
                 .foregroundColor(task.status == .done ? .green : .red)
             VStack(alignment: .leading, spacing: 2) {
                 Text(task.personaName).font(.headline)
-                Text("\(task.status.rawValue) · \(task.rounds)/\(task.maxRounds) 轮 · \(Int(task.elapsed))s · send \(task.sendState)")
+                Text("\(SubAgentStatusText.zh(task.status.rawValue)) · \(task.rounds)/\(task.maxRounds) 轮 · \(Int(task.elapsed))s · send \(task.sendState)")
                     .font(.caption)
                     .foregroundColor(.secondary)
             }

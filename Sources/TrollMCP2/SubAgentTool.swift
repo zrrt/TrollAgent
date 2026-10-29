@@ -64,6 +64,30 @@ enum SubAgentPersonas {
     }
 }
 
+/// fix73j：子代理状态文案（中英）——主界面卡片/详情页统一映射
+enum SubAgentStatusText {
+    static func zh(_ status: String) -> String {
+        switch status {
+        case "running": return "执行中"
+        case "done": return "已完成"
+        case "failed": return "失败"
+        case "stopped": return "已停止"
+        case "interrupted": return "已中断"
+        default: return status
+        }
+    }
+    static func en(_ status: String) -> String {
+        switch status {
+        case "running": return "Running"
+        case "done": return "Completed"
+        case "failed": return "Failed"
+        case "stopped": return "Stopped"
+        case "interrupted": return "Interrupted"
+        default: return status
+        }
+    }
+}
+
 // MARK: - 子代理任务模型（v7.1.107：对齐 OpenMinis subagent_task 思想，自实现）
 /// 子代理 = 隔离的隐藏会话跑自己的工具循环：主模型把自包含"脏活"委派出去，
 /// 子代理独立上下文执行（不污染主线），完成后把结果 JSON 回传给主模型。
@@ -186,7 +210,7 @@ final class SubAgentTask: Identifiable {
         let content = "[SUBAGENT-DONE] " + body
         DispatchQueue.main.async {
             var m = ChatMessage(role: "user", content: content)
-            m.toolTitle = "子代理 \(self.id) · \(self.personaName) \(self.status.rawValue)"
+            m.toolTitle = "子代理 \(self.id) · \(self.personaName) \(SubAgentStatusText.zh(self.status.rawValue))"
             m.toolName = "subagent.complete"
             ConversationStore.shared.appendToCurrent(m)
         }
@@ -844,6 +868,19 @@ final class SubAgentRunTool: MCPTool {
         let id = try SubAgentManager.shared.start(instruction: instruction, allowedTools: wl,
                                                   maxRounds: rounds, timeout: timeout,
                                                   personaName: persona.name)
+        // fix73j：主界面立即可见"执行中"卡（派发即上屏，完成时再补 [SUBAGENT-DONE] 完成卡）
+        let runningBody: [String: Any] = [
+            "ok": true, "task_id": id, "agent_type": persona.name,
+            "status": "running", "rounds": 0,
+        ]
+        let runningContent = "[SUBAGENT-RUNNING] "
+            + ((try? String(data: JSONSerialization.data(withJSONObject: runningBody), encoding: .utf8)) ?? "")
+        DispatchQueue.main.async {
+            var m = ChatMessage(role: "user", content: runningContent)
+            m.toolTitle = "子代理 \(id) · \(persona.name) \(SubAgentStatusText.zh("running"))"
+            m.toolName = "subagent.running"
+            ConversationStore.shared.appendToCurrent(m)
+        }
         return ["ok": true, "task_id": id, "agent_type": persona.name,
                 "message": "subagent \(id) (\(persona.name)) started. Poll with subagent.status task_id=\(id); steer with subagent.steer task_id=\(id); stop with subagent.stop task_id=\(id). Completion is pushed back as a card in the conversation."]
     }
