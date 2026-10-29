@@ -3,15 +3,8 @@ import UIKit
 import RSKGrowingTextView
 import UniformTypeIdentifiers
 
-// v7.4.0-fix73d：滚动位置检测（悬浮按钮用）——内容 offset / 总高 / 视口高
-private struct ChatScrollOffsetKey: PreferenceKey {
-    static var defaultValue: CGFloat = 0
-    static func reduce(value: inout CGFloat, nextValue: () -> CGFloat) { value = nextValue() }
-}
-private struct ChatContentHeightKey: PreferenceKey {
-    static var defaultValue: CGFloat = 0
-    static func reduce(value: inout CGFloat, nextValue: () -> CGFloat) { value = nextValue() }
-}
+// v7.4.1-fix73h：滚动位置检测（悬浮按钮用）——由 ScrollGeometryBridge（UIKit KVO）上报，
+// 不再用 PreferenceKey + named coordinateSpace（iOS 16.0-16.3 滚动时不重新提交，见 ScrollGeometryBridge.swift）
 
 struct ChatView: View {
     @ObservedObject private var store = ConversationStore.shared
@@ -524,17 +517,17 @@ struct ChatView: View {
         ScrollViewReader { proxy in
             ZStack(alignment: .bottomTrailing) {
                 ScrollView {
-                    // v7.4.0-fix73f-7：滚动偏移上报——顶部 marker 移出 LazyVStack。
-                    // 原实现 marker 在 LazyVStack 第一行：初始滚到底部时 marker 不在视口
-                    // → LazyVStack 惰性不渲染 → preference 永不触发 → chatScrollOffset 永远 0
-                    // → chatCanScrollUp(offset<-2) 永不成立 → ↑ 按钮永不显示（用户实测根因）。
-                    // ScrollView 直接子视图非惰性（始终渲染），offset 随滚动一直更新。
-                    // frame(in: .named("chatScroll")).minY：顶部时=0，向下滚为负。
-                    GeometryReader { geo in
-                        Color.clear.preference(
-                            key: ChatScrollOffsetKey.self,
-                            value: geo.frame(in: .named("chatScroll")).minY)
-                    }
+                    // v7.4.1-fix73h：滚动检测改为 UIKit KVO 桥接（替代原 preference marker）。
+                    // 原实现（preference + frame(in: .named("chatScroll"))）在 iOS 16.0-16.3 的
+                    // ScrollView 下滚动时不重新提交 → chatScrollOffset 恒 0 → ↑ 永不显示、⬇️ 永不隐藏
+                    // （fix73f-7 / fix73g 连续修复无效的实测根因）。作为内容首个子视图（高 0 不撑内容），
+                    // superview 链直达底层 UIScrollView，KVO 精确上报 contentOffset/contentSize/bounds。
+                    // offset 已按原 marker 语义转换（顶部=0，向下为负），下方显示矩阵判断无需改动。
+                    ScrollGeometryBridge(
+                        onOffset: { chatScrollOffset = $0 },
+                        onContentHeight: { chatContentHeight = $0 },
+                        onViewportHeight: { chatViewportHeight = $0 }
+                    )
                     .frame(height: 0)
                     LazyVStack(spacing: 12) {
                         // v7.2.3-fix20：连续工具折叠——相邻已完成工具消息聚合成组，
@@ -603,47 +596,16 @@ struct ChatView: View {
                             }
                         }
                     }
-                        // v7.4.0-fix73g：内容总高直接测——原实现用"LazyVStack 末尾 0 高 marker 的 minY −
-                        // 单独异步上报的 chatScrollOffset"。offset 与 height 是两个独立 preference，到达顺序不定：
-                        // height 先到、offset 滞后时 contentHeight = minY − (旧offset) 被低估 → bottom 偏正 →
-                        // 上滑后 offset > bottom+2 不成立 → ↑ 按钮永不显示（用户实测"上划一段距离按钮不存在"根因）。
-                        // 改在 LazyVStack 上挂 background GeometryReader 直接读自身全高，与 offset 完全解耦，
-                        // 无跨 preference 竞态；LazyVStack 向 ScrollView 提供总内容高，geo.size.height 即内容高。
-                    }
-                        .background(GeometryReader { geo in
-                            Color.clear.preference(key: ChatContentHeightKey.self, value: geo.size.height)
-                        })
                     // v3.4.0：去掉整行水平 padding —— AI 气泡改为真正占满左右屏边缘；
                     // 用户气泡的右留白由 MessageBubble 内部按 isUser 处理
                     .padding(.vertical, 12)
                 }
-                .coordinateSpace(name: "chatScroll")
                 // 点击聊天区空白处收起键盘（v2.9.9）
                 .simultaneousGesture(
                     TapGesture().onEnded { dismissKeyboard() }
                 )
-                // v7.4.0-fix73e：悬浮按钮滚动量防抖——滚动中 offset 每帧都在变，
-                // 阈值 <0.5pt 忽略，仅在跨过显示矩阵边界时更新。
-                .onPreferenceChange(ChatScrollOffsetKey.self) { v in
-                    if abs(v - chatScrollOffset) > 0.5 {
-                        chatScrollOffset = v
-                    }
-                }
-                .onPreferenceChange(ChatContentHeightKey.self) { v in
-                    // v7.4.0-fix73g：直接取内容高（background GeometryReader 已上报 geo.size.height），
-                    // 不再 v − chatScrollOffset（旧 offset 异步竞态会低估 contentHeight → ↑ 按钮消失）。
-                    if abs(v - chatContentHeight) > 0.5 {
-                        chatContentHeight = v
-                    }
-                }
-                // v7.4.0-fix73e：视口高度测量——透明占位 + overlay GeometryReader。
-                // 不参与布局（不撑大 ScrollView 约束，修复滚动回环根因）。
-                Color.clear
-                    .overlay(GeometryReader { geo in
-                        Color.clear
-                            .onAppear { chatViewportHeight = geo.size.height }
-                            .onChange(of: geo.size.height) { chatViewportHeight = $0 }
-                    })
+                // v7.4.1-fix73h：内容总高/视口高/滚动偏移全部由 ScrollGeometryBridge 的 KVO 上报
+                // （不再依赖 preference 的 onPreferenceChange——其到达顺序与更新时机在 iOS 16 不可靠）
                 // v7.4.0-fix73d：悬浮滚动按钮（对齐 Minis 显示矩阵：顶部只显 down、中间 up+down、底部全隐）
                 floatingButtons(proxy)
             }
