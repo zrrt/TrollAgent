@@ -2,6 +2,7 @@ import Foundation
 import UserNotifications
 import UIKit
 import AVFoundation
+import AudioToolbox
 
 // v2.9.82：任务完成通知 + 后台执行延长
 // - iOS 无越狱下 TrollStore App 无法真正后台常驻（受系统后台机制限制），
@@ -85,18 +86,35 @@ final class TaskNotify {
     }
 
     /// 播放 bundle 内提示音文件（ambient 类别：不打断正在播放的音乐/视频）
+    /// v7.4.0-fix73e：AVAudioPlayer 失败（CAF 未进 bundle / 音频会话异常）→
+    /// 兜底播系统音 1001（三全音）——保证"任务完成提示音"任何情况都有声音。
     private func playFile(_ name: String) {
-        guard let url = Bundle.main.url(forResource: name, withExtension: "caf") else { return }
+        guard let url = Bundle.main.url(forResource: name, withExtension: "caf") else {
+            NetworkLog.shared.log("[sound] CAF missing in bundle: \(name).caf — fallback system sound 1001")
+            fallbackSystemSound()
+            return
+        }
         do {
             try AVAudioSession.sharedInstance().setCategory(.ambient, options: [.mixWithOthers])
             try AVAudioSession.sharedInstance().setActive(true, options: .notifyOthersOnDeactivation)
         } catch {
-            // 音频会话失败不阻塞提示音逻辑
+            NetworkLog.shared.log("[sound] AVAudioSession failed: \(error.localizedDescription)")
         }
         player?.stop()
-        player = try? AVAudioPlayer(contentsOf: url)
-        player?.prepareToPlay()
-        player?.play()
+        do {
+            player = try AVAudioPlayer(contentsOf: url)
+            player?.prepareToPlay()
+            player?.play()
+            NetworkLog.shared.log("[sound] played \(name).caf")
+        } catch {
+            NetworkLog.shared.log("[sound] AVAudioPlayer failed for \(name).caf: \(error.localizedDescription) — fallback")
+            fallbackSystemSound()
+        }
+    }
+
+    /// v7.4.0-fix73e：系统音兜底（AudioServices 不依赖 bundle 资源）
+    private func fallbackSystemSound() {
+        AudioServicesPlaySystemSound(1001)
     }
 
     /// 开始后台任务（切后台后尽量延长执行，系统上限约 30 秒）

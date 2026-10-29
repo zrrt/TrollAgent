@@ -1395,6 +1395,14 @@ final class ConversationStore: ObservableObject {
     func consumeBackgroundResult() {
         guard let result = BackgroundLLM.shared.consumeResult() else { return }
         guard isLoading else { return }
+        // v7.4.0-fix73e：竞态修复——若当前有活跃新请求（currentClient != nil，用户回前台后
+        // 又发了新消息），旧后台代传结果必须丢弃：否则会在新请求流式期间整段插入旧结果，
+        // 打字机被打断/结果错乱（用户实测"前台打字机效果没出现"的根因之一）。
+        // 注意：纯回前台场景（handoff 后 currentClient 已置 nil）不受影响，正常消费。
+        guard currentClient == nil else {
+            NetworkLog.shared.log("background handoff result dropped — a new live request is in flight")
+            return
+        }
         // v7.4.0-fix73b-audit：会话归属校验——后台结果只写回发起会话。
         // 若期间用户发了新请求（requestSessionId 已更新）或切了会话，旧后台结果直接丢弃，
         // 防止污染新会话（cancelHandoff 异步竞态下旧任务仍可能完成回调）。
