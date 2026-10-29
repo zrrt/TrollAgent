@@ -618,6 +618,14 @@ final class OpenAIClient {
     // MARK: - 逐级试探
 
     private func attempt(level: Int, isFirst: Bool, messages: [ChatMessage], tools: [[String: Any]]?, onStatus: ((String) -> Void)?, onDelta: ((String) -> Void)?, onThinking: ((String) -> Void)? = nil, avoidL5: Bool = false, completion: @escaping (Result<ChatResult, Error>) -> Void) {
+        // v7.4.0-fix73g：已取消则不再启动新请求——子代理 abort 后，降级链的
+        // L3/L2 fallback（第 667/736/762 行 re-enter attempt）不得继续发新 HTTP 请求
+        // 在后台空转（此前 cancel 只掐当前 task，链仍烧到 220s 预算）。
+        if self.cancelled {
+            completion(.failure(NSError(domain: "OpenAIClient", code: -999,
+                userInfo: [NSLocalizedDescriptionKey: "Request cancelled"])))
+            return
+        }
         // v2.9.87：总预算检查——降级链整体超时直接failed，不再无限串行等
         if Date() > overallDeadline {
             let el = Int(Date().timeIntervalSince(requestStart) * 1000)
@@ -2118,7 +2126,7 @@ final class OpenAIClient {
             return
         }
 
-        var request = URLRequest(url: url, timeoutInterval: 90)
+        var request = URLRequest(url: url, timeoutInterval: requestTimeoutOverride ?? 90)
         setHTTPMethod("POST", on: &request)
         request.setValue("application/json", forHTTPHeaderField: "Content-Type")
         request.setValue("text/event-stream", forHTTPHeaderField: "Accept")
@@ -2176,14 +2184,25 @@ final class OpenAIClient {
         }
 
         let delegate = SSEStreamDelegate()
-        let streamSession = URLSession(configuration: .default, delegate: delegate, delegateQueue: nil)
+        // v7.4.0-fix73g：流式 session 也应用 requestTimeoutOverride（子代理场景），
+        // 主会话 nil → .default 行为完全不变。
+        let streamCfg = URLSessionConfiguration.default
+        if let rt = requestTimeoutOverride, rt > 0 {
+            streamCfg.waitsForConnectivity = false
+            streamCfg.timeoutIntervalForRequest = rt
+            streamCfg.timeoutIntervalForResource = rt + 15
+        }
+        let streamSession = URLSession(configuration: streamCfg, delegate: delegate, delegateQueue: nil)
 
         // 首字节超时定时器 (10 秒）
+        // v7.4.0-fix73g：子代理流式硬上限句柄——提前声明，供 firstByteTimer / idle / onComplete 取消。
+        var hardCap: DispatchWorkItem?
         let firstByteTimer = DispatchWorkItem { [weak self] in
             guard let self = self else { return }
             if !firstByteReceived && !fellBackToNonStream {
                 fellBackToNonStream = true
                 NetworkLog.shared.log("\(self.config.name): 流式首字节超时 (10s)，自动降级非流式")
+                hardCap?.cancel()
                 streamSession.invalidateAndCancel()
                 // 切回非流式 performResponses (completion 走 guardedCompletion，防双done）
                 self.performResponses(messages: messages, tools: tools, onStatus: onStatus, onThinking: onThinking, completion: guardedCompletion)
@@ -2206,6 +2225,23 @@ final class OpenAIClient {
             }
             idleTimer = t
             DispatchQueue.main.asyncAfter(deadline: .now() + 30, execute: t)
+        }
+
+        // v7.4.0-fix73g：子代理流式硬上限——根因：中转持续发心跳/keepalive SSE 事件
+        // （如 response.in_progress 心跳）时，idle 看门狗每事件被重置、URLRequest timeout 不触发
+        // （流式持续收数据），流式可"永远挂死"。requestTimeoutOverride 下加总墙钟硬上限，
+        // 到点无论 keepalive 与否都掐断走 guardedCompletion（防双 done）。主会话 nil 不受影响。
+        if let rt = requestTimeoutOverride, rt > 0 {
+            let cap = DispatchWorkItem { [weak self] in
+                guard let self = self else { return }
+                if self.cancelled || fellBackToNonStream { return }
+                NetworkLog.shared.log("\(self.config.name): 子代理流式硬上限 \(Int(rt))s 到点，强制掐断（防 keepalive 挂死）")
+                streamSession.invalidateAndCancel()
+                guardedCompletion(.failure(NSError(domain: "OpenAIClient", code: -3042,
+                    userInfo: [NSLocalizedDescriptionKey: "Subagent stream hard cap \(Int(rt))s reached (relay keepalive kept the stream alive without completing)"])))
+            }
+            hardCap = cap
+            DispatchQueue.main.asyncAfter(deadline: .now() + rt, execute: cap)
         }
 
         delegate.onEvent = { [weak self] raw in
@@ -2273,6 +2309,7 @@ final class OpenAIClient {
             guard let self = self else { return }
             firstByteTimer.cancel()
             idleTimer?.cancel()
+            hardCap?.cancel()
             streamSession.invalidateAndCancel()
             // v2.9.54：已降级到非流式，不重复执行 completion
             if fellBackToNonStream { return }

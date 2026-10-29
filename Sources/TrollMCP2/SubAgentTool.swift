@@ -109,9 +109,18 @@ final class SubAgentTask: Identifiable {
     }
 
     /// v7.4.0-fix73f-6：请求收到响应（成功/失败回调都算）——worker 与上游链路正常
+    /// v7.4.0-fix73g：只允许 sent → replied。watchdog/stop 先置 aborted 再 cancel，
+    /// 迟到的 cancel 回调不得把 aborted 覆盖回 replied（否则 send_state 又撒谎）。
     func markSendReplied() {
         stateLock.lock(); defer { stateLock.unlock() }
-        if sendState != "idle" { sendState = "replied" }
+        if sendState == "sent" { sendState = "replied" }
+    }
+
+    /// v7.4.0-fix73g：请求被强制中止（看门狗到点 / stop / 软超时 / loop 内超时）——
+    /// 先置此标记再 cancel 在途请求，父模型一眼看到"请求是被掐断的"而非"挂住/sent"。
+    func markSendAborted() {
+        stateLock.lock(); defer { stateLock.unlock() }
+        sendState = "aborted"
     }
 
     /// v7.1.108-fix: 线程安全的状态读取（runner 后台线程/stop 工具线程共用）
@@ -142,8 +151,8 @@ final class SubAgentTask: Identifiable {
             if !recent.isEmpty { d["recent_tools"] = recent }
             d["elapsed_secs"] = Int(liveElapsed)
             d["progress_hint"] = "working... \(rounds)/\(maxRounds) rounds, \(Int(liveElapsed))s elapsed"
-            // v7.4.0-fix73f-6：请求生命周期诊断
-            d["send_state"] = sendState
+        // v7.4.0-fix73f-6：请求生命周期诊断
+        d["send_state"] = sendState
         }
         if !result.isEmpty { d["result"] = result }
         if !error.isEmpty { d["error"] = error }
@@ -160,6 +169,9 @@ final class SubAgentManager {
 
     private var tasks: [String: SubAgentTask] = [:]
     private var activeTaskID: String?
+    /// v7.4.0-fix73g：在途 LLM 请求的真 abort 处理器——watchdog/stop/软超时到点必须
+    /// cancel 掉 runner 的 OpenAIClient（此前只改任务状态，请求永远在后台挂住 → send_state 卡 sent）。
+    private var cancellers: [String: () -> Void] = [:]
     /// v7.1.107-P0: steer 方向修正队列——父模型可运行中给子代理注入新指令，
     /// 在循环边界以"用户消息"送达（对齐 OpenMinis pendingSteerMessages 语义）
     private var pendingSteers: [String: [String]] = [:]
@@ -186,10 +198,15 @@ final class SubAgentManager {
 
         let runner = SubAgentRunner(task: task, allowedTools: allowedTools,
                                     maxRounds: clampedRounds, timeout: clampedTimeout)
+        // v7.4.0-fix73g：注册真 abort——watchdog/软超时/stop 到点 cancel 在途请求，
+        // 弱引用防循环；幂等（cancelInflight 内部置空 client，重复调用无害）。
+        cancellers[id] = { [weak runner] in runner?.cancelInflight() }
         DispatchQueue.global(qos: .userInitiated).async {
             runner.run()
             self.lock.lock()
             if self.activeTaskID == id { self.activeTaskID = nil }
+            // v7.4.0-fix73g：任务结束（正常/中止）清理 abort 处理器，防字典残留
+            self.cancellers.removeValue(forKey: id)
             self.lock.unlock()
         }
         // v7.4.0-fix73f-4：超时看门狗——loop() 的超时检查只在"发出请求前"执行，
@@ -198,14 +215,30 @@ final class SubAgentManager {
         // 64s 仍 running（旧逻辑 65s 才触发，用户观察点恰好没到）。deadline 到点立即
         // 强制中断，不依赖请求回调；已 done/failed/stopped 的任务 isRunning()=false 不受影响。
         DispatchQueue.global(qos: .userInitiated).asyncAfter(deadline: .now() + clampedTimeout) {
+            self.lock.lock()
             if let t = self.tasks[id], t.isRunning() {
-                t.markFailed("timeout after \(Int(clampedTimeout))s (watchdog — request hung without callback; in-flight tool call may still finish but the task is terminated)")
-                self.lock.lock()
-                if self.activeTaskID == id { self.activeTaskID = nil }
-                self.lock.unlock()
+                self.terminateWithAbort(id) { $0.markFailed("timeout after \(Int($0.timeoutSecs))s (watchdog — request hung without callback; in-flight tool call may still finish but the task is terminated and the LLM request is aborted)") }
             }
+            self.lock.unlock()
         }
         return id
+    }
+
+    /// v7.4.0-fix73g：真 abort 指定任务的在途 LLM 请求并清理处理器（幂等）。
+    /// 必须在持有 lock 时调用（watchdog/status/stop 都已加锁）。
+    private func abortInflight(_ id: String) {
+        if let c = cancellers.removeValue(forKey: id) { c() }
+    }
+
+    /// v7.4.0-fix73g：任务终止时统一收尾——置 send_state=aborted → 真 cancel → 标记状态。
+    /// 顺序关键：先 aborted 后 cancel，迟到的 cancel 回调走 markSendReplied（已只允许 sent→replied）
+    /// 不会把 aborted 覆盖回 replied。
+    private func terminateWithAbort(_ id: String, mark: (SubAgentTask) -> Void) {
+        guard let t = tasks[id] else { return }
+        t.markSendAborted()
+        abortInflight(id)
+        mark(t)
+        if activeTaskID == id { activeTaskID = nil }
     }
 
     func status(id: String) -> SubAgentTask? {
@@ -214,9 +247,9 @@ final class SubAgentManager {
         // v7.4.0-fix73f-7：软超时——status 是父模型轮询路径，必然高频执行。
         // 看门狗（asyncAfter）若因任何原因未触发（全局队列繁忙/时序偏差），
         // 这里在到点后首次轮询即强制中断，杜绝"time_left 归零仍 running"。
+        // v7.4.0-fix73g：顺带真 cancel 在途请求，不再让它后台挂死。
         if let t = tasks[id], t.isRunning(), Date() >= t.deadlineDate {
-            t.markFailed("timeout after \(Int(t.timeoutSecs))s (checked on status poll — request did not complete in time)")
-            if activeTaskID == id { activeTaskID = nil }
+            terminateWithAbort(id) { $0.markFailed("timeout after \(Int($0.timeoutSecs))s (checked on status poll — request did not complete in time)") }
         }
         return tasks[id]
     }
@@ -225,7 +258,7 @@ final class SubAgentManager {
         lock.lock()
         defer { lock.unlock() }
         guard let t = tasks[id], t.isRunning() else { return false }
-        t.markStopped()
+        terminateWithAbort(id) { $0.markStopped() }
         return true
     }
 
@@ -336,6 +369,16 @@ final class SubAgentRunner {
         loop()
     }
 
+    /// v7.4.0-fix73g：真 abort 在途 LLM 请求（OpenAIClient.cancel → activeTask.cancel()）。
+    /// watchdog/stop/软超时经 manager 的 cancellers 调用；loop 内超时直接调用。
+    /// 幂等：置空 client 后重复调用无害；cancel 后 completion 回调走 markSendReplied
+    /// （已限 sent→replied）不会覆盖 aborted。
+    func cancelInflight() {
+        let c = client
+        client = nil
+        c?.cancel()
+    }
+
     /// v7.4.0-fix73d：多轮中间折叠——对齐大厂子任务上下文管理（Claude Code subagent compaction /
     /// OpenMinis 子会话压缩）。子代理默认 12 轮、上限 30 轮，每轮 assistant+tool 结果全量累积，
     /// 后期请求 token 膨胀（浪费 + 可能超窗）。本地折叠（不做网络摘要——循环内加 summarize
@@ -395,6 +438,10 @@ final class SubAgentRunner {
         foldHistoryIfNeeded()
         // 超时
         if Date() > deadline {
+            // v7.4.0-fix73g：先置 aborted + 真 cancel 在途请求，再标记失败——
+            // 此前只 markFailed，LLM 请求在后台挂死、send_state 永久卡 sent。
+            task.markSendAborted()
+            cancelInflight()
             task.markFailed("timeout after \(Int(deadline.timeIntervalSince(task.createdAt)))s")
             return
         }

@@ -603,15 +603,16 @@ struct ChatView: View {
                             }
                         }
                     }
-                        // v7.4.0-fix73e：内容总高上报——底部透明 marker（高度 0，在滚动内容末尾）。
-                        // minY = 滚动偏移 + 内容总高，onPreferenceChange 里减去 offset 得真实内容高。
-                        GeometryReader { geo in
-                            Color.clear.preference(
-                                key: ChatContentHeightKey.self,
-                                value: geo.frame(in: .named("chatScroll")).minY)
-                        }
-                        .frame(height: 0)
+                        // v7.4.0-fix73g：内容总高直接测——原实现用"LazyVStack 末尾 0 高 marker 的 minY −
+                        // 单独异步上报的 chatScrollOffset"。offset 与 height 是两个独立 preference，到达顺序不定：
+                        // height 先到、offset 滞后时 contentHeight = minY − (旧offset) 被低估 → bottom 偏正 →
+                        // 上滑后 offset > bottom+2 不成立 → ↑ 按钮永不显示（用户实测"上划一段距离按钮不存在"根因）。
+                        // 改在 LazyVStack 上挂 background GeometryReader 直接读自身全高，与 offset 完全解耦，
+                        // 无跨 preference 竞态；LazyVStack 向 ScrollView 提供总内容高，geo.size.height 即内容高。
                     }
+                        .background(GeometryReader { geo in
+                            Color.clear.preference(key: ChatContentHeightKey.self, value: geo.size.height)
+                        })
                     // v3.4.0：去掉整行水平 padding —— AI 气泡改为真正占满左右屏边缘；
                     // 用户气泡的右留白由 MessageBubble 内部按 isUser 处理
                     .padding(.vertical, 12)
@@ -629,9 +630,10 @@ struct ChatView: View {
                     }
                 }
                 .onPreferenceChange(ChatContentHeightKey.self) { v in
-                    let h = v - chatScrollOffset
-                    if abs(h - chatContentHeight) > 0.5 {
-                        chatContentHeight = h
+                    // v7.4.0-fix73g：直接取内容高（background GeometryReader 已上报 geo.size.height），
+                    // 不再 v − chatScrollOffset（旧 offset 异步竞态会低估 contentHeight → ↑ 按钮消失）。
+                    if abs(v - chatContentHeight) > 0.5 {
+                        chatContentHeight = v
                     }
                 }
                 // v7.4.0-fix73e：视口高度测量——透明占位 + overlay GeometryReader。
