@@ -596,6 +596,7 @@ struct ChatView: View {
                             }
                         }
                     }
+                    }
                     // v3.4.0：去掉整行水平 padding —— AI 气泡改为真正占满左右屏边缘；
                     // 用户气泡的右留白由 MessageBubble 内部按 isUser 处理
                     .padding(.vertical, 12)
