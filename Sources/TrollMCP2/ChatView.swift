@@ -23,6 +23,9 @@ struct ChatView: View {
     @AppStorage("chat_think_enabled") private var thinkEnabled = true
     @State private var keyboardHeight: CGFloat = 0   // v2.9.234：键盘高度(消息列表跟随上移)
     @State private var attachmentSheet: AttachmentSheet?
+    // fix73j：子代理详情 sheet——点主会话"子代理完成卡"进入独立轨迹界面
+    @State private var subAgentDetailTaskID: String?
+    @State private var subAgentDetailFallback: String?
     // v3.1.67：文件选择改用 UIKit UIDocumentPickerViewController（asCopy: true）从顶层 VC present——
     // .fileImporter 在真机 iPhone 上有已知 bug（Apple 论坛 775056：选择器打不开/无法交互/回调不触发），
     // UIKit 方案真机稳定。标记位 + sheet onDismiss 触发，保证面板完全关闭后再 present（不再猜时间延迟）。
@@ -174,6 +177,14 @@ struct ChatView: View {
             // （原 v4.5.0 的 GirlCompanionView 悬浮已移除；GirlCompanion.enabled 仍用于 AppMain 自动拉起桌面悬浮）
         }
         .navigationViewStyle(.stack)
+        // fix73j：子代理详情 sheet——点主会话"子代理完成卡"进入独立轨迹界面
+        .sheet(isPresented: Binding(
+            get: { subAgentDetailTaskID != nil },
+            set: { if !$0 { subAgentDetailTaskID = nil } })) {
+            if let tid = subAgentDetailTaskID {
+                SubAgentDetailView(taskID: tid, fallbackJSON: subAgentDetailFallback)
+            }
+        }
         // v2.9.31：授权弹窗已整体移除（工具搜索即自动授权，无弹窗）。
         .sheet(item: $attachmentSheet, onDismiss: {
             // v3.1.67：面板完全关闭后再触发文件选择（UIKit 从顶层 VC present，真机稳定）
@@ -542,6 +553,10 @@ struct ChatView: View {
                                     onToggleSelect: { toggleSelect(msg.id) },
                                     onCopy: { copyMessage(msg) },
                                     onShare: { shareMessage(msg) },
+                                    onOpenSubAgent: { tid, fallback in
+                                        subAgentDetailTaskID = tid
+                                        subAgentDetailFallback = fallback
+                                    },
                                     isStreaming: store.streamingMessageId == msg.id,
                                     forceType: store.liveProducedID == msg.id,
                                     thinkEnabled: thinkEnabled
@@ -1425,6 +1440,10 @@ struct ChatView: View {
                             onToggleSelect: { toggleSelect(msg.id) },
                             onCopy: { copyMessage(msg) },
                             onShare: { shareMessage(msg) },
+                            onOpenSubAgent: { tid, fallback in
+                                subAgentDetailTaskID = tid
+                                subAgentDetailFallback = fallback
+                            },
                             isStreaming: store.streamingMessageId == msg.id,
                             forceType: store.liveProducedID == msg.id,
                             thinkEnabled: thinkEnabled
@@ -1706,6 +1725,8 @@ struct MessageBubble: View {
     var onToggleSelect: (() -> Void)? = nil
     var onCopy: (() -> Void)? = nil
     var onShare: (() -> Void)? = nil
+    // fix73j：子代理完成卡点击回调（taskID + 消息内摘要 JSON fallback）
+    var onOpenSubAgent: ((String, String?) -> Void)? = nil
     // v3.4.5：当前正在流式生成的 AI 消息 → 打字机逐字显示
     var isStreaming: Bool = false
     // v3.4.9：本轮刚生成完成的消息（工具解说/整段到达的回复）也要逐字打出——
@@ -1915,6 +1936,48 @@ struct MessageBubble: View {
             .font(.system(size: 20))
             .foregroundColor(isSelected ? .blue : Color.secondary)
             .padding(.bottom, 10)
+    }
+
+    // fix73j：子代理完成卡——[SUBAGENT-DONE] 回传的 user 消息渲染为可点开卡片，
+    // 点击进入 SubAgentDetailView 看完整轨迹（对齐豆包任务卡/Claude Code 结果回传 UI）
+    private var subAgentCompleteCard: some View {
+        let parsed = SubAgentCompleteCard.parse(message.content)
+        let ok = parsed["status"] as? String != "failed"
+        return Button(action: {
+            onOpenSubAgent?(parsed["task_id"] as? String ?? "", message.content)
+        }) {
+            HStack(spacing: 10) {
+                Image(systemName: "person.crop.circle.badge.checkmark")
+                    .font(.system(size: 22, weight: .medium))
+                    .foregroundColor(ok ? .green : .red)
+                VStack(alignment: .leading, spacing: 3) {
+                    Text(message.toolTitle ?? "子代理完成")
+                        .font(.subheadline)
+                        .fontWeight(.semibold)
+                        .foregroundColor(.primary)
+                        .lineLimit(1)
+                    Text(SubAgentCompleteCard.summary(parsed))
+                        .font(.caption)
+                        .foregroundColor(.secondary)
+                        .lineLimit(3)
+                }
+                Spacer()
+                Image(systemName: "chevron.right")
+                    .font(.system(size: 13, weight: .semibold))
+                    .foregroundColor(.secondary)
+            }
+            .padding(.horizontal, 14)
+            .padding(.vertical, 12)
+            .background(Color(.secondarySystemBackground))
+            .cornerRadius(18)
+            .overlay(
+                RoundedRectangle(cornerRadius: 18)
+                    .strokeBorder(Color.secondary.opacity(0.3), lineWidth: 1)
+            )
+            .padding(.horizontal, isUser ? 12 : 16)
+        }
+        .buttonStyle(.plain)
+        .textSelection(.disabled)
     }
 
     // v4.4.11：AI 正文行内代码(反引号)→橙色(与"已深度思考"同色)。手动正则解析，
@@ -2429,7 +2492,10 @@ struct MessageBubble: View {
             // v3.5.12 修订：解说=单独长气泡(一长)。模型"先解说后执行"的正文就作为普通 assistant 气泡
             // 显示在工具卡上方；工具卡标题=机械短标签(一短,见 toolShortLabel)，两者分开、不重复。
             // 模型本轮没写解说(content空)则无气泡，卡片标题仍显示机械短标签，不落空。
-            if !message.content.isEmpty {
+            // fix73j：子代理完成回传——[SUBAGENT-DONE] 前缀的 user 消息渲染为可点开的完成卡
+            if message.role == "user", message.content.hasPrefix("[SUBAGENT-DONE]") {
+                subAgentCompleteCard
+            } else if !message.content.isEmpty {
                 // v7.1.109-peers：打字机——isStreaming 或 forceType 都按 revealedCount 逐字显示；
                 // 此前只有 isStreaming 才走前缀，forceType(内容在出现前已定好、isStreaming=false)走了全文分支，
                 // 导致"打字机一下有一下没有"(用户实测反馈)。修复后非流式完成的消息也逐字打出来。

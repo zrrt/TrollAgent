@@ -1,5 +1,69 @@
 import Foundation
 
+// MARK: - 子代理身份注册表（v7.4.1-fix73j：对齐 Claude Code .claude/agents 声明式身份）
+/// 身份 = 预定义 {name, description, 工具集, 纪律特化}。主 agent 按任务语义选 agent_type，
+/// 身份决定"是谁+能用什么"，instruction 决定"做什么"。每个身份独立上下文天然不交错。
+/// 安全边界：默认工具集一律不含高风险改写簇（hook.apply / injection.mem / device.fake /
+/// keychain_wipe / system.exec_root / app.install / app.uninstall / control.inject）——
+/// 子代理后台自主执行无人工确认，写操作必须经 subagent.run 的 tools 白名单显式放开。
+struct SubAgentPersona {
+    let name: String
+    let description: String
+    let tools: Set<String>
+    let systemPrompt: String
+    let defaultRounds: Int
+    let defaultTimeout: TimeInterval
+}
+
+enum SubAgentPersonas {
+    static let webResearcher = SubAgentPersona(
+        name: "web-researcher",
+        description: "多源网页调研、查证资料、比较方案、输出带来源的报告。用于需要 web.search/web.fetch 链式检索的调研任务（政策、比价、开源方案调查）。不适合：需要操作手机 App 的任务。",
+        tools: ["web.search", "web.fetch", "shell.exec", "artifact", "skills.read"],
+        systemPrompt: """
+        You are a WEB RESEARCHER. Work in chains: search → fetch → cross-verify. Every factual claim in \
+        your final summary MUST carry a source URL (plain http(s) URLs are fine; the UI auto-links them). \
+        Distinguish verified facts from claims you could not confirm; when sources conflict, report the \
+        disagreement explicitly. Prefer primary/official sources.
+        """,
+        defaultRounds: 12, defaultTimeout: 180)
+    static let appAuditor = SubAgentPersona(
+        name: "app-auditor",
+        description: "审计已安装 App：砸壳解密、entitlements 权限、二进制符号、依赖关系、注入点、缓存结构、崩溃复现。用于逆向与分析任务。不适合：网页调研、UI 操作。",
+        tools: ["app.decrypt", "app.entitlements", "app.deps", "binary.symbols", "probe.inspect",
+                "apps.cache_inspect", "shell.exec", "artifact", "device.info", "download"],
+        systemPrompt: """
+        You are an APP AUDITOR (read-only by default). Survey first: device.info → app entitlements → \
+        binary symbols → deps → cache layout. Record a baseline before deep inspection. Write findings to \
+        the workspace via artifact. You must NOT modify, inject, hook, install or uninstall anything unless \
+        the tools whitelist explicitly granted those capabilities.
+        """,
+        defaultRounds: 15, defaultTimeout: 240)
+    static let shellWorker = SubAgentPersona(
+        name: "shell-worker",
+        description: "批量文件操作、日志处理、数据加工、下载解压整理、脚本执行。用于纯命令类脏活。不适合：需要 LLM 深度判断的任务。",
+        tools: ["shell.exec", "artifact", "download", "skills.read"],
+        systemPrompt: """
+        You are a SHELL WORKER. Commands must be idempotent where possible. Write large outputs to files \
+        instead of printing them. If a command fails, diagnose and try a different approach (up to 3 \
+        attempts), then move on. Keep commands under 1000 chars; for longer scripts write them to a file \
+        first, then run the file.
+        """,
+        defaultRounds: 10, defaultTimeout: 180)
+    static let general = SubAgentPersona(
+        name: "general",
+        description: "通用综合任务兜底（shell/文件/设备/联网/技能）。",
+        tools: ["shell.exec", "artifact", "device", "web.search", "web.fetch", "skills.read"],
+        systemPrompt: "",
+        defaultRounds: 12, defaultTimeout: 180)
+    static let all: [SubAgentPersona] = [webResearcher, appAuditor, shellWorker, general]
+    /// agent_type 解析：未知/空 → general（兜底，不报错）
+    static func find(_ name: String?) -> SubAgentPersona {
+        guard let n = name?.trimmingCharacters(in: .whitespacesAndNewlines), !n.isEmpty else { return general }
+        return all.first { $0.name == n } ?? general
+    }
+}
+
 // MARK: - 子代理任务模型（v7.1.107：对齐 OpenMinis subagent_task 思想，自实现）
 /// 子代理 = 隔离的隐藏会话跑自己的工具循环：主模型把自包含"脏活"委派出去，
 /// 子代理独立上下文执行（不污染主线），完成后把结果 JSON 回传给主模型。
@@ -31,18 +95,25 @@ final class SubAgentTask: Identifiable {
     /// v7.1.108-fix: 状态锁——runner 后台线程写状态（markDone/Failed/Stopped/addRound），
     /// 工具线程读（toDict/status）。无锁多线程读写是数据竞争（UB），全部可变状态读写统一走 stateLock。
     private let stateLock = NSLock()
+    /// fix73j：身份名（agent_type），详情页/回传展示用
+    private(set) var personaName: String
+    /// fix73j：轨迹快照（终态时从 runner 导出，供详情页回看）——[{role, content, tool}]
+    private(set) var trace: [[String: Any]] = []
+    private(set) var hasTrace = false
 
     enum Status: String { case running, done, failed, stopped, interrupted }
 
     /// v7.4.0-fix73f-7：绝对截止时刻（createdAt + timeoutSecs）——status 软超时与
     /// 看门狗共用，status 轮询路径检查它，解决"time_left_secs 归零也不 abort"。
     let deadlineDate: Date
-    init(id: String, instruction: String, maxRounds: Int, timeoutSecs: TimeInterval) {
+    init(id: String, instruction: String, maxRounds: Int, timeoutSecs: TimeInterval,
+         personaName: String = "general") {
         self.id = id
         self.instruction = instruction
         self.maxRounds = maxRounds
         self.timeoutSecs = timeoutSecs
         self.deadlineDate = Date().addingTimeInterval(timeoutSecs)
+        self.personaName = personaName
         self.status = .running
         self.createdAt = Date()
         self.rounds = 0
@@ -60,8 +131,7 @@ final class SubAgentTask: Identifiable {
         // v7.1.107-P0: 空总结 = 无交付——父模型拿到后知道要去子代理轨迹里挖结果
         noDeliverable = result.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty
         elapsed = Date().timeIntervalSince(createdAt)
-        // fix73i：任务终态 → 释放 runner 保活引用（异步，幂等）
-        SubAgentManager.shared.releaseRunner(id: id)
+        finalizeSubAgent()
     }
 
     func markFailed(_ err: String) {
@@ -69,16 +139,14 @@ final class SubAgentTask: Identifiable {
         status = .failed
         error = err
         elapsed = Date().timeIntervalSince(createdAt)
-        // fix73i：任务终态 → 释放 runner 保活引用（异步，幂等）
-        SubAgentManager.shared.releaseRunner(id: id)
+        finalizeSubAgent()
     }
 
     func markStopped() {
         stateLock.lock(); defer { stateLock.unlock() }
         status = .stopped
         elapsed = Date().timeIntervalSince(createdAt)
-        // fix73i：任务终态 → 释放 runner 保活引用（异步，幂等）
-        SubAgentManager.shared.releaseRunner(id: id)
+        finalizeSubAgent()
     }
 
     /// v7.4.0-fix73d：后台挂起中断——区别于 failed（误报）与 stopped（用户手动），
@@ -88,7 +156,41 @@ final class SubAgentTask: Identifiable {
         status = .interrupted
         error = "interrupted by app backgrounding (background window expired) — re-dispatch to resume"
         elapsed = Date().timeIntervalSince(createdAt)
-        // fix73i：任务终态 → 释放 runner 保活引用（异步，幂等）
+        finalizeSubAgent()
+    }
+
+    /// fix73j：任务终态统一收尾——轨迹快照 + 完成回传 + 释放 runner。
+    /// 必须在 stateLock 已持有的路径内调用（mark* 内）。
+    /// 回传 = user 消息（API 序列合法，主 agent 下一轮请求必然携带；
+    /// UI 检测 [SUBAGENT-DONE] 前缀渲染为可点开的子代理完成卡）。
+    private func finalizeSubAgent() {
+        // 1) 轨迹快照：从 manager 取 runner 当前 messages（先取引用再读，避免锁顺序死锁）
+        if let msgs = SubAgentManager.shared.traceSnapshotFor(id: id) {
+            trace = msgs.prefix(200).map { m in
+                ["role": m.role, "content": String(m.content.prefix(2000)), "tool": m.toolName ?? ""]
+            }
+            hasTrace = !trace.isEmpty
+        }
+        // 2) 完成回传
+        var payload: [String: Any] = [
+            "ok": true, "task_id": id, "agent_type": personaName,
+            "status": status.rawValue, "rounds": rounds,
+            "elapsed_secs": Int(elapsed),
+            "result": String(result.prefix(2000)),
+        ]
+        if !error.isEmpty { payload["error"] = String(error.prefix(500)) }
+        var body = ""
+        if let d = try? JSONSerialization.data(withJSONObject: payload) {
+            body = String(data: d, encoding: .utf8) ?? ""
+        }
+        let content = "[SUBAGENT-DONE] " + body
+        DispatchQueue.main.async {
+            var m = ChatMessage(role: "user", content: content)
+            m.toolTitle = "子代理 \(self.id) · \(self.personaName) \(self.status.rawValue)"
+            m.toolName = "subagent.complete"
+            ConversationStore.shared.appendToCurrent(m)
+        }
+        // 3) fix73i：任务终态 → 释放 runner 保活引用（异步，幂等）
         SubAgentManager.shared.releaseRunner(id: id)
     }
 
@@ -176,7 +278,10 @@ final class SubAgentManager {
     static let shared = SubAgentManager()
 
     private var tasks: [String: SubAgentTask] = [:]
-    private var activeTaskID: String?
+    /// fix73j：并发子代理计数（替代 v7.1.107 的 activeTaskID 单任务独占锁）。
+    /// iOS 资源墙：主会话同时最多派发 maxConcurrentSubagents 个子代理。
+    private var runningCount = 0
+    static let maxConcurrentSubagents = 4
     /// v7.4.0-fix73g：在途 LLM 请求的真 abort 处理器——watchdog/stop/软超时到点必须
     /// cancel 掉 runner 的 OpenAIClient（此前只改任务状态，请求永远在后台挂住 → send_state 卡 sent）。
     private var cancellers: [String: () -> Void] = [:]
@@ -193,36 +298,52 @@ final class SubAgentManager {
 
     /// fix73i：任务终态后释放 runner（异步——mark* 可能在 manager.lock / stateLock 持锁路径
     /// 调用，同步移除会重入 NSLock 死锁；幂等，重复调用无害）。
+    /// fix73j：同时归还并发配额（runningCount - 1）。
     func releaseRunner(id: String) {
         DispatchQueue.global(qos: .utility).async { [weak self] in
             guard let self = self else { return }
             self.lock.lock()
             self.runners.removeValue(forKey: id)
+            self.runningCount = max(0, self.runningCount - 1)
             self.lock.unlock()
         }
     }
 
-    /// 启动子代理。成功返回 task_id；已有任务在跑则 throw（模型应轮询/停止旧任务）。
+    /// fix73j：终态时取 runner 当前 messages 快照（详情页回看轨迹用）。
+    /// 先取引用再读——避免 stateLock → manager.lock 与 terminateWithAbort 的
+    /// manager.lock → stateLock 锁序相反导致死锁；runner 消息只被其自身线程写，
+    /// 终态时写已停止，读快照安全（诊断数据，不要求强一致）。
+    func traceSnapshotFor(id: String) -> [ChatMessage]? {
+        var runner: SubAgentRunner?
+        lock.lock(); runner = runners[id]; lock.unlock()
+        return runner?.snapshotMessages()
+    }
+
+    /// 启动子代理。成功返回 task_id；并发达到上限（4）则 throw（模型应等待/停止旧任务）。
+    /// fix73j：personaName 选身份（agent_type），并发计数取代单任务独占。
     /// v7.1.108-fix: Result<String,String> 改为 throws——Swift 要求 Result.Failure: Error，
     /// String 不满足协议，这是子代理系列构建失败的根因。
-    func start(instruction: String, allowedTools: [String]?,
-               maxRounds: Int, timeout: TimeInterval) throws -> String {
+    func start(instruction: String, allowedTools: [String]?, maxRounds: Int,
+               timeout: TimeInterval, personaName: String = "general") throws -> String {
         lock.lock()
-        if let active = activeTaskID {
+        if runningCount >= SubAgentManager.maxConcurrentSubagents {
             lock.unlock()
-            throw MCPError.failed("已有子代理 \(active) 在运行。先 subagent.status 等待它完成，或 subagent.stop 停止后再委派新任务。")
+            throw MCPError.failed("已达子代理并发上限 \(SubAgentManager.maxConcurrentSubagents)。先 subagent.status 等待已有任务完成，或 subagent.stop 停止后再委派新任务。")
         }
+        runningCount += 1
         let id = String(UUID().uuidString.prefix(8))
+        let persona = SubAgentPersonas.find(personaName)
         let clampedRounds = max(2, min(maxRounds, 30))
         let clampedTimeout = max(30, min(timeout, 600))
         let task = SubAgentTask(id: id, instruction: instruction,
-                                maxRounds: clampedRounds, timeoutSecs: clampedTimeout)
+                                maxRounds: clampedRounds, timeoutSecs: clampedTimeout,
+                                personaName: persona.name)
         tasks[id] = task
-        activeTaskID = id
         lock.unlock()
 
         let runner = SubAgentRunner(task: task, allowedTools: allowedTools,
-                                    maxRounds: clampedRounds, timeout: clampedTimeout)
+                                    maxRounds: clampedRounds, timeout: clampedTimeout,
+                                    persona: persona)
         // v7.4.1-fix73i：强引用保活 runner（见 runners 注释）——否则首轮 send 后即释放，
         // 执行链断在起点。
         runners[id] = runner
@@ -232,12 +353,12 @@ final class SubAgentManager {
         DispatchQueue.global(qos: .userInitiated).async {
             runner.run()
             self.lock.lock()
-            if self.activeTaskID == id { self.activeTaskID = nil }
             // v7.4.0-fix73g：任务结束（正常/中止）清理 abort 处理器，防字典残留
             self.cancellers.removeValue(forKey: id)
             // fix73i：注意——不在这里移除 runners！run() 返回时首轮请求往往还在途，
             // completion 回调依赖 runner 存活续跑执行链；runner 由任务终态（markDone/
             // markFailed/markStopped/markInterrupted → releaseRunner）统一释放。
+            // fix73j：runningCount 同样由 releaseRunner 归还（终态路径，本处不减）。
             self.lock.unlock()
         }
         // v7.4.0-fix73f-4：超时看门狗——loop() 的超时检查只在"发出请求前"执行，
@@ -269,7 +390,6 @@ final class SubAgentManager {
         t.markSendAborted()
         abortInflight(id)
         mark(t)
-        if activeTaskID == id { activeTaskID = nil }
     }
 
     func status(id: String) -> SubAgentTask? {
@@ -327,6 +447,8 @@ final class SubAgentManager {
 final class SubAgentRunner {
     private let task: SubAgentTask
     private let allowedTools: [String]?
+    /// fix73j：身份（决定默认工具集 + 纪律特化）
+    private let persona: SubAgentPersona
     private let maxRounds: Int
     private let deadline: Date
     private var messages: [ChatMessage] = []
@@ -340,19 +462,16 @@ final class SubAgentRunner {
     /// v7.4.0-fix73d：历史折叠已执行（只折叠一次——折叠后 token 骤降，重复触发无意义）
     private var historyFolded = false
 
-    /// 子代理默认工具集——通用干活三件套 + 只读信息工具（全量 schema 太大，注入精简集）
-    private let defaultTools: Set<String> = [
-        "shell.exec", "artifact", "device", "web.search", "web.fetch", "skills.read"
-    ]
-
-    init(task: SubAgentTask, allowedTools: [String]?, maxRounds: Int, timeout: TimeInterval) {
+    init(task: SubAgentTask, allowedTools: [String]?, maxRounds: Int, timeout: TimeInterval,
+         persona: SubAgentPersona) {
         self.task = task
         self.allowedTools = allowedTools
+        self.persona = persona
         self.maxRounds = max(2, min(maxRounds, 30))
         self.deadline = Date().addingTimeInterval(max(30, min(timeout, 600)))
     }
 
-    /// 子代理系统提示词——精简版执行纪律（不承诺收尾/结构化调用/自主决策）
+    /// 子代理系统提示词——通用执行纪律 + 身份纪律特化（persona.systemPrompt）+ 工具集
     private func systemPrompt() -> String {
         var p = """
         You are a subagent of TrollAgent executing a delegated task in an isolated session.
@@ -368,17 +487,21 @@ final class SubAgentRunner {
            as a tappable link card. Plain http(s) URLs in your text are auto-detected the same way.
         7. When finished, your final text must be a concise structured summary of what was done and the key result.
         """
+        if !persona.systemPrompt.isEmpty {
+            p += "\n\n" + persona.systemPrompt
+        }
         if let wl = allowedTools, !wl.isEmpty {
             p += "\nTOOL WHITELIST (use ONLY these): \(wl.joined(separator: ", "))"
         } else {
-            p += "\nTools: \(defaultTools.sorted().joined(separator: ", ")) (use these; others may exist in schema — stay within your allowed set)"
+            let names = persona.tools.sorted().joined(separator: ", ")
+            p += "\nTools: \(names) (use these; others may exist in schema — stay within your allowed set)"
         }
         return p
     }
 
-    /// 过滤后的工具 schema：默认集 ∪ 白名单（apiName 前缀匹配大工具）
+    /// 过滤后的工具 schema：身份默认集 ∪ 白名单（apiName 前缀匹配大工具）
     private func subAgentTools() -> [[String: Any]]? {
-        var allowed = Set(defaultTools)
+        var allowed = persona.tools
         if let wl = allowedTools, !wl.isEmpty {
             for w in wl { allowed.insert(w) }
         }
@@ -564,7 +687,10 @@ final class SubAgentRunner {
         }
     }
 
-    /// 逐条执行工具（子代理内串行——简单安全，不做并行），结果回填后继续循环
+    /// 执行工具（fix73j：单轮并发 ≤3 + 结果按 calls 原序回填）。
+    /// v7.4.1 前为纯串行；现对齐主会话 processToolCallsParallel 的波次并发思想：
+    /// DispatchSemaphore(3) 限制在途，DispatchGroup 等待全部完成，结果按 index 原序合并
+    /// （Anthropic/OpenAI API 要求 tool 结果顺序镜像 tool_calls 顺序——乱序会 400）。
     private func execute(calls: [ToolCall], narration: String? = nil) {
         var msgs = messages
         var executed: [String] = []
@@ -572,40 +698,67 @@ final class SubAgentRunner {
         // 先追加 assistant 消息挂上 toolCalls（content 用模型解说或空串，与主循环一致），
         // 否则 "tool" role message must follow a message with tool_calls → 400。
         msgs.append(ChatMessage(role: "assistant", content: narration ?? "", toolCalls: calls))
-        for call in calls {
-            // 同工具同参数重复 3 次熔断（防死循环，对齐 ToolLoopDetector 思想）
+        // 1) 熔断检查（顺序执行——lastTool/sameToolRepeat 状态是顺序语义）+ 收集待执行 index
+        var loopBlocked: [Int] = []
+        for (i, call) in calls.enumerated() {
             if call.name == lastTool {
                 sameToolRepeat += 1
                 if sameToolRepeat >= 3 {
-                    let body: [String: Any] = [
-                        "ok": false,
-                        "message": "🚫 LOOP BLOCKED: You've called \(call.name) \(sameToolRepeat) times with the same pattern and it keeps repeating. STOP. Try a completely different approach or conclude the task."
-                    ]
-                    var m = ChatMessage(role: "tool", content: Self.json(body), isError: true,
-                                        toolCallId: call.id, toolName: call.name)
-                    m.toolArgs = Self.summarizeArgs(call.arguments)
-                    msgs.append(m)
+                    loopBlocked.append(i)
                     continue
                 }
             } else {
                 lastTool = call.name
                 sameToolRepeat = 1
             }
-            // 执行工具
-            let params = Self.parseArgs(call.arguments)
-            do {
-                let r = try ToolRegistry.shared.dispatch(name: call.name, params: params)
-                var content = Self.json(r)
-                if content.count > 8000 {
-                    content = content.prefix(8000) + "\n... [tool result truncated, total \(content.count) chars]"
+        }
+        // 2) 并发执行（≤3 在途），结果按 index 收集
+        var results: [Int: ChatMessage] = [:]
+        let resultsLock = NSLock()
+        let semaphore = DispatchSemaphore(value: 3)
+        let group = DispatchGroup()
+        let indices = calls.indices.filter { !loopBlocked.contains($0) }
+        for i in indices {
+            let call = calls[i]
+            DispatchQueue.global(qos: .userInitiated).async {
+                semaphore.wait()
+                group.enter()
+                defer { group.leave(); semaphore.signal() }
+                let params = Self.parseArgs(call.arguments)
+                let msg: ChatMessage
+                do {
+                    let r = try ToolRegistry.shared.dispatch(name: call.name, params: params)
+                    var content = Self.json(r)
+                    if content.count > 8000 {
+                        content = content.prefix(8000) + "\n... [tool result truncated, total \(content.count) chars]"
+                    }
+                    var m = ChatMessage(role: "tool", content: content, toolCallId: call.id, toolName: call.name)
+                    m.toolArgs = Self.summarizeArgs(call.arguments)
+                    msg = m
+                } catch {
+                    var m = ChatMessage(role: "tool", content: Self.json(["ok": false, "message": String(describing: error)]),
+                                        isError: true, toolCallId: call.id, toolName: call.name)
+                    m.toolArgs = Self.summarizeArgs(call.arguments)
+                    msg = m
                 }
-                var m = ChatMessage(role: "tool", content: content, toolCallId: call.id, toolName: call.name)
+                resultsLock.lock()
+                results[i] = msg
+                resultsLock.unlock()
+            }
+        }
+        group.wait()
+        // 3) 按原序合并（熔断消息 + 执行结果，顺序镜像 calls）
+        for (i, call) in calls.enumerated() {
+            if loopBlocked.contains(i) {
+                let body: [String: Any] = [
+                    "ok": false,
+                    "message": "🚫 LOOP BLOCKED: You've called \(call.name) \(sameToolRepeat) times with the same pattern and it keeps repeating. STOP. Try a completely different approach or conclude the task."
+                ]
+                var m = ChatMessage(role: "tool", content: Self.json(body), isError: true,
+                                    toolCallId: call.id, toolName: call.name)
                 m.toolArgs = Self.summarizeArgs(call.arguments)
                 msgs.append(m)
-            } catch {
-                var m = ChatMessage(role: "tool", content: Self.json(["ok": false, "message": String(describing: error)]),
-                                    isError: true, toolCallId: call.id, toolName: call.name)
-                m.toolArgs = Self.summarizeArgs(call.arguments)
+            } else if let m = results[i] {
                 msgs.append(m)
             }
             executed.append(call.name)
@@ -614,6 +767,9 @@ final class SubAgentRunner {
         messages = msgs
         loop()
     }
+
+    /// fix73j：当前消息快照（终态时由 manager 取，存 task.trace 供详情页回看）
+    func snapshotMessages() -> [ChatMessage] { messages }
 
     // MARK: - 工具小工具
     private static func parseArgs(_ s: String) -> [String: Any] {
@@ -644,10 +800,11 @@ final class SubAgentRunner {
 final class SubAgentRunTool: MCPTool {
     let definition = ToolDefinition(
         name: "subagent.run",
-        summary: "Delegate a self-contained task to an isolated subagent that runs its own tool loop in a separate context (won't pollute the main conversation). Use for: long multi-step dirty work — batch file analysis, multi-file audits, repetitive processing, web research chains. Don't use for: quick single calls (call the tool directly). Params: instruction(required), tools(optional comma-separated whitelist, default shell.exec/artifact/device/web.search/web.fetch/skills.read), max_rounds(optional default 12 max 30), timeout_secs(optional default 180 max 600). Returns task_id immediately (async); poll with subagent.status until status=done, stop with subagent.stop if it misbehaves.",
+        summary: "Delegate a self-contained task to an isolated subagent that runs its own tool loop in a separate context (won't pollute the main conversation). Use for: long multi-step dirty work — batch file analysis, multi-file audits, repetitive processing, web research chains. Don't use for: quick single calls (call the tool directly). Params: instruction(required), agent_type(optional persona: web-researcher/app-auditor/shell-worker/general, default general — pick by task semantics), tools(optional comma-separated whitelist), max_rounds(optional default 12 max 30), timeout_secs(optional default 180 max 600). Up to 4 subagents can run concurrently; completion is pushed back to the main conversation as a tappable card. Returns task_id immediately (async); poll with subagent.status until status=done, stop with subagent.stop if it misbehaves.",
         parameters: [
             "instruction": "The complete task to execute (required). Be specific about the goal, inputs, and expected output format.",
-            "tools": "Optional comma-separated tool whitelist, e.g. 'shell.exec,artifact'. Default: shell.exec/artifact/device/web.search/web.fetch/skills.read",
+            "agent_type": "Optional subagent persona: web-researcher (multi-source web research, cite URLs), app-auditor (read-only app reverse/audit: decrypt/entitlements/symbols/deps/cache), shell-worker (batch file/script dirty work), general (default all-round). Pick the persona matching the task; default general.",
+            "tools": "Optional comma-separated tool whitelist ADDED to the persona's default set (e.g. 'shell.exec,artifact'). High-risk tools (hook.apply/injection.mem/device.fake/keychain_wipe/system.exec_root/app.install/app.uninstall/control.inject) are denied unless explicitly listed here.",
             "max_rounds": "Optional max tool rounds (default 12, max 30)",
             "timeout_secs": "Optional timeout seconds (default 180, max 600)",
         ],
@@ -660,6 +817,8 @@ final class SubAgentRunTool: MCPTool {
         }
         // 指令截断（对齐 OpenMinis 子会话指令 4000 字上限的防护精神）
         let instruction = raw.count > 8000 ? String(raw.prefix(8000)) + "\n... [instruction truncated]" : raw
+        let agentType = params["agent_type"] as? String
+        let persona = SubAgentPersonas.find(agentType)
         let wl = (params["tools"] as? String)?
             .split(separator: ",").map { $0.trimmingCharacters(in: .whitespacesAndNewlines) }
             .filter { !$0.isEmpty }
@@ -667,18 +826,19 @@ final class SubAgentRunTool: MCPTool {
         let rounds: Int = {
             if let i = params["max_rounds"] as? Int { return i }
             if let s = params["max_rounds"] as? String, let i = Int(s) { return i }
-            return 12
+            return persona.defaultRounds
         }()
         let timeout: TimeInterval = {
             if let d = params["timeout_secs"] as? Double { return d }
             if let i = params["timeout_secs"] as? Int { return Double(i) }
             if let s = params["timeout_secs"] as? String, let d = Double(s) { return d }
-            return 180
+            return persona.defaultTimeout
         }()
         let id = try SubAgentManager.shared.start(instruction: instruction, allowedTools: wl,
-                                                  maxRounds: rounds, timeout: timeout)
-        return ["ok": true, "task_id": id,
-                "message": "subagent \(id) started. Poll with subagent.status task_id=\(id); steer with subagent.steer task_id=\(id); stop with subagent.stop task_id=\(id)."]
+                                                  maxRounds: rounds, timeout: timeout,
+                                                  personaName: persona.name)
+        return ["ok": true, "task_id": id, "agent_type": persona.name,
+                "message": "subagent \(id) (\(persona.name)) started. Poll with subagent.status task_id=\(id); steer with subagent.steer task_id=\(id); stop with subagent.stop task_id=\(id). Completion is pushed back as a card in the conversation."]
     }
 }
 
