@@ -474,7 +474,11 @@ public final class ToolRegistry: ObservableObject {
         // v4.5.x：大文件下载（URLSession + 进度条）
         "download",
         // v7.2.5-fix60：原生工具能力探测（AI 不确定时查 py3-native/node-native/jtool2 等可用性与用法）
-        "native.tools"
+        "native.tools",
+        // v7.4.0-fix73f-3：子代理工具默认启用——否则 subagent.run 注册了但不在白名单 → 
+        // enabledOpenAIToolSchema 过滤 → AI 可用工具列表里没有 → 实测"注册表能查 schema、
+        // 实际调用拿不到结果"（用户真机复现）。对齐 OpenMinis subagent_task 委派能力。
+        "subagent.run", "subagent.status", "subagent.stop", "subagent.steer"
     ]
 
     /// v2.9.31：常驻核心工具名集合 (UI 用只读访问）

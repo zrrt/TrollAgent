@@ -691,14 +691,20 @@ struct ChatView: View {
         .padding(.bottom, 14)
     }
 
-    // v7.4.0-fix73d：悬浮按钮显示条件——Minis 矩阵：up 只在"中间"（可上可下）显示，
-    // down 只在"非底部"（可下）显示；底部两者全隐，顶部只显 down
+    // v7.4.0-fix73f-3：悬浮按钮显示条件——Minis 矩阵：up 只在"中间"（可上可下）显示，
+    // down 只在"非底部"（可下）显示；底部两者全隐，顶部只显 down。
+    // 关键修复：chatContentHeight 由 LazyVStack 末尾的 marker 上报——LazyVStack 惰性渲染，
+    // 未滚动到接近底部时 marker 不渲染 → contentHeight=0 → 旧逻辑 down 永远不显示（用户实测
+    // "只有接近底部才出现按钮"的根因）。修复：contentHeight 未知时按默认显示，已知时精确判断。
     private var chatCanScrollUp: Bool {
-        chatScrollOffset < -2
+        guard chatContentHeight > 0 else { return chatScrollOffset < -2 }
+        let bottom = -(chatContentHeight - chatViewportHeight)
+        return chatScrollOffset < -2 && chatScrollOffset > bottom + 2
     }
     private var chatCanScrollDown: Bool {
-        let maxOffset = max(0, chatContentHeight - chatViewportHeight)
-        return chatScrollOffset > -maxOffset + 2
+        guard chatContentHeight > 0 else { return true }
+        let bottom = -(chatContentHeight - chatViewportHeight)
+        return chatScrollOffset > bottom + 2
     }
 
     private func chatFloatingButton(_ icon: String, action: @escaping () -> Void) -> some View {
