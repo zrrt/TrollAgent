@@ -420,6 +420,11 @@ final class SubAgentRunner {
         }
         let client = OpenAIClient(config)
         self.client = client
+        // v7.4.0-fix73f-5：子代理请求短超时——默认 session 90s 对 timeout_secs=30 的任务
+        // 太长（实测第一个请求挂住 30-90s、rounds=0 的根因）。压到任务剩余时间的合理比例：
+        // 请求挂住 → 快速失败回调 markFailed，配合看门狗双保险，不再无限等待。
+        let remaining = deadline.timeIntervalSinceNow
+        client.requestTimeoutOverride = min(max(remaining * 0.4, 15), 45)
         // v7.1.107-P0: wrap-up 轮不传工具 schema → 模型只能文本总结
         let tools = wrapUpInjected ? nil : subAgentTools()
         client.send(messages: messages, tools: tools) { [weak self] result in

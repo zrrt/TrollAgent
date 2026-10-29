@@ -60,6 +60,11 @@ final class OpenAIClient {
         cfg.timeoutIntervalForRequest = 90
         return URLSession(configuration: cfg)
     }()
+    /// v7.4.0-fix73f-5：请求超时覆盖——子代理等短时任务用它压短超时。
+    /// 默认 nil（主会话保持 90s/300s 宽松超时）；设置后 sendInner 主请求用独立
+    /// session（timeoutIntervalForRequest = 覆盖值），请求挂住时快速失败，由
+    /// 失败回调 markFailed，配合 SubAgentManager 看门狗双保险。
+    var requestTimeoutOverride: TimeInterval?
     /// v2.9.13：取消支持——置位标志 + 取消当前 in-flight 任务
     private var cancelled = false
     private weak var activeTask: URLSessionDataTask?
@@ -700,7 +705,18 @@ final class OpenAIClient {
             onStatus?(L10n.t("status_rejected_simplify", level, maxLevel))
         }
 
-        let task = session.dataTask(with: request) { data, response, error in
+        // v7.4.0-fix73f-5：超时覆盖——子代理场景用短超时独立 session，请求挂住快速失败
+        let sessionToUse: URLSession
+        if let rt = requestTimeoutOverride, rt > 0 {
+            let c = URLSessionConfiguration.default
+            c.waitsForConnectivity = false
+            c.timeoutIntervalForRequest = rt
+            c.timeoutIntervalForResource = rt + 15
+            sessionToUse = URLSession(configuration: c)
+        } else {
+            sessionToUse = session
+        }
+        let task = sessionToUse.dataTask(with: request) { data, response, error in
             watchdog.cancel()
             if self.cancelled {
                 completion(.failure(NSError(domain: "OpenAIClient", code: -999,

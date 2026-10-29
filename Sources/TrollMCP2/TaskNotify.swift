@@ -95,7 +95,10 @@ final class TaskNotify {
             return
         }
         do {
-            try AVAudioSession.sharedInstance().setCategory(.ambient, options: [.mixWithOthers])
+            // v7.4.0-fix73f-5：ambient → playback——ambient 类别跟随静音开关（静音时提示音不响，
+            // 用户实测"还是没有提示音"的根因之一）。playback + duckOthers 在静音下仍发声
+            // （短信/微信通知听感），同时压低其他音频避免与正在播放的内容重叠吵。
+            try AVAudioSession.sharedInstance().setCategory(.playback, options: [.duckOthers])
             try AVAudioSession.sharedInstance().setActive(true, options: .notifyOthersOnDeactivation)
         } catch {
             NetworkLog.shared.log("[sound] AVAudioSession failed: \(error.localizedDescription)")

@@ -642,8 +642,15 @@ struct ChatView: View {
                 floatingButtons(proxy)
             }
             .onChange(of: store.currentMessages.count) { _ in
-                if let last = store.currentMessages.last {
-                    withAnimation { proxy.scrollTo(last.id, anchor: .bottom) }
+                // v7.4.0-fix73f-5：只在"已处于底部附近"时自动滚到底——否则用户在
+                // 上滑看历史时被强制拉回（实测"无法滑动到顶部、会回退"根因：AI 回复
+                // 流式中工具卡不断创建→count 变→无条件 scrollToBottom 抢滚）。
+                // 底部 40pt 阈值：接近底部才跟随，上滑/中间停留不抢。
+                if chatContentHeight <= 0
+                    || chatScrollOffset <= -(chatContentHeight - chatViewportHeight) + 40 {
+                    if let last = store.currentMessages.last {
+                        withAnimation { proxy.scrollTo(last.id, anchor: .bottom) }
+                    }
                 }
             }
             // v2.9.12：打开/切换会话时自动滚到底（老会话不再停在顶部）
