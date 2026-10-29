@@ -15,6 +15,9 @@ final class SubAgentTask: Identifiable {
     private(set) var createdAt: Date
     private(set) var rounds: Int
     private(set) var toolTrace: [String]
+    /// v7.4.0-fix73f-6：请求生命周期诊断——idle(未发) → sent(已发出等待响应) → replied(收到响应)。
+    /// status 返回 send_state，父模型一眼区分"worker 没启动"(idle) vs "请求挂住"(sent) vs 正常(replied)。
+    private(set) var sendState: String = "idle"
     private(set) var result: String
     private(set) var error: String
     private(set) var elapsed: Double
@@ -95,6 +98,18 @@ final class SubAgentTask: Identifiable {
         toolTrace.append(contentsOf: tools)
     }
 
+    /// v7.4.0-fix73f-6：请求已发出（loop 调 send 前标记）——区分"worker 没启动"与"请求挂住"
+    func markSendStarted() {
+        stateLock.lock(); defer { stateLock.unlock() }
+        sendState = "sent"
+    }
+
+    /// v7.4.0-fix73f-6：请求收到响应（成功/失败回调都算）——worker 与上游链路正常
+    func markSendReplied() {
+        stateLock.lock(); defer { stateLock.unlock() }
+        if sendState != "idle" { sendState = "replied" }
+    }
+
     /// v7.1.108-fix: 线程安全的状态读取（runner 后台线程/stop 工具线程共用）
     func isRunning() -> Bool {
         stateLock.lock(); defer { stateLock.unlock() }
@@ -123,6 +138,8 @@ final class SubAgentTask: Identifiable {
             if !recent.isEmpty { d["recent_tools"] = recent }
             d["elapsed_secs"] = Int(liveElapsed)
             d["progress_hint"] = "working... \(rounds)/\(maxRounds) rounds, \(Int(liveElapsed))s elapsed"
+            // v7.4.0-fix73f-6：请求生命周期诊断
+            d["send_state"] = sendState
         }
         if !result.isEmpty { d["result"] = result }
         if !error.isEmpty { d["error"] = error }
@@ -173,10 +190,10 @@ final class SubAgentManager {
         }
         // v7.4.0-fix73f-4：超时看门狗——loop() 的超时检查只在"发出请求前"执行，
         // 请求异步挂住（网络卡死/上游无响应/回调丢失）时回调不来 → loop 不再被驱动 →
-        // 超时检查永不触发 → 任务永远 running（用户真机实测 timeout_secs=30 但 101s
-        // 仍 running、rounds=0、tool_trace=[] 的根因）。
-        // 看门狗独立于请求回调：deadline 到时强制中断，真正兑现超时语义。
-        DispatchQueue.global(qos: .userInitiated).asyncAfter(deadline: .now() + clampedTimeout + 5) {
+        // v7.4.0-fix73f-6：看门狗精确到点（去掉 +5 余量）——实测 timeout_secs=60 的任务
+        // 64s 仍 running（旧逻辑 65s 才触发，用户观察点恰好没到）。deadline 到点立即
+        // 强制中断，不依赖请求回调；已 done/failed/stopped 的任务 isRunning()=false 不受影响。
+        DispatchQueue.global(qos: .userInitiated).asyncAfter(deadline: .now() + clampedTimeout) {
             if let t = self.tasks[id], t.isRunning() {
                 t.markFailed("timeout after \(Int(clampedTimeout))s (watchdog — request hung without callback; in-flight tool call may still finish but the task is terminated)")
                 self.lock.lock()
@@ -427,8 +444,11 @@ final class SubAgentRunner {
         client.requestTimeoutOverride = min(max(remaining * 0.4, 15), 45)
         // v7.1.107-P0: wrap-up 轮不传工具 schema → 模型只能文本总结
         let tools = wrapUpInjected ? nil : subAgentTools()
+        task.markSendStarted()   // v7.4.0-fix73f-6：请求已发出——status 可见 send_state=sent
         client.send(messages: messages, tools: tools) { [weak self] result in
             guard let self = self else { return }
+            // v7.4.0-fix73f-6：收到响应（成功/失败都算）——send_state=replied
+            self.task.markSendReplied()
             // v7.4.0-fix73f-4：看门狗已中断（markFailed）后，迟到的回调不得覆盖状态——
             // 否则超时任务会"复活"成 done（用户实测超时后仍 running 的同类竞态）。
             guard self.task.isRunning() else { return }

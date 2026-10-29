@@ -642,12 +642,17 @@ struct ChatView: View {
                 floatingButtons(proxy)
             }
             .onChange(of: store.currentMessages.count) { _ in
-                // v7.4.0-fix73f-5：只在"已处于底部附近"时自动滚到底——否则用户在
-                // 上滑看历史时被强制拉回（实测"无法滑动到顶部、会回退"根因：AI 回复
-                // 流式中工具卡不断创建→count 变→无条件 scrollToBottom 抢滚）。
-                // 底部 40pt 阈值：接近底部才跟随，上滑/中间停留不抢。
-                if chatContentHeight <= 0
-                    || chatScrollOffset <= -(chatContentHeight - chatViewportHeight) + 40 {
+                // v7.4.0-fix73f-6：只在"已处于底部附近"时自动滚到底——否则用户在
+                // 上滑看历史时被强制拉回（实测"无法滑动到顶部、会回退/↑按钮看不到"根因：
+                // AI 回复流式中工具卡不断创建→count 变→无条件 scrollToBottom 抢滚，
+                // 把上滑到中间的用户拉回底部——↑ 按钮只在中间显示，所以"看不到↑"）。
+                // 关键修复：contentHeight 未知（LazyVStack 惰性 marker 未渲染=0）时
+                // 旧逻辑仍无条件滚——改为按滚动偏移判断：顶部附近(offset>-50)才跟随，
+                // 上滑/中间停留（offset 远离 0）绝不抢。已知时：底部 40pt 内才滚。
+                let bottomThreshold = -(chatContentHeight - chatViewportHeight) + 40
+                let nearBottom = chatContentHeight > 0 && chatScrollOffset <= bottomThreshold
+                let atTopUnknown = chatContentHeight <= 0 && chatScrollOffset > -50
+                if nearBottom || atTopUnknown {
                     if let last = store.currentMessages.last {
                         withAnimation { proxy.scrollTo(last.id, anchor: .bottom) }
                     }
