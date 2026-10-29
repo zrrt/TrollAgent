@@ -612,8 +612,19 @@ struct ChatView: View {
             .simultaneousGesture(
                 TapGesture().onEnded { dismissKeyboard() }
             )
-            .onPreferenceChange(ChatScrollOffsetKey.self) { chatScrollOffset = $0 }
-            .onPreferenceChange(ChatContentHeightKey.self) { chatContentHeight = $0 }
+            // v7.4.0-fix73e：悬浮按钮滚动量防抖——滚动中 offset 每帧都在变，
+            // 直接写 @State 会高频触发 body 重渲染（滚动停止后浮点微差仍可能抖动触发）。
+            // 阈值 <0.5pt 忽略，仅在跨过显示矩阵边界时更新，杜绝"滚动 → 重渲染 → 再滚动"循环。
+            .onPreferenceChange(ChatScrollOffsetKey.self) { v in
+                if abs(v - chatScrollOffset) > 0.5 {
+                    chatScrollOffset = v
+                }
+            }
+            .onPreferenceChange(ChatContentHeightKey.self) { v in
+                if abs(v - chatContentHeight) > 0.5 {
+                    chatContentHeight = v
+                }
+            }
             .background(GeometryReader { geo in
                 Color.clear
                     .onAppear { chatViewportHeight = geo.size.height }

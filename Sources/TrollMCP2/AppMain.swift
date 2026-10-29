@@ -51,6 +51,10 @@ final class AppDelegate: UIResponder, UIApplicationDelegate {
         _ application: UIApplication,
         didFinishLaunchingWithOptions launchOptions: [UIApplication.LaunchOptionsKey: Any]? = nil
     ) -> Bool {
+        // v7.4.0-fix73e：崩溃捕获先于一切安装——TrollStore 侧载无系统诊断，
+        // 崩溃现场写 Documents/crash.log（复现后直接取日志定位）
+        CrashReporter.install()
+
         // v2.9.368：全局 UITextView 零内边距——TextEditor 默认有 8pt 上下内边距，
         // 导致输入框高度过大；全局清零后 TextEditor 高度紧贴文字。
         UITextView.appearance().textContainerInset = .zero

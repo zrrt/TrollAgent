@@ -20,6 +20,9 @@ final class BackgroundLLM: NSObject, URLSessionDownloadDelegate {
 
     private let bgID = "com.trollagent.llm.bg"
     private var backgroundSession: URLSession?
+    /// v7.4.0-fix73e：session 失效中标志——cancelHandoff 置 true，0.5s 后重建完成置 false；
+    /// handoff() 若撞上失效中 session（新任务加进正在 invalidate 的 session = 未定义行为）则跳过
+    private var sessionInvalidating = false
     /// AppDelegate 的 handleEventsForBackgroundURLSession completionHandler（全部任务结束后调用）
     var onAllTasksFinished: (() -> Void)?
     /// v7.4.0-fix73b：结果就绪时的主动推送（主线程）——App 前台或被系统唤醒时直接消费，
@@ -65,6 +68,7 @@ final class BackgroundLLM: NSObject, URLSessionDownloadDelegate {
     func handoff(messages: [ChatMessage], tools: [[String: Any]]?, config: ModelConfig) -> Bool {
         lock.lock(); defer { lock.unlock() }
         guard !isHandoffInFlight,
+              !sessionInvalidating,
               allowsNonStreaming(baseURL: config.baseURL),
               let session = backgroundSession else { return false }
         // 请求构建复用 OpenAIClient（body/鉴权/参数别名同源）
@@ -86,6 +90,9 @@ final class BackgroundLLM: NSObject, URLSessionDownloadDelegate {
 
     /// v7.4.0-fix73b：用户发新消息/手动停止时取消后台等待（放弃旧结果，避免结果覆盖新会话）
     /// fix73b-audit：无在途任务且无结果时不重建 session（send() 每轮都会调用，避免无谓 invalidate）
+    /// v7.4.0-fix73e：同 identifier 重建竞态加固——URLSession.invalidateAndCancel 是异步生效，
+    /// 立即用同一 bgID 新建 session 会短暂出现"同 identifier 双 session"（未定义行为/崩溃风险）。
+    /// 改为：延迟到旧 session 失效后再重建（send() 高频调用时仅重建一次）。
     func cancelHandoff() {
         lock.lock()
         let hasWork = isHandoffInFlight || pendingResult != nil
@@ -93,13 +100,27 @@ final class BackgroundLLM: NSObject, URLSessionDownloadDelegate {
         isHandoffInFlight = false
         lock.unlock()
         guard hasWork else { return }
-        backgroundSession?.invalidateAndCancel()
-        let cfg = URLSessionConfiguration.background(withIdentifier: bgID)
-        cfg.isDiscretionary = false
-        cfg.waitsForConnectivity = true
-        cfg.timeoutIntervalForResource = 300
-        cfg.timeoutIntervalForRequest = 90
-        backgroundSession = URLSession(configuration: cfg, delegate: self, delegateQueue: nil)
+        let old = backgroundSession
+        lock.lock()
+        sessionInvalidating = true
+        lock.unlock()
+        old?.invalidateAndCancel()
+        // 旧 session 异步失效，延迟 0.5s 后再重建同 identifier session
+        DispatchQueue.global().asyncAfter(deadline: .now() + 0.5) { [weak self] in
+            guard let self = self else { return }
+            self.lock.lock()
+            // 重建前再确认没有新任务已提交（理论上不可能，双保险）
+            if !self.isHandoffInFlight {
+                let cfg = URLSessionConfiguration.background(withIdentifier: self.bgID)
+                cfg.isDiscretionary = false
+                cfg.waitsForConnectivity = true
+                cfg.timeoutIntervalForResource = 300
+                cfg.timeoutIntervalForRequest = 90
+                self.backgroundSession = URLSession(configuration: cfg, delegate: self, delegateQueue: nil)
+            }
+            self.sessionInvalidating = false
+            self.lock.unlock()
+        }
     }
 
     /// 结果就绪统一出口（存 + 主动推送主线程）
