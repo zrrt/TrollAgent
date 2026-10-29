@@ -171,6 +171,19 @@ final class SubAgentManager {
             if self.activeTaskID == id { self.activeTaskID = nil }
             self.lock.unlock()
         }
+        // v7.4.0-fix73f-4：超时看门狗——loop() 的超时检查只在"发出请求前"执行，
+        // 请求异步挂住（网络卡死/上游无响应/回调丢失）时回调不来 → loop 不再被驱动 →
+        // 超时检查永不触发 → 任务永远 running（用户真机实测 timeout_secs=30 但 101s
+        // 仍 running、rounds=0、tool_trace=[] 的根因）。
+        // 看门狗独立于请求回调：deadline 到时强制中断，真正兑现超时语义。
+        DispatchQueue.global(qos: .userInitiated).asyncAfter(deadline: .now() + clampedTimeout + 5) {
+            if let t = self.tasks[id], t.isRunning() {
+                t.markFailed("timeout after \(Int(clampedTimeout))s (watchdog — request hung without callback; in-flight tool call may still finish but the task is terminated)")
+                self.lock.lock()
+                if self.activeTaskID == id { self.activeTaskID = nil }
+                self.lock.unlock()
+            }
+        }
         return id
     }
 
@@ -411,6 +424,9 @@ final class SubAgentRunner {
         let tools = wrapUpInjected ? nil : subAgentTools()
         client.send(messages: messages, tools: tools) { [weak self] result in
             guard let self = self else { return }
+            // v7.4.0-fix73f-4：看门狗已中断（markFailed）后，迟到的回调不得覆盖状态——
+            // 否则超时任务会"复活"成 done（用户实测超时后仍 running 的同类竞态）。
+            guard self.task.isRunning() else { return }
             switch result {
             case .success(let cr):
                 switch cr {
