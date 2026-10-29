@@ -1139,6 +1139,29 @@ final class ConversationStore: ObservableObject {
         sortAndSave()
     }
 
+    /// fix73j：当前会话上下文 id（子代理派发时记录，完成回传写回该会话——
+    /// appendToCurrent 的 activeConvIndex 会随用户切换会话漂移，后台完成的子代理
+    /// 回传可能写错会话，跨会话污染）。
+    func currentSessionID() -> UUID? {
+        if let id = activeConvId ?? requestSessionId { return id }
+        return selectedId
+    }
+
+    /// fix73j：按会话 id 追加消息（子代理状态卡/回传用）。
+    /// generateTitle=false 时状态卡不触发会话标题生成（否则新会话首条是
+    /// "[SUBAGENT-RUNNING]..." 会把标题污染成 JSON）。
+    func appendToSession(id: UUID, message: ChatMessage, generateTitle: Bool = true) {
+        guard let idx = conversations.firstIndex(where: { $0.id == id }) else { return }
+        var conv = conversations[idx]
+        if generateTitle, conv.messages.isEmpty {
+            conv.title = title(from: message.content)
+        }
+        conv.messages.append(message)
+        conv.updatedAt = Date()
+        conversations[idx] = conv
+        sortAndSave()
+    }
+
     /// v3.1.70：更新活动请求会话内消息内容 (无活动请求时用当前选中会话）
     func updateMessageContent(id: UUID, content: String) {
         guard let idx = activeConvIndex,

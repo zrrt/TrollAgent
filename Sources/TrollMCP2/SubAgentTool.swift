@@ -53,7 +53,9 @@ enum SubAgentPersonas {
     static let general = SubAgentPersona(
         name: "general",
         description: "通用综合任务兜底（shell/文件/设备/联网/技能）。",
-        tools: ["shell.exec", "artifact", "device", "web.search", "web.fetch", "skills.read"],
+        // fix73j-审计：原 "device" 是前缀匹配（hasPrefix("device.")），会把 device.fake
+        // /device.keychain_wipe/device.restore 等高危工具一起放行——改为精确 "device.info"。
+        tools: ["shell.exec", "artifact", "device.info", "web.search", "web.fetch", "skills.read"],
         systemPrompt: "",
         defaultRounds: 12, defaultTimeout: 180)
     static let all: [SubAgentPersona] = [webResearcher, appAuditor, shellWorker, general]
@@ -121,6 +123,8 @@ final class SubAgentTask: Identifiable {
     private let stateLock = NSLock()
     /// fix73j：身份名（agent_type），详情页/回传展示用
     private(set) var personaName: String
+    /// fix73j：派发时的会话 id——回传写回该会话（防用户切换会话后跨会话污染）
+    let sessionID: UUID?
     /// fix73j：轨迹快照（终态时从 runner 导出，供详情页回看）——[{role, content, tool}]
     private(set) var trace: [[String: Any]] = []
     private(set) var hasTrace = false
@@ -131,13 +135,14 @@ final class SubAgentTask: Identifiable {
     /// 看门狗共用，status 轮询路径检查它，解决"time_left_secs 归零也不 abort"。
     let deadlineDate: Date
     init(id: String, instruction: String, maxRounds: Int, timeoutSecs: TimeInterval,
-         personaName: String = "general") {
+         personaName: String = "general", sessionID: UUID? = nil) {
         self.id = id
         self.instruction = instruction
         self.maxRounds = maxRounds
         self.timeoutSecs = timeoutSecs
         self.deadlineDate = Date().addingTimeInterval(timeoutSecs)
         self.personaName = personaName
+        self.sessionID = sessionID
         self.status = .running
         self.createdAt = Date()
         self.rounds = 0
@@ -148,43 +153,55 @@ final class SubAgentTask: Identifiable {
     }
 
     func markDone(result: String) {
-        stateLock.lock(); defer { stateLock.unlock() }
+        stateLock.lock()
+        // fix73j：幂等——终态后不再改（watchdog 与 status 软超时竞态窗口防双重回传）
+        guard status == .running else { stateLock.unlock(); return }
         status = .done
         // 防结果撑爆主线：截断到 4000 字符（子代理最终总结应简短，超长说明模型把工具输出写进了总结）
         self.result = result.count > 4000 ? String(result.prefix(4000)) + "\n... [result truncated]" : result
         // v7.1.107-P0: 空总结 = 无交付——父模型拿到后知道要去子代理轨迹里挖结果
         noDeliverable = result.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty
         elapsed = Date().timeIntervalSince(createdAt)
+        stateLock.unlock()
+        // fix73j：finalize 移出持锁区间——traceSnapshotFor 内部取 manager.lock，
+        // 若在 stateLock 内调用会与 status/stop 的 manager.lock→stateLock 反向死锁。
         finalizeSubAgent()
     }
 
     func markFailed(_ err: String) {
-        stateLock.lock(); defer { stateLock.unlock() }
+        stateLock.lock()
+        guard status == .running else { stateLock.unlock(); return }
         status = .failed
         error = err
         elapsed = Date().timeIntervalSince(createdAt)
+        stateLock.unlock()
         finalizeSubAgent()
     }
 
     func markStopped() {
-        stateLock.lock(); defer { stateLock.unlock() }
+        stateLock.lock()
+        guard status == .running else { stateLock.unlock(); return }
         status = .stopped
         elapsed = Date().timeIntervalSince(createdAt)
+        stateLock.unlock()
         finalizeSubAgent()
     }
 
     /// v7.4.0-fix73d：后台挂起中断——区别于 failed（误报）与 stopped（用户手动），
     /// 语义 = "app 切后台窗口耗尽，请求被冻结中断"，父模型应重新派发而非诊断失败。
     func markInterrupted() {
-        stateLock.lock(); defer { stateLock.unlock() }
+        stateLock.lock()
+        guard status == .running else { stateLock.unlock(); return }
         status = .interrupted
         error = "interrupted by app backgrounding (background window expired) — re-dispatch to resume"
         elapsed = Date().timeIntervalSince(createdAt)
+        stateLock.unlock()
         finalizeSubAgent()
     }
 
     /// fix73j：任务终态统一收尾——轨迹快照 + 完成回传 + 释放 runner。
-    /// 必须在 stateLock 已持有的路径内调用（mark* 内）。
+    /// 必须在 stateLock 释放后调用（mark* 已重构为"锁内改状态 + 锁外 finalize"，
+    /// 防 traceSnapshotFor 取 manager.lock 与 status/stop 的 manager.lock→stateLock 反向死锁）。
     /// 回传 = user 消息（API 序列合法，主 agent 下一轮请求必然携带；
     /// UI 检测 [SUBAGENT-DONE] 前缀渲染为可点开的子代理完成卡）。
     private func finalizeSubAgent() {
@@ -212,7 +229,11 @@ final class SubAgentTask: Identifiable {
             var m = ChatMessage(role: "user", content: content)
             m.toolTitle = "子代理 \(self.id) · \(self.personaName) \(SubAgentStatusText.zh(self.status.rawValue))"
             m.toolName = "subagent.complete"
-            ConversationStore.shared.appendToCurrent(m)
+            if let sid = self.sessionID {
+                ConversationStore.shared.appendToSession(id: sid, message: m, generateTitle: false)
+            } else {
+                ConversationStore.shared.appendToCurrent(m)
+            }
         }
         // 3) fix73i：任务终态 → 释放 runner 保活引用（异步，幂等）
         SubAgentManager.shared.releaseRunner(id: id)
@@ -327,10 +348,30 @@ final class SubAgentManager {
         DispatchQueue.global(qos: .utility).async { [weak self] in
             guard let self = self else { return }
             self.lock.lock()
-            self.runners.removeValue(forKey: id)
-            self.runningCount = max(0, self.runningCount - 1)
+            // fix73j：仅当 removeValue 命中非 nil 才归还配额——无条件递减会在
+            // releaseRunner 重复调用（watchdog/软超时/stop 多路径）时多减，
+            // 导致 runningCount 失真、上限 4 失效。
+            if self.runners.removeValue(forKey: id) != nil {
+                self.runningCount = max(0, self.runningCount - 1)
+            }
             self.lock.unlock()
+            self.trimFinishedTasks()
         }
+    }
+
+    /// fix73j：终态任务保留上限——tasks 字典从不清理会让内存无限膨胀
+    /// （每个终态任务 trace 可达 200 条×2000 字符）。保留最近 maxRetainedTasks
+    /// 个终态任务（按 deadlineDate 即开始时间，最早先淘汰）；running 任务不受影响。
+    private static let maxRetainedTasks = 20
+    private func trimFinishedTasks() {
+        lock.lock()
+        let finished = tasks.filter { !$0.value.isRunning() }
+        if finished.count > SubAgentManager.maxRetainedTasks {
+            let sorted = finished.sorted { $0.value.deadlineDate < $1.value.deadlineDate }
+            let overflow = sorted.prefix(finished.count - SubAgentManager.maxRetainedTasks)
+            for (id, _) in overflow { tasks.removeValue(forKey: id) }
+        }
+        lock.unlock()
     }
 
     /// fix73j：终态时取 runner 当前 messages 快照（详情页回看轨迹用）。
@@ -348,7 +389,8 @@ final class SubAgentManager {
     /// v7.1.108-fix: Result<String,String> 改为 throws——Swift 要求 Result.Failure: Error，
     /// String 不满足协议，这是子代理系列构建失败的根因。
     func start(instruction: String, allowedTools: [String]?, maxRounds: Int,
-               timeout: TimeInterval, personaName: String = "general") throws -> String {
+               timeout: TimeInterval, personaName: String = "general",
+               sessionID: UUID? = nil) throws -> String {
         lock.lock()
         if runningCount >= SubAgentManager.maxConcurrentSubagents {
             lock.unlock()
@@ -361,7 +403,7 @@ final class SubAgentManager {
         let clampedTimeout = max(30, min(timeout, 600))
         let task = SubAgentTask(id: id, instruction: instruction,
                                 maxRounds: clampedRounds, timeoutSecs: clampedTimeout,
-                                personaName: persona.name)
+                                personaName: persona.name, sessionID: sessionID)
         tasks[id] = task
         lock.unlock()
 
@@ -865,9 +907,11 @@ final class SubAgentRunTool: MCPTool {
             if let s = params["timeout_secs"] as? String, let d = Double(s) { return d }
             return persona.defaultTimeout
         }()
+        // fix73j：记录派发时的会话 id——回传写回该会话（用户切换会话不污染）
+        let sessionID = ConversationStore.shared.currentSessionID()
         let id = try SubAgentManager.shared.start(instruction: instruction, allowedTools: wl,
                                                   maxRounds: rounds, timeout: timeout,
-                                                  personaName: persona.name)
+                                                  personaName: persona.name, sessionID: sessionID)
         // fix73j：主界面立即可见"执行中"卡（派发即上屏，完成时再补 [SUBAGENT-DONE] 完成卡）
         let runningBody: [String: Any] = [
             "ok": true, "task_id": id, "agent_type": persona.name,
@@ -879,7 +923,11 @@ final class SubAgentRunTool: MCPTool {
             var m = ChatMessage(role: "user", content: runningContent)
             m.toolTitle = "子代理 \(id) · \(persona.name) \(SubAgentStatusText.zh("running"))"
             m.toolName = "subagent.running"
-            ConversationStore.shared.appendToCurrent(m)
+            if let sid = sessionID {
+                ConversationStore.shared.appendToSession(id: sid, message: m, generateTitle: false)
+            } else {
+                ConversationStore.shared.appendToCurrent(m)
+            }
         }
         return ["ok": true, "task_id": id, "agent_type": persona.name,
                 "message": "subagent \(id) (\(persona.name)) started. Poll with subagent.status task_id=\(id); steer with subagent.steer task_id=\(id); stop with subagent.stop task_id=\(id). Completion is pushed back as a card in the conversation."]

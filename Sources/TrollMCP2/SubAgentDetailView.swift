@@ -30,6 +30,8 @@ struct SubAgentDetailView: View {
     let fallbackJSON: String?
     @Environment(\.dismiss) private var dismiss
     @State private var task: SubAgentTask?
+    // fix73j：运行中打开详情页 → 2s 轮询刷新（实时进度；终态后自动停止）
+    @State private var pollTimer: Timer?
 
     var body: some View {
         NavigationView {
@@ -58,7 +60,25 @@ struct SubAgentDetailView: View {
             }
         }
         .navigationViewStyle(.stack)
-        .onAppear { task = SubAgentManager.shared.status(id: taskID) }
+        .onAppear {
+            refresh()
+            pollTimer = Timer.scheduledTimer(withTimeInterval: 2.0, repeats: true) { _ in
+                DispatchQueue.main.async { self.refresh() }
+            }
+        }
+        .onDisappear {
+            pollTimer?.invalidate()
+            pollTimer = nil
+        }
+    }
+
+    private func refresh() {
+        let t = SubAgentManager.shared.status(id: taskID)
+        task = t
+        if let t, !t.isRunning() {
+            pollTimer?.invalidate()
+            pollTimer = nil
+        }
     }
 
     // MARK: - 完整任务视图（内存中有 task，含轨迹快照）
@@ -77,7 +97,7 @@ struct SubAgentDetailView: View {
     // MARK: - 回退视图（重启后 tasks 丢失，仅消息内摘要）
 
     private func fallbackContent(_ d: [String: Any]) -> some View {
-        let status = d["status"] as? String ?? "?"
+        let status = SubAgentStatusText.zh(d["status"] as? String ?? "?")
         let agent = d["agent_type"] as? String ?? "?"
         let rounds = d["rounds"] as? Int ?? 0
         let elapsed = d["elapsed_secs"] as? Int ?? 0

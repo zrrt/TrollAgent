@@ -1958,7 +1958,8 @@ struct MessageBubble: View {
             .replacingOccurrences(of: "\n", with: " ")
         let summary: String
         if isRunning {
-            summary = "\(agent) · \(rounds) 轮 · \(elapsed)s"
+            // 运行中卡不显示假的"0 轮 · 0s"——派发即上屏，进度请看详情页（实时轮询）
+            summary = "\(agent) · 已派发，点击查看实时进度"
         } else {
             summary = "\(agent) · \(rounds) 轮 · \(elapsed)s\(result.map { " · " + String($0.prefix(60)) } ?? "")"
         }
