@@ -34,11 +34,15 @@ final class SubAgentTask: Identifiable {
 
     enum Status: String { case running, done, failed, stopped, interrupted }
 
+    /// v7.4.0-fix73f-7：绝对截止时刻（createdAt + timeoutSecs）——status 软超时与
+    /// 看门狗共用，status 轮询路径检查它，解决"time_left_secs 归零也不 abort"。
+    let deadlineDate: Date
     init(id: String, instruction: String, maxRounds: Int, timeoutSecs: TimeInterval) {
         self.id = id
         self.instruction = instruction
         self.maxRounds = maxRounds
         self.timeoutSecs = timeoutSecs
+        self.deadlineDate = Date().addingTimeInterval(timeoutSecs)
         self.status = .running
         self.createdAt = Date()
         self.rounds = 0
@@ -207,6 +211,13 @@ final class SubAgentManager {
     func status(id: String) -> SubAgentTask? {
         lock.lock()
         defer { lock.unlock() }
+        // v7.4.0-fix73f-7：软超时——status 是父模型轮询路径，必然高频执行。
+        // 看门狗（asyncAfter）若因任何原因未触发（全局队列繁忙/时序偏差），
+        // 这里在到点后首次轮询即强制中断，杜绝"time_left 归零仍 running"。
+        if let t = tasks[id], t.isRunning(), Date() >= t.deadlineDate {
+            t.markFailed("timeout after \(Int(t.timeoutSecs))s (checked on status poll — request did not complete in time)")
+            if activeTaskID == id { activeTaskID = nil }
+        }
         return tasks[id]
     }
 

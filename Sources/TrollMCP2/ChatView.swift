@@ -524,15 +524,19 @@ struct ChatView: View {
         ScrollViewReader { proxy in
             ZStack(alignment: .bottomTrailing) {
                 ScrollView {
+                    // v7.4.0-fix73f-7：滚动偏移上报——顶部 marker 移出 LazyVStack。
+                    // 原实现 marker 在 LazyVStack 第一行：初始滚到底部时 marker 不在视口
+                    // → LazyVStack 惰性不渲染 → preference 永不触发 → chatScrollOffset 永远 0
+                    // → chatCanScrollUp(offset<-2) 永不成立 → ↑ 按钮永不显示（用户实测根因）。
+                    // ScrollView 直接子视图非惰性（始终渲染），offset 随滚动一直更新。
+                    // frame(in: .named("chatScroll")).minY：顶部时=0，向下滚为负。
+                    GeometryReader { geo in
+                        Color.clear.preference(
+                            key: ChatScrollOffsetKey.self,
+                            value: geo.frame(in: .named("chatScroll")).minY)
+                    }
+                    .frame(height: 0)
                     LazyVStack(spacing: 12) {
-                        // v7.4.0-fix73e：滚动偏移上报——顶部透明 marker（高度 0，不撑内容）。
-                        // frame(in: .named("chatScroll")).minY：顶部时=0，向下滚为负。
-                        GeometryReader { geo in
-                            Color.clear.preference(
-                                key: ChatScrollOffsetKey.self,
-                                value: geo.frame(in: .named("chatScroll")).minY)
-                        }
-                        .frame(height: 0)
                         // v7.2.3-fix20：连续工具折叠——相邻已完成工具消息聚合成组，
                         // 组默认一行"运行了 N 个工具"，展开显示各工具卡
                         ForEach(ChatListGrouping.group(store.currentMessages), id: \.id) { item in
