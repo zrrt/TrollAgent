@@ -60,6 +60,8 @@ final class SubAgentTask: Identifiable {
         // v7.1.107-P0: 空总结 = 无交付——父模型拿到后知道要去子代理轨迹里挖结果
         noDeliverable = result.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty
         elapsed = Date().timeIntervalSince(createdAt)
+        // fix73i：任务终态 → 释放 runner 保活引用（异步，幂等）
+        SubAgentManager.shared.releaseRunner(id: id)
     }
 
     func markFailed(_ err: String) {
@@ -67,12 +69,16 @@ final class SubAgentTask: Identifiable {
         status = .failed
         error = err
         elapsed = Date().timeIntervalSince(createdAt)
+        // fix73i：任务终态 → 释放 runner 保活引用（异步，幂等）
+        SubAgentManager.shared.releaseRunner(id: id)
     }
 
     func markStopped() {
         stateLock.lock(); defer { stateLock.unlock() }
         status = .stopped
         elapsed = Date().timeIntervalSince(createdAt)
+        // fix73i：任务终态 → 释放 runner 保活引用（异步，幂等）
+        SubAgentManager.shared.releaseRunner(id: id)
     }
 
     /// v7.4.0-fix73d：后台挂起中断——区别于 failed（误报）与 stopped（用户手动），
@@ -82,6 +88,8 @@ final class SubAgentTask: Identifiable {
         status = .interrupted
         error = "interrupted by app backgrounding (background window expired) — re-dispatch to resume"
         elapsed = Date().timeIntervalSince(createdAt)
+        // fix73i：任务终态 → 释放 runner 保活引用（异步，幂等）
+        SubAgentManager.shared.releaseRunner(id: id)
     }
 
     /// v7.4.0-fix73d：标记"可能被后台挂起"（窗口耗尽时对所有 running 任务设置）
@@ -175,7 +183,24 @@ final class SubAgentManager {
     /// v7.1.107-P0: steer 方向修正队列——父模型可运行中给子代理注入新指令，
     /// 在循环边界以"用户消息"送达（对齐 OpenMinis pendingSteerMessages 语义）
     private var pendingSteers: [String: [String]] = [:]
+    /// v7.4.1-fix73i：runner 强引用保活——run() 里首轮 client.send 是异步的，loop() 直接返回，
+    /// 若无强引用，GCD 闭包结束后 runner 被释放 → completion 闭包的 [weak self] 失效 → 执行链
+    /// 永久丢失（markSendReplied/execute/下一轮全部不执行 → send_state 卡 sent、rounds 恒 0、
+    /// 只能等 watchdog 兜底，用户实测 7.1.215 子代理"能启动但跑不起来"的根因）。
+    /// 任务达到终态（done/failed/stopped/interrupted）由 releaseRunner 异步移除。
+    private var runners: [String: SubAgentRunner] = [:]
     private let lock = NSLock()
+
+    /// fix73i：任务终态后释放 runner（异步——mark* 可能在 manager.lock / stateLock 持锁路径
+    /// 调用，同步移除会重入 NSLock 死锁；幂等，重复调用无害）。
+    func releaseRunner(id: String) {
+        DispatchQueue.global(qos: .utility).async { [weak self] in
+            guard let self = self else { return }
+            self.lock.lock()
+            self.runners.removeValue(forKey: id)
+            self.lock.unlock()
+        }
+    }
 
     /// 启动子代理。成功返回 task_id；已有任务在跑则 throw（模型应轮询/停止旧任务）。
     /// v7.1.108-fix: Result<String,String> 改为 throws——Swift 要求 Result.Failure: Error，
@@ -198,6 +223,9 @@ final class SubAgentManager {
 
         let runner = SubAgentRunner(task: task, allowedTools: allowedTools,
                                     maxRounds: clampedRounds, timeout: clampedTimeout)
+        // v7.4.1-fix73i：强引用保活 runner（见 runners 注释）——否则首轮 send 后即释放，
+        // 执行链断在起点。
+        runners[id] = runner
         // v7.4.0-fix73g：注册真 abort——watchdog/软超时/stop 到点 cancel 在途请求，
         // 弱引用防循环；幂等（cancelInflight 内部置空 client，重复调用无害）。
         cancellers[id] = { [weak runner] in runner?.cancelInflight() }
@@ -207,6 +235,9 @@ final class SubAgentManager {
             if self.activeTaskID == id { self.activeTaskID = nil }
             // v7.4.0-fix73g：任务结束（正常/中止）清理 abort 处理器，防字典残留
             self.cancellers.removeValue(forKey: id)
+            // fix73i：注意——不在这里移除 runners！run() 返回时首轮请求往往还在途，
+            // completion 回调依赖 runner 存活续跑执行链；runner 由任务终态（markDone/
+            // markFailed/markStopped/markInterrupted → releaseRunner）统一释放。
             self.lock.unlock()
         }
         // v7.4.0-fix73f-4：超时看门狗——loop() 的超时检查只在"发出请求前"执行，
