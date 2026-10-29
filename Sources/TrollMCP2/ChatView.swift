@@ -522,18 +522,17 @@ struct ChatView: View {
 
     private var messageList: some View {
         ScrollViewReader { proxy in
-            GeometryReader { outer in
-                ZStack(alignment: .bottomTrailing) {
-                    ScrollView {
-                        LazyVStack(spacing: 12) {
-                            // v7.4.0-fix73e：滚动偏移上报——顶部透明 marker（高度 0，不撑内容）。
-                            // frame(in: .named("chatScroll")).minY：顶部时=0，向下滚为负。
-                            GeometryReader { geo in
-                                Color.clear.preference(
-                                    key: ChatScrollOffsetKey.self,
-                                    value: geo.frame(in: .named("chatScroll")).minY)
-                            }
-                            .frame(height: 0)
+            ZStack(alignment: .bottomTrailing) {
+                ScrollView {
+                    LazyVStack(spacing: 12) {
+                        // v7.4.0-fix73e：滚动偏移上报——顶部透明 marker（高度 0，不撑内容）。
+                        // frame(in: .named("chatScroll")).minY：顶部时=0，向下滚为负。
+                        GeometryReader { geo in
+                            Color.clear.preference(
+                                key: ChatScrollOffsetKey.self,
+                                value: geo.frame(in: .named("chatScroll")).minY)
+                        }
+                        .frame(height: 0)
                         // v7.2.3-fix20：连续工具折叠——相邻已完成工具消息聚合成组，
                         // 组默认一行"运行了 N 个工具"，展开显示各工具卡
                         ForEach(ChatListGrouping.group(store.currentMessages), id: \.id) { item in
@@ -600,96 +599,98 @@ struct ChatView: View {
                             }
                         }
                     }
-                }
-                // v3.4.0：去掉整行水平 padding —— AI 气泡改为真正占满左右屏边缘；
-                // 用户气泡的右留白由 MessageBubble 内部按 isUser 处理
-                            // v7.4.0-fix73e：内容总高上报——底部透明 marker（高度 0，在滚动内容末尾）。
-                            // minY = 滚动偏移 + 内容总高，onPreferenceChange 里减去 offset 得真实内容高。
-                            // 废弃原 .background(GeometryReader) 方案（greedy 撑坏 ScrollView 约束）。
-                            GeometryReader { geo in
-                                Color.clear.preference(
-                                    key: ChatContentHeightKey.self,
-                                    value: geo.frame(in: .named("chatScroll")).minY)
-                            }
-                            .frame(height: 0)
+                        // v7.4.0-fix73e：内容总高上报——底部透明 marker（高度 0，在滚动内容末尾）。
+                        // minY = 滚动偏移 + 内容总高，onPreferenceChange 里减去 offset 得真实内容高。
+                        GeometryReader { geo in
+                            Color.clear.preference(
+                                key: ChatContentHeightKey.self,
+                                value: geo.frame(in: .named("chatScroll")).minY)
                         }
-                        // v3.4.0：去掉整行水平 padding —— AI 气泡改为真正占满左右屏边缘；
-                        // 用户气泡的右留白由 MessageBubble 内部按 isUser 处理
-                        .padding(.vertical, 12)
+                        .frame(height: 0)
                     }
+                    // v3.4.0：去掉整行水平 padding —— AI 气泡改为真正占满左右屏边缘；
+                    // 用户气泡的右留白由 MessageBubble 内部按 isUser 处理
+                    .padding(.vertical, 12)
+                }
                 .coordinateSpace(name: "chatScroll")
                 // 点击聊天区空白处收起键盘（v2.9.9）
                 .simultaneousGesture(
                     TapGesture().onEnded { dismissKeyboard() }
                 )
                 // v7.4.0-fix73e：悬浮按钮滚动量防抖——滚动中 offset 每帧都在变，
-                // 直接写 @State 会高频触发 body 重渲染（滚动停止后浮点微差仍可能抖动触发）。
-                // 阈值 <0.5pt 忽略，仅在跨过显示矩阵边界时更新，杜绝"滚动 → 重渲染 → 再滚动"循环。
+                // 阈值 <0.5pt 忽略，仅在跨过显示矩阵边界时更新。
                 .onPreferenceChange(ChatScrollOffsetKey.self) { v in
                     if abs(v - chatScrollOffset) > 0.5 {
                         chatScrollOffset = v
                     }
                 }
                 .onPreferenceChange(ChatContentHeightKey.self) { v in
-                    // 底部 marker 的 minY = 滚动偏移 + 内容总高 → 内容高 = v - offset
                     let h = v - chatScrollOffset
                     if abs(h - chatContentHeight) > 0.5 {
                         chatContentHeight = h
                     }
                 }
+                // v7.4.0-fix73e：视口高度测量——透明占位 + overlay GeometryReader。
+                // 不参与布局（不撑大 ScrollView 约束，修复滚动回环根因）。
+                Color.clear
+                    .overlay(GeometryReader { geo in
+                        Color.clear
+                            .onAppear { chatViewportHeight = geo.size.height }
+                            .onChange(of: geo.size.height) { chatViewportHeight = $0 }
+                    })
                 // v7.4.0-fix73d：悬浮滚动按钮（对齐 Minis 显示矩阵：顶部只显 down、中间 up+down、底部全隐）
-                VStack(spacing: 10) {
-                    if chatCanScrollUp && chatCanScrollDown {
-                        chatFloatingButton("arrow.up") {
-                            if let first = store.currentMessages.first {
-                                withAnimation { proxy.scrollTo(first.id, anchor: .top) }
-                            }
-                        }
-                    }
-                    if chatCanScrollDown {
-                        chatFloatingButton("arrow.down") { scrollToBottom(proxy) }
-                    }
+                floatingButtons(proxy)
+            }
+            .onChange(of: store.currentMessages.count) { _ in
+                if let last = store.currentMessages.last {
+                    withAnimation { proxy.scrollTo(last.id, anchor: .bottom) }
                 }
-                .padding(.trailing, 12)
-                .padding(.bottom, 14)
             }
-            // v7.4.0-fix73e：视口高度由外层 GeometryReader 测量（ZStack 尺寸 = 视口）。
-            // 原 background(GeometryReader) 方案是 greedy 视图——作为 ScrollView 的 background
-            // 会把 ScrollView 高度约束撑到父容器满，导致滚动范围被错误放大（用户实测：
-            // "上滑顶部无法上滑、无限向下一点回环"）——已废弃。
-            .onAppear { chatViewportHeight = outer.size.height }
-            .onChange(of: outer.size.height) { chatViewportHeight = $0 }
-        }
-        .onChange(of: store.currentMessages.count) { _ in
-            if let last = store.currentMessages.last {
-                withAnimation { proxy.scrollTo(last.id, anchor: .bottom) }
+            // v2.9.12：打开/切换会话时自动滚到底（老会话不再停在顶部）
+            .onAppear { scrollToBottom(proxy) }
+            .onChange(of: store.selectedId) { _ in
+                scrollToBottom(proxy)
             }
-        }
-        // v2.9.12：打开/切换会话时自动滚到底（老会话不再停在顶部）
-        .onAppear { scrollToBottom(proxy) }
-        .onChange(of: store.selectedId) { _ in
-            scrollToBottom(proxy)
-        }
-        // v2.9.72：AI 回复完成时结束工作流
-        .onChange(of: store.isLoading) { loading in
-            if !loading {
-                WorkflowManager.shared.finishRun(success: true)
+            // v2.9.72：AI 回复完成时结束工作流
+            .onChange(of: store.isLoading) { loading in
+                if !loading {
+                    WorkflowManager.shared.finishRun(success: true)
+                }
+                // v7.1.109-peers：请求完成 → 刷新上下文环形指示器（records 读文件，仅此刻读一次）
+                if !loading { refreshRingTok() }
             }
-            // v7.1.109-peers：请求完成 → 刷新上下文环形指示器（records 读文件，仅此刻读一次）
-            if !loading { refreshRingTok() }
-        }
-        .onAppear { refreshRingTok() }
-        // v2.9.235：键盘高度变化→自动滚到底（高度本身由外层 VStack 监听，空会话也能避让键盘）
-        .onChange(of: keyboardHeight) { _ in
-            if keyboardHeight > 0 {
-                DispatchQueue.main.asyncAfter(deadline: .now() + 0.3) {
-                    if let last = store.currentMessages.last {
-                        proxy.scrollTo(last.id, anchor: .bottom)
+            .onAppear { refreshRingTok() }
+            // v2.9.235：键盘高度变化→自动滚到底（高度本身由外层 VStack 监听，空会话也能避让键盘）
+            .onChange(of: keyboardHeight) { _ in
+                if keyboardHeight > 0 {
+                    DispatchQueue.main.asyncAfter(deadline: .now() + 0.3) {
+                        if let last = store.currentMessages.last {
+                            proxy.scrollTo(last.id, anchor: .bottom)
+                        }
                     }
                 }
             }
         }
     }
+
+    // v7.4.0-fix73d：悬浮按钮（独立函数——减主表达式 type-check 负担）
+    private func floatingButtons(_ proxy: ScrollViewProxy) -> some View {
+        VStack(spacing: 10) {
+            if chatCanScrollUp && chatCanScrollDown {
+                chatFloatingButton("arrow.up") {
+                    if let first = store.currentMessages.first {
+                        withAnimation { proxy.scrollTo(first.id, anchor: .top) }
+                    }
+                }
+            }
+            if chatCanScrollDown {
+                chatFloatingButton("arrow.down") { scrollToBottom(proxy) }
+            }
+        }
+        .padding(.trailing, 12)
+        .padding(.bottom, 14)
+    }
+
     // v7.4.0-fix73d：悬浮按钮显示条件——Minis 矩阵：up 只在"中间"（可上可下）显示，
     // down 只在"非底部"（可下）显示；底部两者全隐，顶部只显 down
     private var chatCanScrollUp: Bool {
