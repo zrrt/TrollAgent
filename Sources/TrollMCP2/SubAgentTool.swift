@@ -440,6 +440,13 @@ final class SubAgentManager {
         lock.unlock()
         for t in running { t.markBackgroundSuspended() }
     }
+
+    /// fix73j：全部 running 任务 id（subagent.wait_all 省略 task_ids 时等待的对象）。
+    /// 锁序 manager.lock → stateLock（与 terminateWithAbort 一致，无反向路径）。
+    func allRunningTaskIDs() -> [String] {
+        lock.lock(); defer { lock.unlock() }
+        return tasks.compactMap { $0.value.isRunning() ? $0.key : nil }
+    }
 }
 
 // MARK: - 子代理执行循环（隔离会话 + 工具循环，独立于主 runLoop，不碰主线状态）
@@ -800,7 +807,7 @@ final class SubAgentRunner {
 final class SubAgentRunTool: MCPTool {
     let definition = ToolDefinition(
         name: "subagent.run",
-        summary: "Delegate a self-contained task to an isolated subagent that runs its own tool loop in a separate context (won't pollute the main conversation). Use for: long multi-step dirty work — batch file analysis, multi-file audits, repetitive processing, web research chains. Don't use for: quick single calls (call the tool directly). Params: instruction(required), agent_type(optional persona: web-researcher/app-auditor/shell-worker/general, default general — pick by task semantics), tools(optional comma-separated whitelist), max_rounds(optional default 12 max 30), timeout_secs(optional default 180 max 600). Up to 4 subagents can run concurrently; completion is pushed back to the main conversation as a tappable card. Returns task_id immediately (async); poll with subagent.status until status=done, stop with subagent.stop if it misbehaves.",
+        summary: "Delegate a self-contained task to an isolated subagent that runs its own tool loop in a separate context (won't pollute the main conversation). Use for: long multi-step dirty work — batch file analysis, multi-file audits, repetitive processing, web research chains. Don't use for: quick single calls (call the tool directly). Params: instruction(required), agent_type(optional persona: web-researcher/app-auditor/shell-worker/general, default general — pick by task semantics), tools(optional comma-separated whitelist), max_rounds(optional default 12 max 30), timeout_secs(optional default 180 max 600). Up to 4 subagents can run concurrently; completion is pushed back to the main conversation as a tappable card. After dispatching several subagents, call subagent.wait_all (task_ids=...) to block until they all finish, then synthesize their consolidated results — do NOT summarize from partial results while any subagent is still running. Returns task_id immediately (async); poll with subagent.status until status=done, stop with subagent.stop if it misbehaves.",
         parameters: [
             "instruction": "The complete task to execute (required). Be specific about the goal, inputs, and expected output format.",
             "agent_type": "Optional subagent persona: web-researcher (multi-source web research, cite URLs), app-auditor (read-only app reverse/audit: decrypt/entitlements/symbols/deps/cache), shell-worker (batch file/script dirty work), general (default all-round). Pick the persona matching the task; default general.",
@@ -881,6 +888,67 @@ final class SubAgentStopTool: MCPTool {
             return ["ok": true, "task_id": id, "status": "stopped"]
         }
         return ["ok": false, "message": "task \(id) not running (already finished/stopped or unknown id)"]
+    }
+}
+
+/// fix73j：阻塞等待所有指定子代理完成并返回汇总——主 agent 派发多个子代理后
+/// 用此工具同步等待，避免"还有子代理在跑就提前总结"（用户需求：主会话等齐
+/// 所有子代理结果再统一总结）。轮询由本工具实现，不依赖主 agent 轮询纪律。
+final class SubAgentWaitAllTool: MCPTool {
+    let definition = ToolDefinition(
+        name: "subagent.wait_all",
+        summary: "Block until all specified subagent tasks reach a terminal state, then return a consolidated summary of every result. Use for: after dispatching multiple subagents, when the main agent needs ALL their results to synthesize a final answer — call this INSTEAD of summarizing from partial results. Params: task_ids(optional comma-separated; omit = wait for ALL currently running subagents), timeout_secs(optional default 180, max 600). Returns each task's status/rounds/elapsed/result-or-error; tasks still running when the timeout hits are reported with status=running so you can decide whether to keep waiting or summarize partial results.",
+        parameters: [
+            "task_ids": "Optional comma-separated task ids to wait for (e.g. 'ABCD1234,EFGH5678'). Omit to wait for all currently running subagents.",
+            "timeout_secs": "Optional max wait seconds (default 180, max 600).",
+        ],
+        verified: true, category: "system")
+
+    func invoke(_ params: [String: Any]) throws -> [String: Any] {
+        // 解析 task_ids（省略 = 等待全部 running）
+        var ids: [String]
+        if let raw = params["task_ids"] as? String,
+           !raw.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty {
+            ids = raw.split(separator: ",").map { $0.trimmingCharacters(in: .whitespacesAndNewlines) }
+                .filter { !$0.isEmpty }
+        } else {
+            ids = SubAgentManager.shared.allRunningTaskIDs()
+        }
+        guard !ids.isEmpty else {
+            return ["ok": true, "all_complete": true, "subagents": [],
+                    "message": "no subagent tasks to wait for"]
+        }
+        let timeout: TimeInterval = {
+            if let d = params["timeout_secs"] as? Double { return d }
+            if let i = params["timeout_secs"] as? Int { return Double(i) }
+            if let s = params["timeout_secs"] as? String, let d = Double(s) { return d }
+            return 180
+        }()
+        let clamped = max(5, min(timeout, 600))
+        let deadline = Date().addingTimeInterval(clamped)
+        let start = Date()
+        var summaries: [[String: Any]] = []
+        var allComplete = false
+        while Date() < deadline {
+            let tasks = ids.compactMap { SubAgentManager.shared.status(id: $0) }
+            summaries = tasks.map { $0.toDict() }
+            if tasks.isEmpty { allComplete = true; break }
+            allComplete = tasks.allSatisfy { !$0.isRunning() }
+            if allComplete { break }
+            Thread.sleep(forTimeInterval: 3)
+        }
+        let waited = Int(Date().timeIntervalSince(start))
+        let stillRunning = summaries.filter { ($0["status"] as? String) == "running" }
+        var result: [String: Any] = [
+            "ok": true,
+            "waited_secs": waited,
+            "all_complete": allComplete,
+            "subagents": summaries,
+        ]
+        if !stillRunning.isEmpty {
+            result["message"] = "\(stillRunning.count) subagent(s) still running after \(waited)s — call subagent.wait_all again to keep waiting, or summarize the partial results."
+        }
+        return result
     }
 }
 

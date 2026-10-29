@@ -1290,6 +1290,7 @@ public final class ToolRegistry: ObservableObject {
         // v7.1.107: 子代理（对齐 OpenMinis subagent_task）——委派自包含脏活到隔离会话
         register(SubAgentRunTool())
         register(SubAgentStatusTool())
+        register(SubAgentWaitAllTool())   // fix73j：阻塞等待所有子代理完成并汇总
         register(SubAgentStopTool())
         // v7.1.107-P0: 子代理 steer——运行中方向修正
         register(SubAgentSteerTool())
