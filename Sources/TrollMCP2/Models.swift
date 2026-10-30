@@ -1003,6 +1003,21 @@ final class ConversationStore: ObservableObject {
     /// v7.1.106：单槽改多槽（toolCallId → 消息 id）——真并行批会同时有多张 running 卡，
     /// 串行路径同样用此字典（每批一个 toolCallId 唯一），resolvePendingTool 按 callId 定位。
     var pendingToolMsgIDs: [String: UUID] = [:]
+    // fix73j-p5b：callId → 占位卡所在会话（append 时锚定）——resolve 不依赖 activeConvIndex
+    //（UI 会话切换会漂移，漂移时找不到占位卡 → 不落盘 → 重启误判失败，p3e 失效的候选根因）。
+    private var pendingToolConvIDs: [String: UUID] = [:]
+
+    /// fix73j-p5b：真机诊断日志（Documents/Workspace/store/diagnostic.log）——
+    /// 记录 resolve 执行/找到与否/崩溃恢复改写，用户重开后导出日志即可定位落盘断点。
+    private func diag(_ s: String) {
+        let p = storeDir + "/diagnostic.log"
+        let line = "[\(Date())] " + s + "\n"
+        if let h = try? FileHandle(forWritingTo: URL(fileURLWithPath: p)) {
+            h.seekToEndOfFile(); h.write(Data(line.utf8)); try? h.close()
+        } else {
+            try? Data(line.utf8).write(to: URL(fileURLWithPath: p), options: .atomic)
+        }
+    }
     /// v2.9.127：执行轨迹 (实时）——当前请求的 思考→工具调用→工具结果 步骤流，
     /// 请求结束时随最后一条 assistant 消息持久化 (message.trail）。
     @Published var liveTrail: [TrailStep] = []
@@ -1079,6 +1094,7 @@ final class ConversationStore: ObservableObject {
                 return
             }
             DispatchQueue.main.async {
+                self.diag("LOADED-LEGACY-JSON (JSONL 加载失败或 fallback_flag 存在)")
                 self.loadLegacy()
                 self.isLoadingData = false
             }
@@ -1190,8 +1206,12 @@ final class ConversationStore: ObservableObject {
     @discardableResult
     func updateMessage(in convId: UUID, msgId: UUID, _ transform: (inout ChatMessage) -> Void) -> Bool {
         guard let ci = conversations.firstIndex(where: { $0.id == convId }),
-              let mi = conversations[ci].messages.firstIndex(where: { $0.id == msgId }) else { return false }
+              let mi = conversations[ci].messages.firstIndex(where: { $0.id == msgId }) else {
+            diag("UPDATE-FAIL: conv=\(convId.uuidString) msg=\(msgId.uuidString) not found")
+            return false
+        }
         transform(&conversations[ci].messages[mi])
+        diag("UPDATE: conv=\(convId.uuidString) msg=\(msgId.uuidString) isRunning=\(conversations[ci].messages[mi].isRunning) contentLen=\(conversations[ci].messages[mi].content.count)")
         dirtySessions.insert(convId)
         flush()
         return true
@@ -2148,6 +2168,9 @@ final class ConversationStore: ObservableObject {
             runMsg.isRunning = true
             self.appendToCurrent(runMsg)
             self.pendingToolMsgIDs[call.id] = runMsg.id
+            // fix73j-p5b：锚定占位卡所在会话（resolve 不依赖 activeConvIndex，防 UI 切换漂移）
+            if let ci = self.activeConvIndex { self.pendingToolConvIDs[call.id] = self.conversations[ci].id }
+            self.diag("APPEND-PLACEHOLDER: call=\(call.id) conv=\(self.activeConvIndex.map { self.conversations[$0].id.uuidString } ?? "nil")")
         }
         // v3.3.4：记录工具执行耗时（UI 气泡显示，对齐 OpenMinis 步骤耗时样式）
         let toolStart = CFAbsoluteTimeGetCurrent()
@@ -2221,6 +2244,9 @@ final class ConversationStore: ObservableObject {
             runMsg.isRunning = true
             self.appendToCurrent(runMsg)
             self.pendingToolMsgIDs[call.id] = runMsg.id
+            // fix73j-p5b：锚定占位卡所在会话（resolve 不依赖 activeConvIndex，防 UI 切换漂移）
+            if let ci = self.activeConvIndex { self.pendingToolConvIDs[call.id] = self.conversations[ci].id }
+            self.diag("APPEND-PLACEHOLDER: call=\(call.id) conv=\(self.activeConvIndex.map { self.conversations[$0].id.uuidString } ?? "nil")")
         }
         self.trailStep(.running(.tool, "parallel batch", detail: calls.map { $0.name }.joined(separator: "、")))
         // 2) 分波并发执行（v7.1.108-minis：全执行不截断，≤4 个一波自动续，等价 OpenMinis
@@ -2480,13 +2506,24 @@ final class ConversationStore: ObservableObject {
     /// v3.5.10：工具结果回来后，原地更新"启动即上屏"的 running 步骤卡（同一张卡变完成/出错）。
     /// v7.1.106：按 toolCallId 定位多槽（真并行批每工具一张卡），完成后移除该槽。
     private func resolvePendingTool(callId: String, content: String, toolDuration: Double, isError: Bool, narration: String?) {
-        guard let mid = self.pendingToolMsgIDs[callId], let ci = self.activeConvIndex else {
+        guard let mid = self.pendingToolMsgIDs[callId] else {
+            self.diag("RESOLVE-FAIL: no pendingToolMsgID call=\(callId)")
             self.pendingToolMsgIDs.removeValue(forKey: callId)
             return
         }
+        // fix73j-p5b：会话锚定——优先 append 时记录的 convId，兜底 activeConvIndex
+        //（activeConvIndex 会随 UI 切换漂移，漂移时找不到占位卡 → 不落盘 → 重启误判失败）
+        var convId = self.pendingToolConvIDs[callId]
+        if convId == nil, let ci = self.activeConvIndex { convId = self.conversations[ci].id }
+        guard let cid = convId else {
+            self.diag("RESOLVE-FAIL: no convId call=\(callId)")
+            self.pendingToolMsgIDs.removeValue(forKey: callId)
+            return
+        }
+        self.diag("RESOLVE: call=\(callId) conv=\(cid.uuidString) mid=\(mid.uuidString) contentLen=\(content.count) isErr=\(isError)")
         // fix73j-p5：统一变更入口——自动标 dirty + 同步 flush（isRunning=false/结果内容
         // 立即落盘；p3e 根因：裸改不标 dirty 时 persist 增量不写任何行，杀后台重启误判失败）。
-        _ = self.updateMessage(in: self.conversations[ci].id, msgId: mid) { msg in
+        let ok = self.updateMessage(in: cid, msgId: mid) { msg in
             msg.content = content
             msg.toolDuration = toolDuration
             msg.isError = isError
@@ -2495,7 +2532,9 @@ final class ConversationStore: ObservableObject {
                 msg.toolNarration = n
             }
         }
+        self.diag("RESOLVE-DONE: call=\(callId) updated=\(ok)")
         self.pendingToolMsgIDs.removeValue(forKey: callId)
+        self.pendingToolConvIDs.removeValue(forKey: callId)
     }
 
     /// v2.9.138：动态会话状态块——设备/App/工作区/当前会话，injected system 最前
@@ -2944,10 +2983,12 @@ final class ConversationStore: ObservableObject {
     private func persistSnapshot(_ snapshot: [ChatConversation], _ dirty: Set<UUID>, sync: Bool) {
         let dir = storeDir
         let path = storeFile
+        var persistOK = false
         let work = {
             // v7.4.0-sessionstore：增量双层优先（JSONL 真源 + SQLite 索引）——
             // 只 append 新消息行 + upsert 索引行，根治全量重写 O(N²)（长会话卡顿）。
             if SessionStore.shared.persist(snapshot: snapshot, dirty: dirty) {
+                persistOK = true
                 return
             }
             // 失败可降级：回退旧全量 JSON（不丢数据）
@@ -2964,9 +3005,11 @@ final class ConversationStore: ObservableObject {
                 try? fm.moveItem(atPath: path, toPath: bak1)
             }
             try? data.write(to: URL(fileURLWithPath: path), options: .atomic)
+            persistOK = true
         }
         if sync {
             saveQueue.sync(execute: work)
+            diag("FLUSH-DONE: dirty=\(dirty.count) persistOK=\(persistOK)")
         } else {
             saveQueue.async(execute: work)
         }
@@ -2997,6 +3040,7 @@ final class ConversationStore: ObservableObject {
     }
 
     private func applyLoaded(_ decoded: [ChatConversation]) {
+        diag("LOADED-JSONL: convs=\(decoded.count) msgs=\(decoded.reduce(0) { $0 + $1.messages.count })")
         var convs = decoded.sorted { $0.updatedAt > $1.updatedAt }
         // fix73j-p5：职责拆分——applyLoaded 只做"加载 + 调崩溃恢复"；
         // 崩溃残留标记/悬空序列修补独立为 repairCrashResidue（单一职责，可单测）。
@@ -3029,6 +3073,9 @@ final class ConversationStore: ObservableObject {
                     convs[ci].messages[mi].isError = true
                     let toolName = convs[ci].messages[mi].toolName ?? ""
                     convs[ci].messages[mi].content = "⚠️ Execution interrupted: the app was terminated by the system (crash) while tool \(toolName.isEmpty ? "was running" : "「\(toolName)」was running"). Please resend the command."
+                    diag("CRASH-REWRITE: conv=\(convs[ci].id.uuidString) msg=\(convs[ci].messages[mi].id.uuidString) tool=\(toolName) wasEmpty=true")
+                } else {
+                    diag("CRASH-KEEP: conv=\(convs[ci].id.uuidString) msg=\(convs[ci].messages[mi].id.uuidString) tool=\(convs[ci].messages[mi].toolName ?? "") contentLen=\(c.count) (p3d 保护保留)")
                 }
                 cleaned = true
             }
