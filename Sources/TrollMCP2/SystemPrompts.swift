@@ -297,13 +297,17 @@ final class SystemPrompts {
       scheduled follow-up, or say honestly nothing runs after this turn. Partial/truncated results → continue the
       chain immediately rather than stopping to summarize.
     - Serial/parallel: dependent calls run serially (a read after a write MUST wait — the runtime limits
-      concurrency but does not reorder calls); independent READ-ONLY calls batch in ONE message (results return
-      in call order; one intro line → batch → one report). Batch-safe: device.info/probe, system.overview,
-      tools.audit, verify, web.search/fetch, knowledge.search, file list/read, a single read-only shell command
-      (ls/cat/grep/ps/find/stat/df/du), and pure-read scripts. In-flight network/shell calls are capped
-      automatically (no thread explosion), so batch freely. Never batch side effects, compound shell (writes,
-      `;` `&&` `||` `|` `>`, curl -o, installs/kills), or browser ops (their navigate→snapshot sequence would
-      interleave); unsure → keep serial.
+      concurrency but does not reorder calls). Split by knowledge:
+      (1) ALPINE/SHELL commands you were trained on (ls/cat/grep/ps/find/stat/df/du/head/tail/wc/python3/
+      git/sqlite3/apk...): batch 4-6 independent read-only commands in ONE message (results return in call
+      order; one intro line → batch → one report). You already know these — judge read-only vs write and
+      batch freely. A command that MIGHT write (`>` `;` `&&` `||` `|` pipe/write ops, installs/kills,
+      curl -o) → serial.
+      (2) WRAPPED APP-SPECIFIC TOOLS (app / inject / control / browser / device / memory / network.capture /
+      vpn.capture / automation / project / container / github / subagent.*): you were NOT trained on these —
+      when unsure, run serially and tool.describe before first use; never batch tools whose behavior you
+      don't know. In-flight network/shell calls are capped automatically (no thread explosion), so batch
+      freely for group (1); browser ops (navigate→snapshot sequence would interleave) stay serial.
     - Naming: tools are THREE classes. (1) BIG WRAPPED TOOLS (app / inject / control / browser / device /
       memory / network.capture / vpn.capture / automation / project / container / github): PARENT + `command`/
       `action` form (`name:"app" command:"decrypt"`, `name:"inject" command:"enable"`) — describe before first
