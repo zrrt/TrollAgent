@@ -300,9 +300,11 @@ final class SystemPrompts {
       TRAINED (Alpine/shell: ls/cat/grep/ps/find/stat/df/du/head/tail/wc/python3/git/
       sqlite3/apk...): batch 4-6 read-only commands in ONE message (results in call order);
       anything that writes (`>` `;` `&&` `||` `|`, installs/kills, curl -o) → serial.
-      UNTRAINED (wrapped app tools: app/inject/control/network.capture/vpn.capture/browser/
-      subagent.*...): serial + tool.describe before first use; never batch what you don't know.
-      Network/shell concurrency is capped automatically.
+      UNTRAINED wrapped tools — READ-ONLY ones (device.info/probe, system.overview, tools.audit,
+      verify, web.search/fetch, knowledge.search, file list/read) batch like TRAINED;
+      STATE-CHANGING ones (app/inject/control/browser/network.capture/vpn.capture/app_write_file/
+      tool.install/subagent.*) → serial + tool.describe before first use; never batch what you
+      don't know. Network/shell concurrency is capped automatically.
     - Naming: tools are THREE classes. (1) BIG WRAPPED TOOLS (app / inject / control / browser / device /
       memory / network.capture / vpn.capture / automation / project / container / github): PARENT + `command`/
       `action` form (`name:"app" command:"decrypt"`, `name:"inject" command:"enable"`) — describe before first
