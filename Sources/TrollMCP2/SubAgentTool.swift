@@ -1,4 +1,5 @@
 import Foundation
+import SQLite3
 
 // MARK: - 子代理身份注册表（v7.4.1-fix73j：对齐 Claude Code .claude/agents 声明式身份）
 /// 身份 = 预定义 {name, description, 工具集, 纪律特化}。主 agent 按任务语义选 agent_type，
@@ -169,41 +170,18 @@ final class SubAgentTask: Identifiable {
     private(set) var trace: [[String: Any]] = []
     private(set) var hasTrace = false
 
-    // MARK: - 轨迹持久化（fix73j-p5d：内存态重启丢失 → 落盘供详情页回看）
+    // MARK: - 轨迹持久化（fix73j-p5g：独立 SQLite 库 subagent_index.sqlite——
+    // 与主会话 session_index.sqlite 完全分离，经 session_id 关联主会话）
 
-    static func tracesDir() -> String {
-        let p = NSHomeDirectory().appending("/Documents/Workspace/store/subagent_traces")
-        try? FileManager.default.createDirectory(atPath: p, withIntermediateDirectories: true)
-        return p
-    }
-
-    /// 完成时落盘轨迹（原子写 + 保留最近 100 个文件）
+    /// 每轮/终态写入轨迹（覆盖式，保持当前快照语义）
     static func persistTrace(id: String, trace: [[String: Any]]) {
-        let dir = tracesDir()
-        let url = URL(fileURLWithPath: dir + "/" + id + ".json")
-        if let d = try? JSONSerialization.data(withJSONObject: trace) {
-            try? d.write(to: url, options: .atomic)
-        }
-        let fm = FileManager.default
-        let files = (try? fm.contentsOfDirectory(atPath: dir)) ?? []
-        if files.count > 100 {
-            let dated = files.compactMap { f -> (String, Date)? in
-                guard let attrs = try? fm.attributesOfItem(atPath: dir + "/" + f),
-                      let t = attrs[.modificationDate] as? Date else { return nil }
-                return (f, t)
-            }.sorted { $0.1 < $1.1 }
-            for (f, _) in dated.prefix(files.count - 100) {
-                try? fm.removeItem(atPath: dir + "/" + f)
-            }
-        }
+        SubAgentStore.shared.replaceTraces(taskID: id, trace: trace)
     }
 
-    /// 详情页重启后从文件读轨迹
+    /// 详情页读轨迹（运行中实时/重启后均从 SQLite 读）
     static func loadTrace(id: String) -> [[String: Any]]? {
-        let p = tracesDir() + "/" + id + ".json"
-        guard let d = try? Data(contentsOf: URL(fileURLWithPath: p)),
-              let o = try? JSONSerialization.jsonObject(with: d) as? [[String: Any]] else { return nil }
-        return o
+        let t = SubAgentStore.shared.loadTraces(taskID: id)
+        return t.isEmpty ? nil : t
     }
 
     enum Status: String { case running, done, failed, stopped, interrupted }
@@ -296,9 +274,12 @@ final class SubAgentTask: Identifiable {
             hasTrace = !trace.isEmpty
         }
         stateLock.unlock()
-        // fix73j-p5d：轨迹持久化——trace 是内存态（App 重启即丢，详情页重启后只剩摘要）。
-        // 落盘到 subagent_traces/<task_id>.json，详情页重启后从文件读回完整轨迹。
+        // fix73j-p5g：轨迹持久化——trace 是内存态，落盘独立 SQLite（subagent_index.sqlite），
+        // 详情页重启后从库读回完整轨迹；终态一并写入任务行。
         if hasTrace { Self.persistTrace(id: id, trace: trace) }
+        SubAgentStore.shared.finalizeTask(taskID: id, status: status.rawValue,
+                                          rounds: rounds, elapsed: elapsed,
+                                          result: result, error: error)
         // 2) 完成回传
         var payload: [String: Any] = [
             "ok": true, "task_id": id, "agent_type": personaName,
@@ -495,6 +476,9 @@ final class SubAgentManager {
                                 personaName: persona.name, sessionID: sessionID)
         tasks[id] = task
         lock.unlock()
+        // fix73j-p5g：独立 SQLite 建行（记录关联主会话 id）
+        SubAgentStore.shared.insertTask(taskID: id, sessionID: sessionID?.uuidString,
+                                        agentType: persona.name, maxRounds: clampedRounds)
 
         let runner = SubAgentRunner(task: task, allowedTools: allowedTools,
                                     maxRounds: clampedRounds, timeout: clampedTimeout,
@@ -1007,11 +991,12 @@ final class SubAgentRunner {
         }
         task.addRound(tools: executed)
         messages = msgs
-        // fix73j-p5f：实时轨迹落盘——运行中每轮结束即覆盖写文件（与 finalize 相同格式），
-        // 详情页运行中可看实时进度、重启后失效页可回看失效前的轨迹。
+        // fix73j-p5f/p5g：实时轨迹落盘——每轮结束覆盖写 SQLite（运行中详情页实时可见；
+        // 重启后失效页回看失效前轨迹）；rounds 同步更新。
         SubAgentTask.persistTrace(id: task.id, trace: messages.prefix(200).map { m in
             ["role": m.role, "content": String(m.content.prefix(2000)), "tool": m.toolName ?? ""]
         })
+        SubAgentStore.shared.touchTask(taskID: task.id, rounds: task.rounds)
         loop()
     }
 
@@ -1235,5 +1220,178 @@ final class SubAgentSteerTool: MCPTool {
             return ["ok": true, "task_id": id, "message": "steer queued for \(id) (takes effect at next loop boundary)"]
         }
         return ["ok": false, "message": "task \(id) not running (already finished/stopped or unknown id)"]
+    }
+}
+
+// MARK: - 子代理独立 SQLite 存储（fix73j-p5g）
+/// 独立库 subagent_index.sqlite——与主会话 session_index.sqlite 完全分离；
+/// subagent_tasks.session_id 关联主会话 UUID（派发时记录，支持按会话回溯）。
+/// 线程安全：FULLMUTEX + 单连接串行锁（runner 后台线程写、详情页主线程读）。
+final class SubAgentStore {
+    static let shared = SubAgentStore()
+    private var db: OpaquePointer?
+    private let lock = NSLock()
+    private let transient = unsafeBitCast(-1, to: sqlite3_destructor_type.self)
+
+    private init() {
+        let dir = NSHomeDirectory().appending("/Documents/Workspace/store")
+        try? FileManager.default.createDirectory(atPath: dir, withIntermediateDirectories: true)
+        let path = dir + "/subagent_index.sqlite"
+        var h: OpaquePointer?
+        if sqlite3_open_v2(path, &h, SQLITE_OPEN_READWRITE | SQLITE_OPEN_CREATE | SQLITE_OPEN_FULLMUTEX, nil) == SQLITE_OK {
+            db = h
+            _ = sqlite3_exec(db, "PRAGMA journal_mode=WAL;", nil, nil, nil)
+            let schema = """
+            CREATE TABLE IF NOT EXISTS subagent_tasks (
+                task_id TEXT PRIMARY KEY,
+                session_id TEXT,
+                agent_type TEXT,
+                status TEXT,
+                rounds INTEGER DEFAULT 0,
+                max_rounds INTEGER DEFAULT 0,
+                elapsed_secs REAL DEFAULT 0,
+                result TEXT DEFAULT '',
+                error TEXT DEFAULT '',
+                created_at TEXT,
+                updated_at TEXT,
+                finished_at TEXT
+            );
+            CREATE TABLE IF NOT EXISTS subagent_traces (
+                id INTEGER PRIMARY KEY AUTOINCREMENT,
+                task_id TEXT,
+                seq INTEGER,
+                role TEXT,
+                content TEXT,
+                tool TEXT
+            );
+            CREATE INDEX IF NOT EXISTS idx_sub_traces_task ON subagent_traces(task_id);
+            CREATE INDEX IF NOT EXISTS idx_sub_tasks_session ON subagent_tasks(session_id);
+            """
+            _ = sqlite3_exec(db, schema, nil, nil, nil)
+        }
+    }
+    deinit { if let db { sqlite3_close(db) } }
+
+    private func nowISO() -> String {
+        ISO8601DateFormatter().string(from: Date())
+    }
+
+    /// 派发时建行（status=running，记录关联主会话 id）
+    func insertTask(taskID: String, sessionID: String?, agentType: String, maxRounds: Int) {
+        lock.lock(); defer { lock.unlock() }
+        guard let db else { return }
+        let sql = "INSERT OR REPLACE INTO subagent_tasks (task_id,session_id,agent_type,status,rounds,max_rounds,created_at,updated_at) VALUES (?1,?2,?3,'running',0,?4,?5,?5)"
+        var stmt: OpaquePointer?
+        guard sqlite3_prepare_v2(db, sql, -1, &stmt, nil) == SQLITE_OK else { return }
+        sqlite3_bind_text(stmt, 1, (taskID as NSString).utf8String, -1, transient)
+        if let sid = sessionID {
+            sqlite3_bind_text(stmt, 2, (sid as NSString).utf8String, -1, transient)
+        } else { sqlite3_bind_null(stmt, 2) }
+        sqlite3_bind_text(stmt, 3, (agentType as NSString).utf8String, -1, transient)
+        sqlite3_bind_int(stmt, 4, Int32(maxRounds))
+        sqlite3_bind_text(stmt, 5, (nowISO() as NSString).utf8String, -1, transient)
+        sqlite3_step(stmt)
+        sqlite3_finalize(stmt)
+    }
+
+    /// 每轮结束更新 rounds（实时进度）
+    func touchTask(taskID: String, rounds: Int) {
+        lock.lock(); defer { lock.unlock() }
+        guard let db else { return }
+        let sql = "UPDATE subagent_tasks SET rounds=?2, updated_at=?3 WHERE task_id=?1"
+        var stmt: OpaquePointer?
+        guard sqlite3_prepare_v2(db, sql, -1, &stmt, nil) == SQLITE_OK else { return }
+        sqlite3_bind_text(stmt, 1, (taskID as NSString).utf8String, -1, transient)
+        sqlite3_bind_int(stmt, 2, Int32(rounds))
+        sqlite3_bind_text(stmt, 3, (nowISO() as NSString).utf8String, -1, transient)
+        sqlite3_step(stmt)
+        sqlite3_finalize(stmt)
+    }
+
+    /// 终态写入（status/result/error/elapsed/finished_at）
+    func finalizeTask(taskID: String, status: String, rounds: Int, elapsed: TimeInterval,
+                      result: String, error: String) {
+        lock.lock(); defer { lock.unlock() }
+        guard let db else { return }
+        let sql = "UPDATE subagent_tasks SET status=?2, rounds=?3, elapsed_secs=?4, result=?5, error=?6, finished_at=?7, updated_at=?7 WHERE task_id=?1"
+        var stmt: OpaquePointer?
+        guard sqlite3_prepare_v2(db, sql, -1, &stmt, nil) == SQLITE_OK else { return }
+        sqlite3_bind_text(stmt, 1, (taskID as NSString).utf8String, -1, transient)
+        sqlite3_bind_text(stmt, 2, (status as NSString).utf8String, -1, transient)
+        sqlite3_bind_int(stmt, 3, Int32(rounds))
+        sqlite3_bind_double(stmt, 4, elapsed)
+        sqlite3_bind_text(stmt, 5, (result as NSString).utf8String, -1, transient)
+        sqlite3_bind_text(stmt, 6, (error as NSString).utf8String, -1, transient)
+        sqlite3_bind_text(stmt, 7, (nowISO() as NSString).utf8String, -1, transient)
+        sqlite3_step(stmt)
+        sqlite3_finalize(stmt)
+    }
+
+    /// 覆盖式写轨迹（保持当前快照语义，防无限增长）
+    func replaceTraces(taskID: String, trace: [[String: Any]]) {
+        lock.lock(); defer { lock.unlock() }
+        guard let db else { return }
+        var del: OpaquePointer?
+        if sqlite3_prepare_v2(db, "DELETE FROM subagent_traces WHERE task_id=?1", -1, &del, nil) == SQLITE_OK {
+            sqlite3_bind_text(del, 1, (taskID as NSString).utf8String, -1, transient)
+            sqlite3_step(del)
+            sqlite3_finalize(del)
+        }
+        for (i, e) in trace.enumerated() {
+            let role = e["role"] as? String ?? ""
+            let content = e["content"] as? String ?? ""
+            let tool = e["tool"] as? String ?? ""
+            let sql = "INSERT INTO subagent_traces (task_id,seq,role,content,tool) VALUES (?1,?2,?3,?4,?5)"
+            var stmt: OpaquePointer?
+            guard sqlite3_prepare_v2(db, sql, -1, &stmt, nil) == SQLITE_OK else { continue }
+            sqlite3_bind_text(stmt, 1, (taskID as NSString).utf8String, -1, transient)
+            sqlite3_bind_int(stmt, 2, Int32(i))
+            sqlite3_bind_text(stmt, 3, (role as NSString).utf8String, -1, transient)
+            sqlite3_bind_text(stmt, 4, (content as NSString).utf8String, -1, transient)
+            sqlite3_bind_text(stmt, 5, (tool as NSString).utf8String, -1, transient)
+            sqlite3_step(stmt)
+            sqlite3_finalize(stmt)
+        }
+    }
+
+    func loadTraces(taskID: String) -> [[String: Any]] {
+        lock.lock(); defer { lock.unlock() }
+        guard let db else { return [] }
+        var out: [[String: Any]] = []
+        let sql = "SELECT role,content,tool FROM subagent_traces WHERE task_id=?1 ORDER BY seq"
+        var stmt: OpaquePointer?
+        guard sqlite3_prepare_v2(db, sql, -1, &stmt, nil) == SQLITE_OK else { return [] }
+        sqlite3_bind_text(stmt, 1, (taskID as NSString).utf8String, -1, transient)
+        while sqlite3_step(stmt) == SQLITE_ROW {
+            let role = String(cString: sqlite3_column_text(stmt, 0))
+            let content = String(cString: sqlite3_column_text(stmt, 1))
+            let tool = String(cString: sqlite3_column_text(stmt, 2))
+            out.append(["role": role, "content": content, "tool": tool])
+        }
+        sqlite3_finalize(stmt)
+        return out
+    }
+
+    func loadTask(taskID: String) -> [String: Any]? {
+        lock.lock(); defer { lock.unlock() }
+        guard let db else { return nil }
+        let sql = "SELECT session_id,agent_type,status,rounds,max_rounds,elapsed_secs,result,error,created_at,finished_at FROM subagent_tasks WHERE task_id=?1"
+        var stmt: OpaquePointer?
+        guard sqlite3_prepare_v2(db, sql, -1, &stmt, nil) == SQLITE_OK else { return nil }
+        sqlite3_bind_text(stmt, 1, (taskID as NSString).utf8String, -1, transient)
+        defer { sqlite3_finalize(stmt) }
+        guard sqlite3_step(stmt) == SQLITE_ROW else { return nil }
+        var d: [String: Any] = [:]
+        if sqlite3_column_type(stmt, 0) != SQLITE_NULL { d["session_id"] = String(cString: sqlite3_column_text(stmt, 0)) }
+        if sqlite3_column_type(stmt, 1) != SQLITE_NULL { d["agent_type"] = String(cString: sqlite3_column_text(stmt, 1)) }
+        if sqlite3_column_type(stmt, 2) != SQLITE_NULL { d["status"] = String(cString: sqlite3_column_text(stmt, 2)) }
+        d["rounds"] = Int(sqlite3_column_int(stmt, 3))
+        d["max_rounds"] = Int(sqlite3_column_int(stmt, 4))
+        d["elapsed_secs"] = sqlite3_column_double(stmt, 5)
+        if sqlite3_column_type(stmt, 6) != SQLITE_NULL { d["result"] = String(cString: sqlite3_column_text(stmt, 6)) }
+        if sqlite3_column_type(stmt, 7) != SQLITE_NULL { d["error"] = String(cString: sqlite3_column_text(stmt, 7)) }
+        if sqlite3_column_type(stmt, 8) != SQLITE_NULL { d["created_at"] = String(cString: sqlite3_column_text(stmt, 8)) }
+        if sqlite3_column_type(stmt, 9) != SQLITE_NULL { d["finished_at"] = String(cString: sqlite3_column_text(stmt, 9)) }
+        return d
     }
 }
