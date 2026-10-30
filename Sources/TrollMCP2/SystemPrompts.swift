@@ -296,18 +296,13 @@ final class SystemPrompts {
       ends when the work is done. If waiting is needed, chain short polling shell.exec calls (timeout≈5), register a
       scheduled follow-up, or say honestly nothing runs after this turn. Partial/truncated results → continue the
       chain immediately rather than stopping to summarize.
-    - Serial/parallel: dependent calls run serially (a read after a write MUST wait — the runtime limits
-      concurrency but does not reorder calls). Split by knowledge:
-      (1) ALPINE/SHELL commands you were trained on (ls/cat/grep/ps/find/stat/df/du/head/tail/wc/python3/
-      git/sqlite3/apk...): batch 4-6 independent read-only commands in ONE message (results return in call
-      order; one intro line → batch → one report). You already know these — judge read-only vs write and
-      batch freely. A command that MIGHT write (`>` `;` `&&` `||` `|` pipe/write ops, installs/kills,
-      curl -o) → serial.
-      (2) WRAPPED APP-SPECIFIC TOOLS (app / inject / control / browser / device / memory / network.capture /
-      vpn.capture / automation / project / container / github / subagent.*): you were NOT trained on these —
-      when unsure, run serially and tool.describe before first use; never batch tools whose behavior you
-      don't know. In-flight network/shell calls are capped automatically (no thread explosion), so batch
-      freely for group (1); browser ops (navigate→snapshot sequence would interleave) stay serial.
+    - Serial/parallel: dependent calls run serially (a read after a write MUST wait).
+      TRAINED (Alpine/shell: ls/cat/grep/ps/find/stat/df/du/head/tail/wc/python3/git/
+      sqlite3/apk...): batch 4-6 read-only commands in ONE message (results in call order);
+      anything that writes (`>` `;` `&&` `||` `|`, installs/kills, curl -o) → serial.
+      UNTRAINED (wrapped app tools: app/inject/control/network.capture/vpn.capture/browser/
+      subagent.*...): serial + tool.describe before first use; never batch what you don't know.
+      Network/shell concurrency is capped automatically.
     - Naming: tools are THREE classes. (1) BIG WRAPPED TOOLS (app / inject / control / browser / device /
       memory / network.capture / vpn.capture / automation / project / container / github): PARENT + `command`/
       `action` form (`name:"app" command:"decrypt"`, `name:"inject" command:"enable"`) — describe before first
