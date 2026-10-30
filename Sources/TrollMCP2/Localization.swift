@@ -73,6 +73,22 @@ enum L10n {
             // v2.9.82：任务完成通知
             tbl["task_notify"] = ["zh": "任务完成通知", "en": "Task Notification"]
             tbl["task_notify_sub"] = ["zh": "AI 执行完成/失败时，后台发本地通知", "en": "Notify when AI finishes or fails in background"]
+            // fix73j-P1：任务完成提示音（SoundSettingsView + SettingsView 提示音组曾中文硬编码，英文界面缺失）
+            tbl["sound_toggle"] = ["zh": "任务完成提示音", "en": "Task Completion Sound"]
+            tbl["sound_toggle_sub"] = ["zh": "AI 完成回复时响提示音（后台/锁屏由系统通知声音负责，同一音色）", "en": "Play a sound when AI finishes replying (background/lock screen uses the notification sound, same tone)"]
+            tbl["sound_picker_header"] = ["zh": "提示音选择", "en": "Sound Selection"]
+            tbl["sound_picker_footer"] = ["zh": "共 %@ 种系统提示音，点选即试听；前台与后台通知使用同一音色。", "en": "%@ system sounds in total — tap to preview; foreground and background notification share the same tone."]
+            tbl["sound_enabled_sub"] = ["zh": "已开启 · 点击选择音色", "en": "On · tap to pick a sound"]
+            tbl["sound_disabled"] = ["zh": "已关闭", "en": "Off"]
+            // fix73j-P1：8 种音色名英文补全（TaskNotify.soundOptions 中文硬编码，英文界面缺失）
+            tbl["sound_opt_0"] = ["zh": "三全音（经典短信）", "en": "Tri-tone (Classic SMS)"]
+            tbl["sound_opt_1"] = ["zh": "铃声（Chime）", "en": "Chime"]
+            tbl["sound_opt_2"] = ["zh": "玻璃音", "en": "Glass"]
+            tbl["sound_opt_3"] = ["zh": "号角音", "en": "Horn"]
+            tbl["sound_opt_4"] = ["zh": "铃铛音", "en": "Bell"]
+            tbl["sound_opt_5"] = ["zh": "电子音", "en": "Electronic"]
+            tbl["sound_opt_6"] = ["zh": "叮咚声", "en": "Ding-dong"]
+            tbl["sound_opt_7"] = ["zh": "新邮件声", "en": "New Mail"]
             // v2.9.85：推荐中转站卡片
             tbl["relay_card_title"] = ["zh": "推荐中转站 · 作者自用", "en": "Recommended Relay · Author's Pick"]
             tbl["relay_card_body"] = ["zh": "价格极低，作者本人就在用。这不是合作广告——通过链接注册会为作者增加 Token 额度，用于持续开发与更新更多功能。感谢支持！", "en": "Extremely low pricing, and it's the relay the author personally uses. This is not a sponsored ad — registering via the link adds tokens for the author to keep developing and shipping new features. Thanks for your support!"]

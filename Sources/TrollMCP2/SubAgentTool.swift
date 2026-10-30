@@ -575,6 +575,9 @@ final class SubAgentRunner {
     private let deadline: Date
     private var messages: [ChatMessage] = []
     private var client: OpenAIClient?
+    /// fix73j-P2：模型首轮按纪律输出的 📋 PLAN 段（计划锚定——每轮 send 注入上下文末尾，
+    /// 对齐 Manus "把计划念到上下文末尾"防目标漂移；不写进 messages，避免折叠污染）。
+    private var planText: String?
     private var lastTool = ""
     private var sameToolRepeat = 0
     /// v7.1.107-P0: 轮次预警已注入（剩 2-3 轮时，工具仍可用）
@@ -612,6 +615,11 @@ final class SubAgentRunner {
            `ta`) to invoke other tools or bypass your tool whitelist — call restricted capabilities through the
            tools actually provided to you, or conclude that you cannot do it. Do not attempt hook/injection/
            fake/install/keychain operations unless a tool for them was explicitly given to you.
+        9. TASK PLANNING (long-task discipline): judge the task once at the start. If it needs ≥2 tool calls,
+           a dependency chain, or an ambiguous goal — FIRST output a plain-text plan in your first narration:
+           a line "📋 PLAN" followed by numbered steps (step / expected tool / completion criterion).
+           Then execute step by step; update the plan as reality diverges (mark done, drop, or revise).
+           For trivial single-step tasks skip the plan and just do it — never plan for planning's sake.
         """
         if !persona.systemPrompt.isEmpty {
             p += "\n\n" + persona.systemPrompt
@@ -795,8 +803,21 @@ final class SubAgentRunner {
         client.requestTimeoutOverride = min(max(remaining * 0.4, 15), 45)
         // v7.1.107-P0: wrap-up 轮不传工具 schema → 模型只能文本总结
         let tools = wrapUpInjected ? nil : subAgentTools()
+        // fix73j-P2：计划锚定——模型已输出 📋 PLAN 时，每轮把计划+进度检查点注入上下文
+        // 末尾（system role 结尾合法，不污染 messages、不被折叠），对齐 Manus "把全局计划
+        // 念到最近注意力区"防目标漂移；进度提示促使模型在事实变化时修订计划。
+        var sendMessages = messages
+        if let plan = planText, !plan.isEmpty {
+            let anchor = """
+            [PLAN ANCHOR — keep executing against this plan; revise it if the evidence no longer fits]
+            \(plan)
+            Progress: round \(task.rounds + 1)/\(maxRounds). If this plan is outdated, output a new "📋 PLAN" \
+            with revised steps before the next tool call.
+            """
+            sendMessages.append(ChatMessage(role: "system", content: anchor))
+        }
         task.markSendStarted()   // v7.4.0-fix73f-6：请求已发出——status 可见 send_state=sent
-        client.send(messages: messages, tools: tools) { [weak self] result in
+        client.send(messages: sendMessages, tools: tools) { [weak self] result in
             guard let self = self else { return }
             // v7.4.0-fix73f-6：收到响应（成功/失败都算）——send_state=replied
             self.task.markSendReplied()
@@ -831,6 +852,11 @@ final class SubAgentRunner {
     /// DispatchSemaphore(3) 限制在途，DispatchGroup 等待全部完成，结果按 index 原序合并
     /// （Anthropic/OpenAI API 要求 tool 结果顺序镜像 tool_calls 顺序——乱序会 400）。
     private func execute(calls: [ToolCall], narration: String? = nil) {
+        // fix73j-P2：提取模型首轮输出的 📋 PLAN 段（纪律第 9 条）——作为计划锚定源，
+        // 之后每轮注入上下文末尾（send 层，不污染 messages）。
+        if planText == nil, let n = narration, let r = n.range(of: "📋 PLAN") {
+            planText = String(n[r.lowerBound...]).prefix(900)
+        }
         var msgs = messages
         var executed: [String] = []
         // 关键：API 要求 tool 结果必须跟在"带 tool_calls 的 assistant 消息"之后——

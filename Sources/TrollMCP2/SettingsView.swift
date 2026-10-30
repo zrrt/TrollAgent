@@ -286,9 +286,10 @@ struct SettingsView: View {
 
         // v7.4.0-fix73d：提示音——AI 完成任务提示音开关 + 点击进子页选音色
         // （复用"开关优先"模式：isOn 开关键 + destination 子页，NavigationLink 包 Toggle）
-        groups.append(SettingsGroup(header: "提示音", items: [
-            SettingsItem(title: "任务完成提示音",
-                         subtitle: TaskNotify.shared.soundEnabled ? "已开启 · 点击选择音色" : "已关闭",
+        // fix73j-P1：英文界面补全（此前中文硬编码，L10n 缺失）
+        groups.append(SettingsGroup(header: L10n.t("sound_picker_header"), items: [
+            SettingsItem(title: L10n.t("sound_toggle"),
+                         subtitle: TaskNotify.shared.soundEnabled ? L10n.t("sound_enabled_sub") : L10n.t("sound_disabled"),
                          icon: "bell.badge.fill", color: .orange,
                          destination: AnyView(SoundSettingsView()),
                          isOn: { TaskNotify.shared.soundEnabled },

@@ -15,19 +15,18 @@ struct SoundSettingsView: View {
                 Section {
                     Toggle(isOn: $soundEnabled) {
                         VStack(alignment: .leading, spacing: 3) {
-                            Text("任务完成提示音")
+                            Text(L10n.t("sound_toggle"))
                                 .font(.body)
-                            Text("AI 完成回复时响提示音（后台/锁屏由系统通知声音负责，同一音色）")
+                            Text(L10n.t("sound_toggle_sub"))
                                 .font(.caption)
                                 .foregroundColor(.secondary)
                         }
                     }
                     .accentColor(.tmCyan)
                 }
-                Section(header: Text("提示音选择"),
-                        footer: Text("共 \(TaskNotify.soundOptions.count) 种系统提示音，点选即试听；前台与后台通知使用同一音色。")) {
+                Section(header: Text(L10n.t("sound_picker_header")),
+                        footer: Text(L10n.t("sound_picker_footer", String(TaskNotify.soundOptions.count)))) {
                     ForEach(TaskNotify.soundOptions.indices, id: \.self) { idx in
-                        let opt = TaskNotify.soundOptions[idx]
                         Button(action: {
                             soundIndex = idx
                             // 点选即试听
@@ -38,7 +37,7 @@ struct SoundSettingsView: View {
                                     .font(.system(size: 14))
                                     .foregroundColor(.tmCyan)
                                     .frame(width: 24)
-                                Text(opt.name)
+                                Text(L10n.t("sound_opt_\(idx)"))
                                     .foregroundColor(.primary)
                                 Spacer()
                                 if soundIndex == idx {
@@ -53,7 +52,7 @@ struct SoundSettingsView: View {
                 }
             }
             .listStyle(.insetGrouped)
-            .navigationTitle("提示音")
+            .navigationTitle(L10n.t("sound_picker_header"))
             .navigationBarTitleDisplayMode(.inline)
         }
         .navigationViewStyle(.stack)

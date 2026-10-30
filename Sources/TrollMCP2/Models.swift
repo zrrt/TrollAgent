@@ -976,6 +976,15 @@ struct ChatConversation: Codable, Identifiable, Hashable {
 
 final class ConversationStore: ObservableObject {
     static let shared = ConversationStore()
+    /// fix73j-P1：主会话任务判定纪律（英文，追加于稳定基础系统块）——
+    /// 对齐大厂：无独立"长任务判定器"，判定即模型自判（≥2 步工具/依赖链/目标模糊 →
+    /// 先输出短计划再调工具；平凡任务直接做）。只影响工具模式，语音角色模式不注入。
+    static let taskPlanningDiscipline = """
+    TASK PLANNING: judge each user request once before acting. If it needs ≥2 tool calls, a dependency \
+    chain, or an ambiguous goal — first state a short plain-text plan (numbered steps with the expected \
+    tool for each) before calling tools, then execute step by step and revise the plan as evidence \
+    changes. For trivial single-step requests, skip the plan and just answer or do it directly.
+    """
 
     @Published var conversations: [ChatConversation] = []
     @Published var selectedId: UUID?
@@ -1598,7 +1607,11 @@ final class ConversationStore: ObservableObject {
         if let persona = personaPrompt, !persona.isEmpty {
             history.insert(ChatMessage(role: "system", content: persona), at: 0)
         } else {
-            history.insert(ChatMessage(role: "system", content: SystemPrompts.shared.selected.content), at: 0)
+            // fix73j-P1：主会话任务判定纪律（英文）——大厂无独立"长任务判定器"，
+            // 判定即模型自判：≥2 步工具/依赖链/目标模糊 → 先输出短计划再调工具；
+            // 平凡任务直接做。追加在稳定基础块内，保持稳定前缀缓存语义。
+            let base = SystemPrompts.shared.selected.content + "\n\n" + Self.taskPlanningDiscipline
+            history.insert(ChatMessage(role: "system", content: base), at: 0)
             if let devInstr = DeveloperInstructionStore.shared.defaultInjectionContent(), !devInstr.isEmpty {
                 history.insert(ChatMessage(role: "system", content: "Developer instructions below, always follow:\n" + devInstr), at: 0)
             }
