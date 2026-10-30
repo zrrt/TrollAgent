@@ -311,64 +311,6 @@ final class DeviceExecTool: MCPTool {
 
 // MARK: - v3.1.41: container 大工具 + 子命令 (合并 3 个 container.* 工具）
 
-final class ContainerExecTool: MCPTool {
-    let definition = ToolDefinition(
-        name: "container",
-        summary: "Manage app data container: read/write/delete files inside an installed app sandbox, resolve bundle_id to install+data paths. Subcommands: refresh / resolve / write / delete. Params: bundle_id (resolve/write/delete), path (write/delete), text (write). Workspace files use artifact.*, system files use shell.exec.",
-        parameters: [
-            "command": "Subcommand (required): refresh / resolve / write / delete",
-            "bundle_id": "App bundle ID — REQUIRED for resolve/write/delete",
-            "path": "File path — REQUIRED for write/delete",
-            "text": "Text to write — REQUIRED for write"
-        ],
-        verified: true, category: "fs", prerequisites: ["resolve/write/delete bundle_id must match an installed app (confirm with app status)"])
-    
-    func invoke(_ params: [String: Any]) throws -> [String: Any] {
-        guard let command = params["command"] as? String else {
-            throw MCPError.invalidParams("command required")
-        }
-        
-        AuditLog.shared.log("container", detail: command)
-        
-        switch command {
-        case "refresh":
-            return try RefreshContainerTool().invoke([:])
-            
-        case "write":
-            guard let bundleId = params["bundle_id"] as? String else {
-                throw MCPError.invalidParams("bundle_id required. Usage: container write bundle_id:com.xxx path:Documents/a.txt text:<content>")
-            }
-            guard let path = params["path"] as? String else {
-                throw MCPError.invalidParams("path required. Usage: container write bundle_id:com.xxx path:Documents/a.txt text:<content>")
-            }
-            guard let text = params["text"] as? String else {
-                throw MCPError.invalidParams("text required. Usage: container write bundle_id:com.xxx path:Documents/a.txt text:<content>")
-            }
-            return try ContainerWriteTextTool().invoke(["bundle_id": bundleId, "path": path, "text": text])
-            
-        case "delete":
-            guard let bundleId = params["bundle_id"] as? String else {
-                throw MCPError.invalidParams("bundle_id required. Usage: container delete bundle_id:com.xxx path:Documents/a.txt")
-            }
-            guard let path = params["path"] as? String else {
-                throw MCPError.invalidParams("path required. Usage: container delete bundle_id:com.xxx path:Documents/a.txt")
-            }
-            return try ContainerDeleteTool().invoke(["bundle_id": bundleId, "path": path])
-            
-        // v3.1.68: container resolve —— bundle_id → 安装目录 + 数据容器 + 沙盒路径
-        // 此前 AI 为了找某 App 的数据目录要 loop 几百个目录跑 plutil (又慢又易崩），
-        // 一条 resolve 直接给出全部路径 (D items修复，2026-09-23 实测确认缺失）
-        case "resolve":
-            guard let bundleId = params["bundle_id"] as? String else {
-                throw MCPError.invalidParams("bundle_id required. Usage: container resolve bundle_id:com.xxx")
-            }
-            return try ContainerResolveTool().invoke(["bundle_id": bundleId])
-            
-        default:
-            throw MCPError.invalidParams("Unknown command: \(command). Available: refresh/resolve/write/delete")
-        }
-    }
-}
 
 // MARK: - v3.1.42: diagnose 大工具 + 子命令 (合并 2 个 diagnose.* 工具）
 
@@ -455,42 +397,6 @@ final class MemoryExecTool: MCPTool {
 
 // MARK: - v3.1.44: verify 大工具 + 子命令 (合并 2 个 verify.* 工具）
 
-final class VerifyExecTool: MCPTool {
-    let definition = ToolDefinition(
-        name: "verify",
-        summary: "Verify file/app status (file/app_running). Use subcommand to specify action. Use for: verify file exists, check if app is running. Don't use for: read file (use artifact read), launch app (use app launch). Example: file → verify file path:/var/mobile/xxx; app_running → verify app_running bundle_id:com.xxx. Subcommands: file / app_running.",
-        parameters: [
-            "command": "Subcommand: file / app_running",
-            "path": "File path (for file)",
-            "bundle_id": "App bundle ID (for app_running)"
-        ],
-        verified: true, category: "system", prerequisites: ["before app_running confirm the bundle_id is installed and has been launched (only meaningful to verify after app.launch)", "path must be a real absolute path before file verification"])
-    
-    func invoke(_ params: [String: Any]) throws -> [String: Any] {
-        guard let command = params["command"] as? String else {
-            throw MCPError.invalidParams("command required")
-        }
-        
-        AuditLog.shared.log("verify", detail: command)
-        
-        switch command {
-        case "file":
-            guard let path = params["path"] as? String else {
-                throw MCPError.invalidParams("path required")
-            }
-            return try VerifyFileTool().invoke(["path": path])
-            
-        case "app_running":
-            guard let bundleId = params["bundle_id"] as? String else {
-                throw MCPError.invalidParams("bundle_id required")
-            }
-            return try VerifyAppRunningTool().invoke(["bundle_id": bundleId])
-            
-        default:
-            throw MCPError.invalidParams("Unknown command: \(command). Available: file/app_running")
-        }
-    }
-}
 
 // MARK: - v3.1.45: ssh 大工具 + 子命令 (合并 2 个 ssh.* 工具）
 
@@ -537,59 +443,6 @@ final class SshExecTool: MCPTool {
 
 // MARK: - v3.1.48: macro 大工具 + 子命令 (合并 6 个 macro.* 工具）
 
-final class MacroExecTool: MCPTool {
-    let definition = ToolDefinition(
-        name: "macro",
-        summary: "Manage operation macros (record/stop/run/list/delete/export). Use subcommand to specify action. Use for: record and replay UI operations. Don't use for: one-off UI control (use control.*). Example: record → macro record name:login; run → macro run name:login. Subcommands: record / stop / run / list / delete / export.",
-        parameters: [
-            "command": "Subcommand: record / stop / run / list / delete / export",
-            "name": "Macro name"
-        ],
-        verified: true, category: "automation")
-    
-    func invoke(_ params: [String: Any]) throws -> [String: Any] {
-        guard let command = params["command"] as? String else {
-            throw MCPError.invalidParams("command required")
-        }
-        
-        AuditLog.shared.log("macro", detail: command)
-        
-        switch command {
-        case "record":
-            guard let name = params["name"] as? String else {
-                throw MCPError.invalidParams("name required")
-            }
-            return try MacroRecordTool().invoke(["name": name])
-            
-        case "stop":
-            return try MacroStopTool().invoke([:])
-            
-        case "run":
-            guard let name = params["name"] as? String else {
-                throw MCPError.invalidParams("name required")
-            }
-            return try MacroRunTool().invoke(["name": name])
-            
-        case "list":
-            return try MacroListTool().invoke([:])
-            
-        case "delete":
-            guard let name = params["name"] as? String else {
-                throw MCPError.invalidParams("name required")
-            }
-            return try MacroDeleteTool().invoke(["name": name])
-            
-        case "export":
-            guard let name = params["name"] as? String else {
-                throw MCPError.invalidParams("name required")
-            }
-            return try MacroExportTool().invoke(["name": name])
-            
-        default:
-            throw MCPError.invalidParams("Unknown command: \(command). Available: record/stop/run/list/delete/export")
-        }
-    }
-}
 
 // MARK: - v3.1.50: knowledge 大工具 + 子命令 (合并 4 个 knowledge.* 工具）
 
@@ -746,79 +599,3 @@ final class GitHubExecTool: MCPTool {
 /// 大文件下载工具。shell.exec 的 curl 受 120s 上限限制，大文件（>20MB）会超时被 SIGKILL；
 /// 本工具走 URLSessionDownloadTask（无 120s 限制），进度经 InstallationRegistry.setFraction
 /// 实时渲染到 UI（"下载中 N/100"），用户与 AI 都能看到。
-final class DownloadTool: MCPTool {
-    let definition = ToolDefinition(
-        name: "download",
-        summary: "Download a large file (tool/binary/IPA/archive) to the workspace with live percent progress shown in the UI. Use for: big downloads (>20MB) where shell.exec curl would hit the 120s cap. Don't use for: small files (use shell.exec curl), apk packages (use tool.install). Example: user says 'download jtool2 to workspace' → download.",
-        parameters: [
-            "url": "Direct download URL (http/https)",
-            "path": "Optional absolute save path (default: Workspace/<filename>)",
-        ],
-        verified: true, category: "network")
-
-    func invoke(_ params: [String: Any]) throws -> [String: Any] {
-        guard let urlStr = params["url"] as? String,
-              let url = URL(string: urlStr),
-              url.scheme == "http" || url.scheme == "https" else {
-            throw MCPError.invalidParams("url required (http/https)")
-        }
-        let fileName = url.lastPathComponent.isEmpty ? "download.bin" : url.lastPathComponent
-        let destPath: String
-        if let p = params["path"] as? String, !p.isEmpty {
-            destPath = p
-        } else {
-            destPath = Workspace.root.appendingPathComponent(fileName).path
-        }
-
-        // 进度注册——UI 进度条（串行引擎全局单例，与 apk 安装同机制）
-        let key = "download \(fileName)"
-        InstallationRegistry.shared.start(key: key)
-        InstallationRegistry.shared.setFraction(0, phase: L10n.t("i18n_853"), line: fileName)
-
-        let sem = DispatchSemaphore(value: 0)
-        let delegate = ShellExecTool.DownloadProgressDelegate()
-        var result: (URL?, Error?) = (nil, nil)
-        delegate.onProgress = { f in
-            InstallationRegistry.shared.setFraction(f, phase: L10n.t("i18n_853"), line: fileName)
-        }
-        delegate.onComplete = { loc, err in
-            result = (loc, err)
-            sem.signal()
-        }
-        let session = URLSession(configuration: .default, delegate: delegate, delegateQueue: nil)
-        let task = session.downloadTask(with: url)
-        let start = Date()
-        task.resume()
-        _ = sem.wait(timeout: .now() + 600)   // 10 分钟硬上限（无 120s 限制）
-        session.invalidateAndCancel()
-
-        if let err = result.1 {
-            InstallationRegistry.shared.finish(ok: false, summary: err.localizedDescription)
-            throw MCPError.invalidParams("download failed: \(err.localizedDescription)")
-        }
-        guard let tmp = result.0 else {
-            InstallationRegistry.shared.finish(ok: false, summary: "download timed out")
-            throw MCPError.invalidParams("download timed out after 600s")
-        }
-        do {
-            let destURL = URL(fileURLWithPath: destPath)
-            try FileManager.default.createDirectory(at: destURL.deletingLastPathComponent(),
-                                                    withIntermediateDirectories: true)
-            try FileManager.default.moveItem(at: tmp, to: destURL)
-        } catch {
-            InstallationRegistry.shared.finish(ok: false, summary: error.localizedDescription)
-            throw MCPError.invalidParams("move failed: \(error.localizedDescription)")
-        }
-        let attrs = try? FileManager.default.attributesOfItem(atPath: destPath)
-        let bytes = (attrs?[.size] as? NSNumber)?.int64Value ?? 0
-        let elapsed = Int(Date().timeIntervalSince(start))
-        InstallationRegistry.shared.finish(ok: true, summary: "\(fileName) \(bytes) bytes")
-        return [
-            "ok": true,
-            "path": destPath,
-            "fileName": fileName,
-            "bytes": bytes,
-            "elapsedSeconds": elapsed,
-        ]
-    }
-}

@@ -8,174 +8,11 @@ import Vision
 
 // MARK: - v3.0.90：system.overview — AI 全局视角目录
 
-final class SystemOverviewTool: MCPTool {
-    let definition = ToolDefinition(
-        name: "system.overview",
-        summary: "Get an overview of all available tools. Use for: when you don't know what tools exist, need to pick the right tool. Don't use for: specific tasks (use the actual tool directly). Example: user says 'what tools do you have' → system overview.",
-        parameters: [:],
-        verified: true, category: "system")
-
-    func invoke(_ params: [String: Any]) throws -> [String: Any] {
-        // v4.4.x：tool_categories 改为从注册表动态生成——只列真实注册的大工具，杜绝幽灵工具名漂移。
-        let reg = ToolRegistry.shared
-        let names = reg.allToolNames().sorted()
-        var byCat: [String: [String]] = [:]
-        for n in names {
-            let cat = reg.tool(named: n)?.definition.category ?? "misc"
-            byCat[cat, default: []].append(n)
-        }
-        var cats: [[String: Any]] = []
-        for (cat, tools) in byCat.sorted(by: { $0.key < $1.key }) {
-            cats.append(["category": cat, "tools": tools])
-        }
-        let ver = Bundle.main.infoDictionary?["CFBundleShortVersionString"] as? String ?? "unknown"
-
-        return [
-            "system": "TrollAgent",
-            "version": ver,
-            "total_tools": names.count,
-            "important_note": "ALL tool schemas are slimmed to one line to save context — load the FULL description via `tool.describe name:\"<tool>\"` before first use this session (esp. BIG WRAPPED TOOLS — app / inject / control / browser / device / memory / network.capture / vpn.capture / automation / project / container / github: many subcommands + prerequisites; always describe, then call with `command`/`action` subcommand). SMALL TOOLS (wifi / location / ssh / reminder / artifact / assistant_memory / knowledge / diagnose / rescue): call directly (e.g. name:\"wifi\" command:\"status\"), describe if unsure. SIMPLE TOOLS (shell.exec / system.exec_root / web.search / web.fetch / tool.install / env.setup_re / skills.* / subagent.* / tool.describe / bind_app / bind_app_write / app_write_file): call directly by name, describe if unsure.",
-            "tool_categories": cats,
-            "ios_version_support": [
-                "trollstore_supported": [
-                    "iOS 14.0 - 15.4.1 (TrollStore 1)",
-                    "iOS 15.5 - 16.6.1 (TrollStore 2)",
-                    "iOS 17.0 - 17.0.3 (TrollStore 2 / kfd)"
-                ],
-                "jailbreak_supported": [
-                    "iOS 17.0 - 17.3.1 (Relaxin / RootHide / Dopamine with ElleKit)"
-                ],
-                "unsupported": [
-                    "iOS 16.6.2+ (Apple patched CoreTrust)",
-                    "iOS 17.1+ (Apple patched kfd for TrollStore)"
-                ],
-                "note": "Two environments: (1) TrollStore (jailbreak-free), (2) Jailbreak. Use device + command:info to detect which environment you're in."
-            ],
-            "injection_methods": [
-                "trollstore_runtime": "inject + command:enable — runtime injection via CoreTrust (ct_bypass), iOS ≤17.0 TrollStore.",
-                "trollstore_static": "inject + command:static — static injection (insert_dylib + reinstall), all TrollStore devices."
-            ],
-            "recommended_workflows": [
-                [
-                    "task": "Inject dylib into an app (TrollStore)",
-                    "steps": [
-                        "1. device + command:info — check environment",
-                        "2. inject + command:list — find bundle_id",
-                        "3. inject + command:enable bundle_id — inject dylib",
-                        "4. control + command:inject bundle_id — inject ControlAgent for UI control",
-                        "5. control + command:screenshot — verify injection worked"
-                    ]
-                ],
-                [
-                    "task": "Control an app's UI",
-                    "steps": [
-                        "1. control + command:inject bundle_id — inject ControlAgent",
-                        "2. control + command:screenshot — see current screen",
-                        "3. control + command:tap_text — tap by text",
-                        "4. control + command:type_text — type into field"
-                    ]
-                ],
-                [
-                    "task": "Read app container files",
-                    "steps": [
-                        "1. container + command:resolve bundle_id — get data container path",
-                        "2. shell.exec cat/find on that path (or artifact + command:read) — read a file"
-                    ]
-                ]
-            ],
-            "tips": [
-                "All schemas are slimmed — tool.describe any tool you haven't loaded this session (always for big tools: app/inject/control/browser/device/memory/network.capture/vpn.capture/automation/project/container/github), then name + command/action. Small tools (wifi/location/macro/db/file/server/ssh/reminder/package/...): call directly with their subcommand. Simple tools (shell.exec, web.search, web.fetch, ...): call directly.",
-                "If you're stuck after 2 tries, ask the user for clarification.",
-                "Don't repeat the same tool with the same params — it's a loop.",
-                "Before injecting dylib, call device + command:info (or device.info) to detect environment.",
-                "TrollStore + iOS ≤17.0: inject + command:enable (ct_bypass runtime); iOS 17.0.1+: inject + command:static or static injection."
-            ]
-        ]
-    }
-}
 
 
 
 
-final class VerifyFileTool: MCPTool {
-    let definition = ToolDefinition(
-        name: "verify.file",
-        summary: "Verify if file exists and has expected content. Use for: after artifact, check if file was written correctly. Don't use for: read file content (use artifact).",
-        parameters: [
-            "path": "File path to verify (required)",
-            "expect_size": "Expected file size in bytes (optional)",
-            "expect_contains": "Expected string in file content (optional)"
-        ],
-        verified: true, category: "verify")
 
-    func invoke(_ params: [String: Any]) throws -> [String: Any] {
-        guard let path = params["path"] as? String else {
-            throw MCPError.invalidParams("path required")
-        }
-        let fm = FileManager.default
-        guard fm.fileExists(atPath: path) else {
-            return ["verified": false, "reason": "File not found", "path": path]
-        }
-        let attrs = try? fm.attributesOfItem(atPath: path)
-        let size = (attrs?[.size] as? NSNumber)?.intValue ?? 0
-
-        var checks: [String: Any] = [
-            "verified": true,
-            "path": path,
-            "size": size
-        ]
-
-        // 检查大小
-        if let expectedSize = params["expect_size"] as? Int {
-            checks["size_match"] = size == expectedSize
-            if size != expectedSize {
-                checks["verified"] = false
-                checks["reason"] = "Size mismatch: expected \(expectedSize), got \(size)"
-            }
-        }
-
-        // 检查内容
-        if let expectedStr = params["expect_contains"] as? String, !expectedStr.isEmpty {
-            if let content = try? String(contentsOfFile: path, encoding: .utf8) {
-                let contains = content.contains(expectedStr)
-                checks["content_contains"] = contains
-                if !contains {
-                    checks["verified"] = false
-                    checks["reason"] = "Content does not contain expected string"
-                }
-            }
-        }
-
-        return checks
-    }
-}
-
-final class VerifyAppRunningTool: MCPTool {
-    let definition = ToolDefinition(
-        name: "verify.app_running",
-        summary: "Verify if an app is currently running. Use for: after app.launch, check if it actually started. Don't use for: launch app (use app.launch).",
-        parameters: [
-            "bundle_id": "App bundle_id to check (required)"
-        ],
-        verified: true, category: "verify")
-
-    func invoke(_ params: [String: Any]) throws -> [String: Any] {
-        guard let bid = params["bundle_id"] as? String else {
-            throw MCPError.invalidParams("bundle_id required")
-        }
-        guard let app = AppCatalog.find(bid) else {
-            return ["running": false, "reason": "App not found"]
-        }
-        let exeName = ProcessHelper.executableName(for: app)
-        let pid = ProcessHelper.pidOf(executableName: exeName)
-        return [
-            "running": pid != nil,
-            "pid": pid ?? 0,
-            "bundle_id": bid,
-            "name": app.name
-        ]
-    }
-}
 
 // MARK: - M3 注入工具
 
@@ -330,51 +167,10 @@ final class InjectionListTool: MCPTool {
 }
 
 
-final class ContainerWriteTextTool: MCPTool {
-    let definition = ToolDefinition(name: "container.write_text", summary: "Write a text file into an app's data container (DANGEROUS!). Use for: modify app data files, write config into app sandbox. Don't use for: write workspace files (use artifact), read app files (use artifact). Warning: modifying app data can crash it! Example: user says 'modify 小红书 config file' → write to container.",
-        parameters: ["bundle_id": "Target App bundle ID", "path": "File path inside app container", "content": "Text content to write"])
-    func invoke(_ params: [String: Any]) throws -> [String: Any] {
-        guard let bid = params["bundle_id"] as? String,
-              let path = params["path"] as? String,
-              let content = params["content"] as? String else {
-            throw MCPError.invalidParams("bundle_id, path, content required")
-        }
-        guard let app = AppCatalog.find(bid), let container = AppCatalog.lookupContainer(bundleId: app.bundleId) else {
-            throw MCPError.failed("container not accessible for \(bid)")
-        }
-        let url = URL(fileURLWithPath: container).appendingPathComponent(path)
-        try FileManager.default.createDirectory(at: url.deletingLastPathComponent(), withIntermediateDirectories: true)
-        try content.write(to: url, atomically: true, encoding: .utf8)
-        AuditLog.shared.log("container.write_text", detail: "\(bid):\(path)")
-        return ["written": true, "bytes": content.utf8.count]
-    }
-}
 
 // v3.1.68: container.resolve —— bundle_id → 安装目录 + 数据容器 + 沙盒路径
 // 此前 AI 为定位某 App 的数据目录要循环几百个目录跑 plutil (慢且易因环境问题崩），
 // 一条 resolve 直接给出全部路径 (D items修复，2026-09-23 真机实测确认缺失）
-final class ContainerResolveTool: MCPTool {
-    let definition = ToolDefinition(name: "container.resolve", summary: "Resolve an app's install path, data container and sandbox paths by bundle_id. Use for: find where an app lives on disk, get its data container path for reading/writing config. Don't use for: read/write files (use container write/delete or artifact). Example: container resolve bundle_id:com.xingin.discover → install path + data container + executable.",
-        parameters: ["bundle_id": "App bundle ID to resolve"], returns: ["bundle_id": "Resolved bundle id", "app_name": "App display name", "install_path": "Bundle .app path", "data_container": "Data container path (nil if not accessible)", "executable": "Executable name", "version": "App version"], verified: true, category: "fs")
-    func invoke(_ params: [String: Any]) throws -> [String: Any] {
-        guard let bid = params["bundle_id"] as? String else {
-            throw MCPError.invalidParams("bundle_id required. Usage: container resolve bundle_id:com.xxx")
-        }
-        guard let app = AppCatalog.find(bid) else {
-            throw MCPError.failed("app not found: \(bid)")
-        }
-        AuditLog.shared.log("container.resolve", detail: bid)
-        return [
-            "bundle_id": app.bundleId,
-            "app_name": app.name,
-            "install_path": app.path,
-            "data_container": AppCatalog.lookupContainer(bundleId: app.bundleId) ?? "",
-            "executable": app.execName,
-            "version": app.version,
-            "hint": AppCatalog.lookupContainer(bundleId: app.bundleId) == nil ? "data container inaccessible (system App or restricted)" : "data container accessible via artifact / container.write"
-        ]
-    }
-}
 
 // MARK: - M4 Gateway 工具
 

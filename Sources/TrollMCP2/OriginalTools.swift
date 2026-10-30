@@ -181,26 +181,6 @@ final class InjectionRemoveTool: MCPTool {
 
 // MARK: - 原版缺失工具：container.delete
 
-final class ContainerDeleteTool: MCPTool {
-    let definition = ToolDefinition(name: "container.delete", summary: "Delete a file/directory inside an app container. Use for: clean up app data files. Don't use for: delete workspace files (use shell.exec rm), list directory (use shell.exec ls). Warning: irreversible! Example: user says 'delete 小红书 cache files' → delete file.",
-        parameters: ["bundle_id": "Target app bundle ID", "path": "Path inside app container"], verified: true, category: "filesystem")
-    func invoke(_ params: [String: Any]) throws -> [String: Any] {
-        guard let bid = params["bundle_id"] as? String,
-              let path = params["path"] as? String else {
-            throw MCPError.invalidParams("bundle_id, path required")
-        }
-        guard let app = AppCatalog.find(bid), let container = AppCatalog.lookupContainer(bundleId: app.bundleId) else {
-            throw MCPError.failed("container not accessible for \(bid)")
-        }
-        let url = URL(fileURLWithPath: container).appendingPathComponent(path)
-        guard FileManager.default.fileExists(atPath: url.path) else {
-            throw MCPError.failed("not found: \(path)")
-        }
-        try FileManager.default.removeItem(at: url)
-        AuditLog.shared.log("container.delete", detail: "\(bid):\(path)")
-        return ["deleted": true, "path": path]
-    }
-}
 
 // MARK: - 原版缺失工具：gateway.*
 
