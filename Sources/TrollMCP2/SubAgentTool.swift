@@ -910,10 +910,15 @@ final class SubAgentRunner {
         let indices = calls.indices.filter { !loopBlocked.contains($0) }
         for i in indices {
             let call = calls[i]
+            // fix73j-p5c：group.enter() 必须在提交前——旧代码 enter 在 semaphore.wait() 之后
+            //（闭包内），主流程 group.wait() 时若任务尚未被调度执行（系统繁忙/磁盘满/低电量
+            // 时 global 队列调度延迟），group 计数=0 → wait 立即返回 → results 全空 →
+            // 全部落 "concurrent slot lost" 兜底（用户实测：子代理工具调用全失败，串行单跑
+            // 也一样）。enter 提前后 group.wait() 必定等待所有任务（含等槽任务）。
+            group.enter()
             DispatchQueue.global(qos: .userInitiated).async {
                 semaphore.wait()
-                group.enter()
-                defer { group.leave(); semaphore.signal() }
+                defer { semaphore.signal(); group.leave() }
                 let params = Self.parseArgs(call.arguments)
                 let msg: ChatMessage
                 do {
