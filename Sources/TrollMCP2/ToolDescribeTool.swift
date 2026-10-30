@@ -59,7 +59,7 @@ final class ToolDescribeTool: MCPTool {
             }
         }
         guard let tool = resolved else {
-            throw MCPError.invalidParams("tool not found: \(name). Call system.overview to see the exact tool names.")
+            throw MCPError.invalidParams("tool not found: \(name). Call tools.audit to see the exact tool names.")
         }
 
         let d = tool.definition

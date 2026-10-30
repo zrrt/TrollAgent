@@ -77,7 +77,7 @@ final class SkillStore {
             // ===== TrollAgent 逆向/取证技能（reverse-skill 风格） =====
             [
                 "name": L10n.t("i18n_880"),
-                "summary": "inject a dylib into an iOS app, check injection status, remove injection. Use for: enable/disable/verify tweak injection into target app. Don't use for: package inspection (use package), memory hacking (use memory). Example: user wants to inject a tweak dylib into a game.",
+                "summary": "inject a dylib into an iOS app, check injection status, remove injection. Use for: enable/disable/verify tweak injection into target app. Don't use for: package inspection (use Alpine unzip/ar/strings), memory hacking (use memory). Example: user wants to inject a tweak dylib into a game.",
                 "instruction": "当用户要求对 iOS App 做 dylib 注入/查看注入状态/移除注入时执行本技能：\n## 适用范围\n- 注入 .dylib 到指定 App、查询注入状态、移除注入、注入后验证\n## 工作流\n1. 先只读探测，不直接动手：inject status（或 inject list）确认目标与已注入项；app status bundle_id:<目标> 确认 App 存在\n2. 明确目标 App 的 bundle_id 与 dylib 的绝对路径（勿用占位符/相对路径）\n3. 执行注入：inject enable bundle_id:<目标> ...；参数不确定先 tool.describe name:\"inject\"\n4. 若需签名/信任处理：确认 Resources/bin/ldid 可用；bundle 内工具 shell 直接调不通时，从 App 进程或经自动 bind 处理（iOS 路径会被挂载为 /ios_* 供 Alpine 直读），不要硬跑\n5. 验证：重启目标 App（app restart bundle_id:<目标>），用 inject verify 或 inject status 检查是否生效\n## 输出要求\n- 给出注入目标 bundle_id、dylib 绝对路径、注入结果、验证证据（状态/日志）\n## 禁止事项\n- 未确认目标与 dylib 路径前禁止注入\n- 禁止覆盖原二进制；注入/替换前保留备份\n- 禁止静默跨环境手动改文件（走自动 bind 直读直写，勿手动 cp 进 Alpine /tmp）\n## 自检\n- [ ] 注入前是否只读探测了状态？ [ ] 是否用绝对路径？ [ ] 是否验证了注入结果？",
             ],
             [
