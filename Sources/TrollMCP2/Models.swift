@@ -2475,6 +2475,10 @@ final class ConversationStore: ObservableObject {
             self.conversations[ci].messages[mi].toolNarration = n
         }
         self.pendingToolMsgIDs.removeValue(forKey: callId)
+        // fix73j-p3b：工具结果落盘保底——成功结果若只靠 save() 异步队列，用户杀后台
+        // 即丢（重启被崩溃恢复误判失败）。resolve 后同步 flush 保证 isRunning=false/
+        // 结果内容落盘（工具批每个结果一次同步写，成本毫秒级可接受）。
+        self.flush()
     }
 
     /// v2.9.138：动态会话状态块——设备/App/工作区/当前会话，injected system 最前
@@ -2947,6 +2951,36 @@ final class ConversationStore: ObservableObject {
         }
     }
 
+    /// fix73j-p3a：同步落盘当前快照——save() 走 saveQueue.async，用户杀后台（进程直接
+    /// 终止）时异步任务被丢弃，盘上残留 isRunning=true 的占位卡，重启 applyLoaded 的
+    /// 崩溃恢复逻辑误判"Execution interrupted"把成功结果标失败（用户实测根因）。
+    /// 切后台、工具结果 resolve 后必须同步 flush 保结果状态落盘。
+    func flush() {
+        let snapshot = conversations
+        let dirty = dirtySessions
+        dirtySessions.removeAll()
+        saveQueue.sync {
+            if SessionStore.shared.persist(snapshot: snapshot, dirty: dirty) {
+                return
+            }
+            // 降级：同步全量 JSON（与 save() 异步降级同逻辑，同步执行）
+            guard let data = try? JSONEncoder().encode(snapshot) else { return }
+            let fm = FileManager.default
+            let dir = storeDir
+            let path = storeFile
+            let bak1 = dir.appending("/conversations.bak.1.json")
+            let bak2 = dir.appending("/conversations.bak.2.json")
+            if fm.fileExists(atPath: bak1) {
+                try? fm.removeItem(atPath: bak2)
+                try? fm.moveItem(atPath: bak1, toPath: bak2)
+            }
+            if fm.fileExists(atPath: path) {
+                try? fm.moveItem(atPath: path, toPath: bak1)
+            }
+            try? data.write(to: URL(fileURLWithPath: path), options: .atomic)
+        }
+    }
+
     private func decodeFile(_ path: String) -> [ChatConversation]? {
         guard let data = try? Data(contentsOf: URL(fileURLWithPath: path)) else { return nil }
         return try? JSONDecoder().decode([ChatConversation].self, from: data)
@@ -2961,9 +2995,12 @@ final class ConversationStore: ObservableObject {
         for ci in convs.indices {
             for mi in convs[ci].messages.indices where convs[ci].messages[mi].isRunning {
                 convs[ci].messages[mi].isRunning = false
-                convs[ci].messages[mi].isError = true
                 let c = convs[ci].messages[mi].content
+                // fix73j-p3d：误判保护——仅"无内容"的残留 running 卡（真·结果未返回）
+                // 才标失败并改写错误提示；有内容的消息 = 结果已返回（即使 isRunning 因
+                // 未同步落盘残留），只清 running 不清 isError，保留真实成功结果。
                 if c.isEmpty || c == "…" {
+                    convs[ci].messages[mi].isError = true
                     let toolName = convs[ci].messages[mi].toolName ?? ""
                     convs[ci].messages[mi].content = "⚠️ Execution interrupted: the app was terminated by the system (crash) while tool \(toolName.isEmpty ? "was running" : "「\(toolName)」was running"). Please resend the command."
                 }

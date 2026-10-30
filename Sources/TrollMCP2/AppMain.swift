@@ -229,6 +229,10 @@ final class AppDelegate: UIResponder, UIApplicationDelegate {
             application.endBackgroundTask(self.backgroundTask)
             self.backgroundTask = .invalid
         }
+        // fix73j-p3c：进后台同步落盘——用户杀后台（进程直接终止）时 save() 异步队列任务
+        // 被丢弃，重启崩溃恢复误判成功结果为失败（"Execution interrupted"）。强制 flush
+        // 保证最新结果状态/内容落盘；用户手动 swipe kill 发生在进后台之后，必被覆盖。
+        ConversationStore.shared.flush()
         DispatchQueue.global().asyncAfter(deadline: .now() + 180) {
             if self.backgroundTask != .invalid {
                 application.endBackgroundTask(self.backgroundTask)
