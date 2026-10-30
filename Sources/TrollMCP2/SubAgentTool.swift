@@ -121,6 +121,28 @@ final class SubAgentTask: Identifiable {
     /// v7.1.108-fix: 状态锁——runner 后台线程写状态（markDone/Failed/Stopped/addRound），
     /// 工具线程读（toDict/status）。无锁多线程读写是数据竞争（UB），全部可变状态读写统一走 stateLock。
     private let stateLock = NSLock()
+    /// fix73j-审计：详情页展示快照——后台 runner 线程并发写 status/rounds/elapsed/
+    /// trace 等属性，UI 直读同一属性是 Swift 数据竞争（UB）。快照在 stateLock 内
+    /// 拷贝全部展示字段，UI 只读快照（终态后无写、运行中读到一致点即可）。
+    struct SubAgentSnapshot {
+        let status: Status
+        let rounds: Int
+        let maxRounds: Int
+        let elapsed: TimeInterval
+        let sendState: String
+        let personaName: String
+        let result: String
+        let error: String
+        let trace: [[String: Any]]
+        let hasTrace: Bool
+    }
+    func snapshot() -> SubAgentSnapshot {
+        stateLock.lock(); defer { stateLock.unlock() }
+        return SubAgentSnapshot(status: status, rounds: rounds, maxRounds: maxRounds,
+                                elapsed: elapsed, sendState: sendState, personaName: personaName,
+                                result: result, error: error, trace: trace, hasTrace: hasTrace)
+    }
+
     /// fix73j：身份名（agent_type），详情页/回传展示用
     private(set) var personaName: String
     /// fix73j：派发时的会话 id——回传写回该会话（防用户切换会话后跨会话污染）

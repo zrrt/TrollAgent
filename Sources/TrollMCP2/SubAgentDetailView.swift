@@ -84,11 +84,14 @@ struct SubAgentDetailView: View {
     // MARK: - 完整任务视图（内存中有 task，含轨迹快照）
 
     private func taskContent(_ t: SubAgentTask) -> some View {
-        ScrollView {
+        // fix73j-审计：UI 只读快照（stateLock 内拷贝）——后台 runner 并发写 task 属性，
+        // 直读是 Swift 数据竞争（UB）。2s 轮询刷新时每次取新快照。
+        let snap = t.snapshot()
+        return ScrollView {
             VStack(alignment: .leading, spacing: 14) {
-                SubAgentStatusHeader(task: t)
-                SubAgentResultCard(task: t)
-                SubAgentTraceList(task: t)
+                SubAgentStatusHeader(snap: snap)
+                SubAgentResultCard(snap: snap)
+                SubAgentTraceList(snap: snap)
             }
             .padding(16)
         }
@@ -165,15 +168,24 @@ struct SubAgentDetailView: View {
 // MARK: - 任务视图子组件（独立 struct 避免大函数类型推断问题）
 
 private struct SubAgentStatusHeader: View {
-    let task: SubAgentTask
+    let snap: SubAgentTask.SubAgentSnapshot
     var body: some View {
-        HStack(spacing: 10) {
-            Image(systemName: task.status == .done ? "checkmark.circle.fill" : "xmark.circle.fill")
+        // fix73j-审计：状态图标按语义分色——运行中不再误显红叉
+        let icon: String
+        let color: Color
+        switch snap.status {
+        case .running: icon = "hourglass"; color = .blue
+        case .done: icon = "checkmark.circle.fill"; color = .green
+        case .failed, .interrupted: icon = "xmark.circle.fill"; color = .red
+        case .stopped: icon = "stop.circle.fill"; color = .orange
+        }
+        return HStack(spacing: 10) {
+            Image(systemName: icon)
                 .font(.system(size: 28))
-                .foregroundColor(task.status == .done ? .green : .red)
+                .foregroundColor(color)
             VStack(alignment: .leading, spacing: 2) {
-                Text(task.personaName).font(.headline)
-                Text("\(SubAgentStatusText.zh(task.status.rawValue)) · \(task.rounds)/\(task.maxRounds) 轮 · \(Int(task.elapsed))s · send \(task.sendState)")
+                Text(snap.personaName).font(.headline)
+                Text("\(SubAgentStatusText.zh(snap.status.rawValue)) · \(snap.rounds)/\(snap.maxRounds) 轮 · \(Int(snap.elapsed))s · send \(snap.sendState)")
                     .font(.caption)
                     .foregroundColor(.secondary)
             }
@@ -186,38 +198,38 @@ private struct SubAgentStatusHeader: View {
 }
 
 private struct SubAgentResultCard: View {
-    let task: SubAgentTask
+    let snap: SubAgentTask.SubAgentSnapshot
     var body: some View {
         VStack(alignment: .leading, spacing: 6) {
             Text("最终结果").font(.subheadline).fontWeight(.semibold)
-            Text(task.result.isEmpty ? "(空——子代理未产出交付内容)" : task.result)
+            Text(snap.result.isEmpty ? "(空——子代理未产出交付内容)" : snap.result)
                 .font(.body)
                 .textSelection(.enabled)
                 .frame(maxWidth: .infinity, alignment: .leading)
                 .padding(12)
                 .background(Color(.tertiarySystemBackground))
                 .cornerRadius(12)
-            if !task.error.isEmpty {
-                Text("错误: \(task.error)").font(.footnote).foregroundColor(.red).textSelection(.enabled)
+            if !snap.error.isEmpty {
+                Text("错误: \(snap.error)").font(.footnote).foregroundColor(.red).textSelection(.enabled)
             }
         }
     }
 }
 
 private struct SubAgentTraceList: View {
-    let task: SubAgentTask
+    let snap: SubAgentTask.SubAgentSnapshot
     var body: some View {
         VStack(alignment: .leading, spacing: 10) {
-            Text("执行轨迹（\(task.trace.count) 条）")
+            Text("执行轨迹（\(snap.trace.count) 条）")
                 .font(.subheadline)
                 .fontWeight(.semibold)
-            if task.trace.isEmpty {
+            if snap.trace.isEmpty {
                 Text("无轨迹记录")
                     .font(.caption)
                     .foregroundColor(.secondary)
                     .padding(.vertical, 8)
             } else {
-                ForEach(Array(task.trace.enumerated()), id: \.offset) { _, entry in
+                ForEach(Array(snap.trace.enumerated()), id: \.offset) { _, entry in
                     let role = entry["role"] as? String ?? "?"
                     let content = entry["content"] as? String ?? ""
                     let tool = entry["tool"] as? String ?? ""
