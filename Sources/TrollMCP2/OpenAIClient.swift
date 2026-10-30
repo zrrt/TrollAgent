@@ -86,6 +86,13 @@ final class OpenAIClient {
     /// 鉴权纠正回调（创建方注入，用于把识别到的 authMethod 持久化）
     var onAuthCorrected: ((String) -> Void)?
     private var currentCompatLevel: Int;  // v6.0.30: 内存里的兼容级别，避免反复试探死循环
+    // fix73j-p4：兼容级别隔离——子代理场景（persistCompatLevel=false）降级成功/失败
+    // 不写回共享 ModelConfig，避免子代理多工具大载荷触发中转拒绝 → 降级 → 主会话连带降级
+    // （共享记忆双向污染）。子代理任务级用 compatOverride 缓存降级结果（每轮新 client
+    // 从缓存起步，不浪费往返），resolvedLevel 暴露最终 settle 级别。
+    var persistCompatLevel = true
+    var compatOverride: Int?
+    private(set) var resolvedLevel: Int?
     // v7.4.0-fix73c：流式请求在途标志（后台代传检测用——仅流式请求值得 cancel+非流式重发）
     private(set) var isStreamingInFlight = false
     /// v2.9.87：多级降级总预算——全链串行最坏 7 分钟+，用户感知"一直请求中"。
@@ -528,6 +535,8 @@ final class OpenAIClient {
         // v2.9.299：VLM 错误图片剥离标志——遇到"模型不是视觉模型"时只剥离一次
         self.imagesStrippedForVLM = false
         var start = min(max(config.compatLevel, 0), maxLevel)
+        // fix73j-p4：任务级降级缓存优先（子代理场景：每轮新 client 从缓存起步，不重试降级链）
+        if let ov = compatOverride { start = ov }
         // 历史被记忆为"纯对话"(L3/L4) 的旧配置，给一次恢复工具调用的机会：
         // 先试 L5 (Responses API + 工具），failed自动回落 L3。
         if start == 3 || start == 4 {
@@ -1179,6 +1188,10 @@ final class OpenAIClient {
     }
 
     private func persist(level: Int) {
+        // fix73j-p4：resolvedLevel 总记录（隔离场景也暴露最终 settle 级别给任务级缓存）；
+        // persistCompatLevel=false（子代理）时不写回共享 ModelConfig——防双向污染。
+        resolvedLevel = level
+        guard persistCompatLevel else { return }
         DispatchQueue.main.async {
             guard let idx = ModelStore.shared.configs.firstIndex(where: { $0.id == self.config.id }) else { return }
             ModelStore.shared.configs[idx].compatLevel = level

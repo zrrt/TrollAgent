@@ -578,6 +578,12 @@ final class SubAgentRunner {
     /// fix73j-P2：模型首轮按纪律输出的 📋 PLAN 段（计划锚定——每轮 send 注入上下文末尾，
     /// 对齐 Manus "把计划念到上下文末尾"防目标漂移；不写进 messages，避免折叠污染）。
     private var planText: String?
+    /// fix73j-p4：任务级模型配置快照 + 兼容级别缓存——子代理请求失败触发的降级
+    /// （OpenAIClient.persistCompatLevel=false）不写回共享 ModelConfig，主会话不被
+    /// 连带降级；快照保证任务内不受主会话中途降级影响；compatOverride 缓存子代理
+    /// 任务内 settle 的级别，每轮新 client 从缓存起步（不重试降级链）。
+    private var taskConfig: ModelConfig?
+    private var compatOverride: Int?
     private var lastTool = ""
     private var sameToolRepeat = 0
     /// v7.1.107-P0: 轮次预警已注入（剩 2-3 轮时，工具仍可用）
@@ -787,14 +793,21 @@ final class SubAgentRunner {
         }
         // 取当前模型配置（与主会话一致）
         let store = ModelStore.shared
-        let config = store.lastUsedConfigId
-            .flatMap { id in store.configs.first { $0.id.uuidString == id } }
-            ?? store.configs.first
-        guard let config else {
+        // fix73j-p4：任务级配置快照——首次取共享 config 值拷贝，任务内不受主会话
+        // 中途降级/切换影响；子代理降级不写回共享（persistCompatLevel=false）。
+        if taskConfig == nil {
+            taskConfig = store.lastUsedConfigId
+                .flatMap { id in store.configs.first { $0.id.uuidString == id } }
+                ?? store.configs.first
+        }
+        guard let config = taskConfig else {
             task.markFailed("no model config available")
             return
         }
         let client = OpenAIClient(config)
+        // fix73j-p4：子代理降级隔离——不写回共享 ModelConfig；任务级缓存起步避免重试降级链
+        client.persistCompatLevel = false
+        if let ov = compatOverride { client.compatOverride = ov }
         self.client = client
         // v7.4.0-fix73f-5：子代理请求短超时——默认 session 90s 对 timeout_secs=30 的任务
         // 太长（实测第一个请求挂住 30-90s、rounds=0 的根因）。压到任务剩余时间的合理比例：
@@ -821,6 +834,9 @@ final class SubAgentRunner {
             guard let self = self else { return }
             // v7.4.0-fix73f-6：收到响应（成功/失败都算）——send_state=replied
             self.task.markSendReplied()
+            // fix73j-p4：任务级降级缓存——本请求 settle 的兼容级别记入任务缓存，
+            // 下一轮新 client 从缓存起步（不重试降级链），且不污染主会话 config。
+            if let lv = self.client?.resolvedLevel { self.compatOverride = lv }
             // v7.4.0-fix73f-4：看门狗已中断（markFailed）后，迟到的回调不得覆盖状态——
             // 否则超时任务会"复活"成 done（用户实测超时后仍 running 的同类竞态）。
             guard self.task.isRunning() else { return }

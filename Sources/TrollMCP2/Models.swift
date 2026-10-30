@@ -2475,6 +2475,10 @@ final class ConversationStore: ObservableObject {
             self.conversations[ci].messages[mi].toolNarration = n
         }
         self.pendingToolMsgIDs.removeValue(forKey: callId)
+        // fix73j-p3e：修改已有消息必须标 dirty——否则 persist 增量路径（count 不变、非 dirty）
+        // 不写任何行，isRunning=false/结果内容永远不落盘 → 杀后台重启仍残留 isRunning=true
+        // 占位卡被崩溃恢复误判失败（p3b 的 flush 白写、7.1.227 复现失败的根因）。
+        self.dirtySessions.insert(self.conversations[ci].id)
         // fix73j-p3b：工具结果落盘保底——成功结果若只靠 save() 异步队列，用户杀后台
         // 即丢（重启被崩溃恢复误判失败）。resolve 后同步 flush 保证 isRunning=false/
         // 结果内容落盘（工具批每个结果一次同步写，成本毫秒级可接受）。
@@ -3042,7 +3046,13 @@ final class ConversationStore: ObservableObject {
         }
         conversations = convs
         selectedId = conversations.first?.id
-        if cleaned { save() }   // 持久化清理结果，避免下次启动重复标记
+        // fix73j-p3f：清理必须固化落盘——旧代码 save() 异步 + 未标 dirty → persist 增量
+        // 不写（count 不变），isRunning=false/isError=true 清理结果不落盘，每次启动重复
+        // 改写（幂等但无效）。标全部 dirty + 同步 flush，让崩溃恢复结果真正写盘。
+        if cleaned {
+            for conv in convs { dirtySessions.insert(conv.id) }
+            flush()
+        }
     }
 
     /// v7.4.0-fix71：旧路径（文件/备份/UserDefaults 迁移）——同步、主线程调用；
