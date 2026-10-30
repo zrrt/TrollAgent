@@ -2556,12 +2556,13 @@ final class ConversationStore: ObservableObject {
         // fix73j-审计 M-12：裁剪基于"非状态卡消息"（core），[SUBAGENT-DONE] 卡
         // （toolName=subagent.complete）永远附加在 result 末尾——若让卡占 suffix(6/2)
         // 保留槽，多子代理完成后用户最新提问/最近轮次被删，主 agent 答非所问。
-        let doneCards = all.filter { $0.toolName == "subagent.complete" }
+        // （改名 doneCardsTail：函数上方 fix73j-审计序列安全化处已有 doneCards 同名变量）
+        let doneCardsTail = all.filter { $0.toolName == "subagent.complete" }
         let core = all.filter { $0.toolName != "subagent.complete" }
         // 估算总 token（校准后）；低于预算直接返回 (短会话，无需压缩)
         let total = Int(Double(core.reduce(0) { $0 + Self.estimateTokens($1) }) * ratio)
         if total <= theBudget {
-            var short = core + doneCards
+            var short = core + doneCardsTail
             if let s = priorSummary { short.insert(s, at: 0) }   // 旧摘要永远保留
             return (short, [], 0)
         }
@@ -2586,7 +2587,7 @@ final class ConversationStore: ObservableObject {
             kept.append(m)
             used += t
         }
-        var result = kept + suffix + doneCards
+        var result = kept + suffix + doneCardsTail
         // 清理孤立 tool 消息：裁剪可能导致 assistant(tool_calls) 被裁、其 tool 结果残留
         result = Self.sanitizeToolSequence(result)
         // 插入截断提示 (v2.9.88：本地生成话题摘要，而非简单丢弃 —— 不用额外请求，
