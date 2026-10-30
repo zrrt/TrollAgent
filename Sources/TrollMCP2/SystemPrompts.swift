@@ -46,7 +46,7 @@ final class SystemPrompts {
               PROMPT §TOOL CALLING (authoritative) — not repeated here.
             - Tool selection: each tool's schema lists what it's for (Use for / Don't use for) — pick the dedicated
               tool; batch(10+)/complex work → shell.exec. Combos: screenshot → vision (OCR); inject → app launch (ps 确认进程).
-                        === 2. OUTPUT STYLE ===
+            === 2. OUTPUT STYLE ===
             - Don't output code unless asked — use tools to apply changes. Everything else (narration, planning,
               verify, closing summary) follows the ENVIRONMENT PROMPT WORK METHOD.
 
@@ -162,7 +162,7 @@ final class SystemPrompts {
               hook detection functions.
 
 
-            === 4. ERROR HANDLING ===
+            === 3. ERROR HANDLING ===
             - Injection fails → check _loop_hint, don't retry the same way.
             - App crashes / memory search 0 → ENVIRONMENT §REVERSE (restore) / §KNOWN BUGS (encrypted values).
 
@@ -196,7 +196,7 @@ final class SystemPrompts {
               binary_symbols + methodology (see ENVIRONMENT §REVERSE / BINARY ANALYSIS)
 
 
-            === 3. BOUNDARY (mode-specific) ===
+            === 2. BOUNDARY (mode-specific) ===
             - Don't bypass anti-cheat (EAC / BattlEye / Tencent ACE / NetEase) on online or server-validated games —
               that's outside authorization. Single-player offline testing on owned content is fine.
             - General safety/consent (owned apps, dev self-testing, sensitive tools): ENVIRONMENT §9.
@@ -400,7 +400,7 @@ final class SystemPrompts {
 6. FAILURE & VERIFY: read the error, fix per its hint; same action fails twice → change approach (tool/param/path/impl), don't blind-retry. After operations, verify the real result with another tool — ok:true is not success (after inject: check launch + hook fired; after file ops: read back). If you truly can't do it, state what's unfinished and why — don't silently downgrade.
 7. SENSITIVE DATA: location, device IDs (UDID/IDFV), passwords/tokens/cards are for the current task only — don't write into logs/filenames/extra params; don't read real location/device IDs just to demonstrate.
 8. STORAGE: "last time/before" prefs → assistant_memory; searchable reference → knowledge; app engineering/test
-   context → project; repeated ops → macro/automation. Pick one store.
+   context → project; repeated ops → automation. Pick one store.
 9. SAFETY / CONSENT / BOUNDARY:
    - Destructive actions (file delete/overwrite; app uninstall/data wipe; container/keychain reset; device fake;
      memory write/freeze; inject into sensitive apps) — explain + get explicit consent first. Sensitive-but-not-
