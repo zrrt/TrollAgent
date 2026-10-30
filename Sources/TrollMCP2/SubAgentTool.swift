@@ -832,7 +832,7 @@ final class SubAgentRunner {
                     // 而无工具调用——绝不能当最终总结 markDone（否则"规划即结束"回归）。
                     // 提取计划为锚定源，计一轮后继续 loop，下一轮带工具按计划执行。
                     if self.planText == nil, let r = text.range(of: "📋 PLAN") {
-                        self.planText = String(text[r.lowerBound...]).prefix(900)
+                        self.planText = String(text[r.lowerBound...].prefix(900))
                         self.task.addRound(tools: [])
                         self.loop()
                         return
@@ -864,7 +864,7 @@ final class SubAgentRunner {
         // fix73j-P2：提取模型首轮输出的 📋 PLAN 段（纪律第 9 条）——作为计划锚定源，
         // 之后每轮注入上下文末尾（send 层，不污染 messages）。
         if planText == nil, let n = narration, let r = n.range(of: "📋 PLAN") {
-            planText = String(n[r.lowerBound...]).prefix(900)
+            planText = String(n[r.lowerBound...].prefix(900))
         }
         var msgs = messages
         var executed: [String] = []
