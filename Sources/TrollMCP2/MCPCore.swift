@@ -471,6 +471,8 @@ public final class ToolRegistry: ObservableObject {
         "github",
 
 
+        // v7.2.5-fix60：原生工具能力探测（AI 不确定时查 py3-native/node-native/jtool2 等可用性与用法；iOS 侧 bin/ 非 Alpine PATH）
+        "native.tools",
         // v7.4.0-fix73f-3：子代理工具默认启用——否则 subagent.run 注册了但不在白名单 → 
         // enabledOpenAIToolSchema 过滤 → AI 可用工具列表里没有 → 实测"注册表能查 schema、
         // 实际调用拿不到结果"（用户真机复现）。对齐 OpenMinis subagent_task 委派能力。
@@ -1273,7 +1275,9 @@ public final class ToolRegistry: ObservableObject {
         //   (只列真实注册的大工具 + 版本从 Bundle 读)，给 AI 一个无幽灵工具名的真实目录。
         // fix73j-p5j 工具精简审计：SystemOverviewTool 被砍（合并 tools.audit）——保留类代码留档
         // v7.2.5-fix60: native.tools——原生工具能力探测（AI 不确定时查可用性/版本/用法）
-        // fix73j-p5j 工具精简审计：NativeToolsTool 被砍（Alpine 等价，AI 直跑 shell.exec）——保留类代码留档
+        // fix73j-p5j 修正：native.tools 恢复——它查的是 iOS 侧 bin/ 的 Mach-O 工具链（jtool2/ldid/py3-native 等），
+        // 不在 Alpine PATH 内，`which` 替代不了；审计时误判为 Alpine 等价，用户确认后恢复。
+        register(NativeToolsTool())
         // v4.4.x(优化): tools.audit——工具注册表一致性审计（检测 summary/prerequisites 里引用
         //   但未注册的"幽灵工具名"，防文档漂移，AI 分不清工具的根因之一）。
         register(AuditTool())
