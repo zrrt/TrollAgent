@@ -941,10 +941,10 @@ final class SubAgentRunner {
                 sameToolRepeat = 1
             }
         }
-        // 2) 并发执行（≤3 在途），结果按 index 收集
+        // 2) 并发执行（fix73j-p5e：每个子代理独立并发槽，一次最多 4 个命令在途），结果按 index 收集
         var results: [Int: ChatMessage] = [:]
         let resultsLock = NSLock()
-        let semaphore = DispatchSemaphore(value: 3)
+        let semaphore = DispatchSemaphore(value: 4)
         let group = DispatchGroup()
         let indices = calls.indices.filter { !loopBlocked.contains($0) }
         for i in indices {
