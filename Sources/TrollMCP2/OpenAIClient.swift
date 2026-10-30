@@ -86,6 +86,11 @@ final class OpenAIClient {
     /// 鉴权纠正回调（创建方注入，用于把识别到的 authMethod 持久化）
     var onAuthCorrected: ((String) -> Void)?
     private var currentCompatLevel: Int;  // v6.0.30: 内存里的兼容级别，避免反复试探死循环
+    // fix73j-p5：兼容级别三状态源职责（语义收敛）——
+    // ① config.compatLevel：持久记忆（主会话用，写回共享 ModelConfig）；
+    // ② client.currentCompatLevel：单请求实例内的试探状态（本请求降级链演化，防死循环）；
+    // ③ compatOverride：子代理任务态覆盖（任务内 settle 级别缓存，跨轮有效，不写共享）。
+    // 优先级：compatOverride > config.compatLevel（子代理场景 override 非 nil 时优先）。
     // fix73j-p4：兼容级别隔离——子代理场景（persistCompatLevel=false）降级成功/失败
     // 不写回共享 ModelConfig，避免子代理多工具大载荷触发中转拒绝 → 降级 → 主会话连带降级
     // （共享记忆双向污染）。子代理任务级用 compatOverride 缓存降级结果（每轮新 client

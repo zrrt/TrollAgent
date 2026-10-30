@@ -1173,12 +1173,28 @@ final class ConversationStore: ObservableObject {
 
     /// v3.1.70：更新活动请求会话内消息内容 (无活动请求时用当前选中会话）
     func updateMessageContent(id: UUID, content: String) {
-        guard let idx = activeConvIndex,
-              let mi = conversations[idx].messages.firstIndex(where: { $0.id == id }) else { return }
-        conversations[idx].messages[mi].content = content
+        // fix73j-p5：走统一变更入口——自动标 dirty + 同步落盘（编辑属数据安全关键点，
+        // 异步 save 杀后台会丢编辑内容）。
+        guard let idx = activeConvIndex else { return }
+        _ = updateMessage(in: conversations[idx].id, msgId: id) { msg in
+            msg.content = content
+        }
         conversations[idx].updatedAt = Date()
-        // v7.4.0-sessionstore：中间修改 → dirty（save() 时整会话重写）
-        dirtySessions.insert(conversations[idx].id)
+    }
+
+    /// fix73j-p5：统一消息变更入口（治本——解决"改消息忘了标 dirty/save"的隐性错误模式）。
+    /// 任何对已有消息的修改都必须经此方法：内部自动标 dirtySessions + 同步 flush()，
+    /// 保证 isRunning/content/error 等状态变更立即落盘（杀后台不丢、重启不误判）。
+    /// 注意：实时流式更新（打字机增量，每秒多次）**不走此入口**——由 attachTrail 结束兜底，
+    /// 避免高频同步写盘卡顿；此处只服务低频、语义完整的状态变更。
+    @discardableResult
+    func updateMessage(in convId: UUID, msgId: UUID, _ transform: (inout ChatMessage) -> Void) -> Bool {
+        guard let ci = conversations.firstIndex(where: { $0.id == convId }),
+              let mi = conversations[ci].messages.firstIndex(where: { $0.id == msgId }) else { return false }
+        transform(&conversations[ci].messages[mi])
+        dirtySessions.insert(convId)
+        flush()
+        return true
     }
 
     /// v3.1.70：删除活动请求会话内的消息 (无活动请求时用当前选中会话）
@@ -1525,7 +1541,9 @@ final class ConversationStore: ObservableObject {
                 self.conversations[idx].messages[mi].trail = trail
                 // v7.4.0-fix68：trail 变更 = 中间修改 → dirty（否则 count 不变、persist 不重写，轨迹不落盘）
                 self.dirtySessions.insert(self.conversations[idx].id)
-                self.save()
+                // fix73j-p5：AI 回复完成是数据安全关键点——异步 save 杀后台会丢完成的回复文本/
+                // 轨迹（工具结果已 resolve 落盘但文本回复可能丢）。改同步 flush 保完整。
+                self.flush()
             }
         }
     }
@@ -2462,27 +2480,22 @@ final class ConversationStore: ObservableObject {
     /// v3.5.10：工具结果回来后，原地更新"启动即上屏"的 running 步骤卡（同一张卡变完成/出错）。
     /// v7.1.106：按 toolCallId 定位多槽（真并行批每工具一张卡），完成后移除该槽。
     private func resolvePendingTool(callId: String, content: String, toolDuration: Double, isError: Bool, narration: String?) {
-        guard let mid = self.pendingToolMsgIDs[callId], let ci = self.activeConvIndex,
-              let mi = self.conversations[ci].messages.firstIndex(where: { $0.id == mid }) else {
+        guard let mid = self.pendingToolMsgIDs[callId], let ci = self.activeConvIndex else {
             self.pendingToolMsgIDs.removeValue(forKey: callId)
             return
         }
-        self.conversations[ci].messages[mi].content = content
-        self.conversations[ci].messages[mi].toolDuration = toolDuration
-        self.conversations[ci].messages[mi].isError = isError
-        self.conversations[ci].messages[mi].isRunning = false
-        if let n = narration, !n.isEmpty {
-            self.conversations[ci].messages[mi].toolNarration = n
+        // fix73j-p5：统一变更入口——自动标 dirty + 同步 flush（isRunning=false/结果内容
+        // 立即落盘；p3e 根因：裸改不标 dirty 时 persist 增量不写任何行，杀后台重启误判失败）。
+        _ = self.updateMessage(in: self.conversations[ci].id, msgId: mid) { msg in
+            msg.content = content
+            msg.toolDuration = toolDuration
+            msg.isError = isError
+            msg.isRunning = false
+            if let n = narration, !n.isEmpty {
+                msg.toolNarration = n
+            }
         }
         self.pendingToolMsgIDs.removeValue(forKey: callId)
-        // fix73j-p3e：修改已有消息必须标 dirty——否则 persist 增量路径（count 不变、非 dirty）
-        // 不写任何行，isRunning=false/结果内容永远不落盘 → 杀后台重启仍残留 isRunning=true
-        // 占位卡被崩溃恢复误判失败（p3b 的 flush 白写、7.1.227 复现失败的根因）。
-        self.dirtySessions.insert(self.conversations[ci].id)
-        // fix73j-p3b：工具结果落盘保底——成功结果若只靠 save() 异步队列，用户杀后台
-        // 即丢（重启被崩溃恢复误判失败）。resolve 后同步 flush 保证 isRunning=false/
-        // 结果内容落盘（工具批每个结果一次同步写，成本毫秒级可接受）。
-        self.flush()
     }
 
     /// v2.9.138：动态会话状态块——设备/App/工作区/当前会话，injected system 最前
@@ -2925,14 +2938,13 @@ final class ConversationStore: ObservableObject {
     private var storeFile: String { storeDir.appending("/conversations.json") }
     private let saveQueue = DispatchQueue(label: "trollmcp2.conversations.save", qos: .utility)
 
-    private func save() {
-        let snapshot = conversations
-        // v7.4.0-sessionstore：dirty 快照随 save 清空（主线程独占；队列只读快照）
-        let dirty = dirtySessions
-        dirtySessions.removeAll()
+    /// fix73j-p5：持久化核心——save()/flush() 唯一实现（消除 40 行重复）。
+    /// sync=true 同步落盘（切后台/工具结果 resolve/编辑等数据安全关键点——杀后台不丢）；
+    /// sync=false 走 saveQueue 异步（高频流式更新等——结束兜底由 attachTrail 等 sync 点补）。
+    private func persistSnapshot(_ snapshot: [ChatConversation], _ dirty: Set<UUID>, sync: Bool) {
         let dir = storeDir
         let path = storeFile
-        saveQueue.async {
+        let work = {
             // v7.4.0-sessionstore：增量双层优先（JSONL 真源 + SQLite 索引）——
             // 只 append 新消息行 + upsert 索引行，根治全量重写 O(N²)（长会话卡顿）。
             if SessionStore.shared.persist(snapshot: snapshot, dirty: dirty) {
@@ -2953,6 +2965,19 @@ final class ConversationStore: ObservableObject {
             }
             try? data.write(to: URL(fileURLWithPath: path), options: .atomic)
         }
+        if sync {
+            saveQueue.sync(execute: work)
+        } else {
+            saveQueue.async(execute: work)
+        }
+    }
+
+    private func save() {
+        // v7.4.0-sessionstore：dirty 快照随 save 清空（主线程独占；队列只读快照）
+        let snapshot = conversations
+        let dirty = dirtySessions
+        dirtySessions.removeAll()
+        persistSnapshot(snapshot, dirty, sync: false)
     }
 
     /// fix73j-p3a：同步落盘当前快照——save() 走 saveQueue.async，用户杀后台（进程直接
@@ -2963,26 +2988,7 @@ final class ConversationStore: ObservableObject {
         let snapshot = conversations
         let dirty = dirtySessions
         dirtySessions.removeAll()
-        saveQueue.sync {
-            if SessionStore.shared.persist(snapshot: snapshot, dirty: dirty) {
-                return
-            }
-            // 降级：同步全量 JSON（与 save() 异步降级同逻辑，同步执行）
-            guard let data = try? JSONEncoder().encode(snapshot) else { return }
-            let fm = FileManager.default
-            let dir = storeDir
-            let path = storeFile
-            let bak1 = dir.appending("/conversations.bak.1.json")
-            let bak2 = dir.appending("/conversations.bak.2.json")
-            if fm.fileExists(atPath: bak1) {
-                try? fm.removeItem(atPath: bak2)
-                try? fm.moveItem(atPath: bak1, toPath: bak2)
-            }
-            if fm.fileExists(atPath: path) {
-                try? fm.moveItem(atPath: path, toPath: bak1)
-            }
-            try? data.write(to: URL(fileURLWithPath: path), options: .atomic)
-        }
+        persistSnapshot(snapshot, dirty, sync: true)
     }
 
     private func decodeFile(_ path: String) -> [ChatConversation]? {
@@ -2992,9 +2998,25 @@ final class ConversationStore: ObservableObject {
 
     private func applyLoaded(_ decoded: [ChatConversation]) {
         var convs = decoded.sorted { $0.updatedAt > $1.updatedAt }
-        // v6.1.5-14bp3：App 被系统终止（闪退）时工具调用卡"执行中…"且永不返回——
-        // 重启加载后把残留 running 工具消息统一标记为中断失败，避免 UI 永远挂着无结果。
-        // v7.2.1：恢复文案通用化（不再特指 git/vim/curl 历史崩溃），并记录崩溃时正在跑的工具名
+        // fix73j-p5：职责拆分——applyLoaded 只做"加载 + 调崩溃恢复"；
+        // 崩溃残留标记/悬空序列修补独立为 repairCrashResidue（单一职责，可单测）。
+        let cleaned = repairCrashResidue(&convs)
+        conversations = convs
+        selectedId = conversations.first?.id
+        // fix73j-p3f：清理必须固化落盘——旧代码 save() 异步 + 未标 dirty → persist 增量
+        // 不写（count 不变），isRunning=false/isError=true 清理结果不落盘，每次启动重复
+        // 改写（幂等但无效）。标全部 dirty + 同步 flush，让崩溃恢复结果真正写盘。
+        if cleaned {
+            for conv in convs { dirtySessions.insert(conv.id) }
+            flush()
+        }
+    }
+
+    /// fix73j-p5：崩溃恢复（v6.1.5-14bp3 原逻辑，独立函数）——App 被系统终止时工具调用卡
+    /// "执行中…"且永不返回，重启加载后把残留 running 工具消息标记为中断失败，避免 UI 永远
+    /// 挂着无结果；同时修补崩溃残留的非法序列（assistant toolCalls 无配对 tool 结果 →
+    /// 后续请求 API 400/挂起）。p3d 误判保护：仅"无内容"残留卡标失败（有内容 = 结果已返回）。
+    private func repairCrashResidue(_ convs: inout [ChatConversation]) -> Bool {
         var cleaned = false
         for ci in convs.indices {
             for mi in convs[ci].messages.indices where convs[ci].messages[mi].isRunning {
@@ -3044,15 +3066,7 @@ final class ConversationStore: ObservableObject {
                 cleaned = true
             }
         }
-        conversations = convs
-        selectedId = conversations.first?.id
-        // fix73j-p3f：清理必须固化落盘——旧代码 save() 异步 + 未标 dirty → persist 增量
-        // 不写（count 不变），isRunning=false/isError=true 清理结果不落盘，每次启动重复
-        // 改写（幂等但无效）。标全部 dirty + 同步 flush，让崩溃恢复结果真正写盘。
-        if cleaned {
-            for conv in convs { dirtySessions.insert(conv.id) }
-            flush()
-        }
+        return cleaned
     }
 
     /// v7.4.0-fix71：旧路径（文件/备份/UserDefaults 迁移）——同步、主线程调用；
