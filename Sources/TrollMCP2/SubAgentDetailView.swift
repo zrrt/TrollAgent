@@ -33,6 +33,8 @@ struct SubAgentDetailView: View {
     // fix73j-p5f：实时轨迹（运行中/重启后从落盘文件读——trace 完成时才从 runner 导出，
     // 运行中 task.trace 为空，文件兜底显示实时进度）
     @State private var fileTrace: [[String: Any]]?
+    // fix73j-p5h：UI 显示名（A/B/C/D，用户要求不用十六进制 task_id）
+    @State private var dispName: String?
     // fix73j：运行中打开详情页 → 2s 轮询刷新（实时进度；终态后自动停止）
     @State private var pollTimer: Timer?
 
@@ -60,7 +62,7 @@ struct SubAgentDetailView: View {
                     .frame(maxWidth: .infinity, maxHeight: .infinity)
                 }
             }
-            .navigationTitle("子代理 \(taskID)")
+            .navigationTitle(dispName.map { "子代理 \($0)" } ?? "子代理 \(taskID)")
             .navigationBarTitleDisplayMode(.inline)
             .toolbar {
                 ToolbarItem(placement: .cancellationAction) {
@@ -84,6 +86,11 @@ struct SubAgentDetailView: View {
     private func refresh() {
         let t = SubAgentManager.shared.status(id: taskID)
         task = t
+        // fix73j-p5h：显示名——运行中取 task.displayName；重启后从消息 payload 取
+        if let t { dispName = t.displayName }
+        else if let fb = fallbackJSON {
+            dispName = SubAgentCompleteCard.parse(fb)["display_name"] as? String
+        }
         // fix73j-p5f：实时读落盘轨迹文件（运行中每轮覆盖写——详情页始终能看最新进度）
         if let ft = SubAgentTask.loadTrace(id: taskID), !ft.isEmpty {
             fileTrace = ft

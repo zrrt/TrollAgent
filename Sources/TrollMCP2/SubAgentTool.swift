@@ -166,6 +166,8 @@ final class SubAgentTask: Identifiable {
     weak var runnerRef: SubAgentRunner?
     /// fix73j：派发时的会话 id——回传写回该会话（防用户切换会话后跨会话污染）
     let sessionID: UUID?
+    /// fix73j-p5h：UI 显示名（A/B/C/D…，用户要求界面不用十六进制 task_id）
+    let displayName: String
     /// fix73j：轨迹快照（终态时从 runner 导出，供详情页回看）——[{role, content, tool}]
     private(set) var trace: [[String: Any]] = []
     private(set) var hasTrace = false
@@ -189,9 +191,10 @@ final class SubAgentTask: Identifiable {
     /// v7.4.0-fix73f-7：绝对截止时刻（createdAt + timeoutSecs）——status 软超时与
     /// 看门狗共用，status 轮询路径检查它，解决"time_left_secs 归零也不 abort"。
     let deadlineDate: Date
-    init(id: String, instruction: String, maxRounds: Int, timeoutSecs: TimeInterval,
+    init(id: String, displayName: String, instruction: String, maxRounds: Int, timeoutSecs: TimeInterval,
          personaName: String = "general", sessionID: UUID? = nil) {
         self.id = id
+        self.displayName = displayName
         self.instruction = instruction
         self.maxRounds = maxRounds
         self.timeoutSecs = timeoutSecs
@@ -282,7 +285,7 @@ final class SubAgentTask: Identifiable {
                                           result: result, error: error)
         // 2) 完成回传
         var payload: [String: Any] = [
-            "ok": true, "task_id": id, "agent_type": personaName,
+            "ok": true, "task_id": id, "display_name": displayName, "agent_type": personaName,
             "status": status.rawValue, "rounds": rounds,
             "elapsed_secs": Int(elapsed),
             "result": String(result.prefix(2000)),
@@ -295,7 +298,7 @@ final class SubAgentTask: Identifiable {
         let content = "[SUBAGENT-DONE] " + body
         DispatchQueue.main.async {
             var m = ChatMessage(role: "user", content: content)
-            m.toolTitle = "子代理 \(self.id) · \(self.personaName) \(SubAgentStatusText.zh(self.status.rawValue))"
+            m.toolTitle = "子代理 \(self.displayName) · \(self.personaName) \(SubAgentStatusText.zh(self.status.rawValue))"
             m.toolName = "subagent.complete"
             if let sid = self.sessionID {
                 ConversationStore.shared.appendToSession(id: sid, message: m, generateTitle: false)
@@ -395,6 +398,15 @@ final class SubAgentManager {
     /// fix73j-p5e：仅作统计展示（subagent.status），不再作为派发限制——
     /// 子代理槽位各自独立，不共享配额上限。
     private var runningCount = 0
+    /// fix73j-p5h：UI 显示名分配（A→B→C…→Z→A1→B1…）
+    private var letterCounter = 0
+    func nextDisplayName() -> String {
+        lock.lock(); defer { lock.unlock() }
+        let n = letterCounter
+        letterCounter += 1
+        if n < 26 { return String(Character(UnicodeScalar(65 + n)!)) }
+        return String(Character(UnicodeScalar(65 + (n % 26))!)) + String(n / 26)
+    }
     /// v7.4.0-fix73g：在途 LLM 请求的真 abort 处理器——watchdog/stop/软超时到点必须
     /// cancel 掉 runner 的 OpenAIClient（此前只改任务状态，请求永远在后台挂住 → send_state 卡 sent）。
     private var cancellers: [String: () -> Void] = [:]
@@ -468,10 +480,11 @@ final class SubAgentManager {
         // runningCount 仅作统计供 subagent.status 展示，不再作为派发限制。
         runningCount += 1
         let id = String(UUID().uuidString.prefix(8))
+        let displayName = nextDisplayName()
         let persona = SubAgentPersonas.find(personaName)
         let clampedRounds = max(2, min(maxRounds, 30))
         let clampedTimeout = max(30, min(timeout, 600))
-        let task = SubAgentTask(id: id, instruction: instruction,
+        let task = SubAgentTask(id: id, displayName: displayName, instruction: instruction,
                                 maxRounds: clampedRounds, timeoutSecs: clampedTimeout,
                                 personaName: persona.name, sessionID: sessionID)
         tasks[id] = task
@@ -1073,14 +1086,14 @@ final class SubAgentRunTool: MCPTool {
                                                   personaName: persona.name, sessionID: sessionID)
         // fix73j：主界面立即可见"执行中"卡（派发即上屏，完成时再补 [SUBAGENT-DONE] 完成卡）
         let runningBody: [String: Any] = [
-            "ok": true, "task_id": id, "agent_type": persona.name,
-            "status": "running", "rounds": 0,
+            "ok": true, "task_id": id, "display_name": displayName,
+            "agent_type": persona.name, "status": "running", "rounds": 0,
         ]
         let runningContent = "[SUBAGENT-RUNNING] "
             + ((try? String(data: JSONSerialization.data(withJSONObject: runningBody), encoding: .utf8)) ?? "")
         DispatchQueue.main.async {
             var m = ChatMessage(role: "user", content: runningContent)
-            m.toolTitle = "子代理 \(id) · \(persona.name) \(SubAgentStatusText.zh("running"))"
+            m.toolTitle = "子代理 \(displayName) · \(persona.name) \(SubAgentStatusText.zh("running"))"
             m.toolName = "subagent.running"
             if let sid = sessionID {
                 ConversationStore.shared.appendToSession(id: sid, message: m, generateTitle: false)
