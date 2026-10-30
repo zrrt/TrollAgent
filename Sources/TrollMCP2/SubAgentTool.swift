@@ -828,6 +828,15 @@ final class SubAgentRunner {
             case .success(let cr):
                 switch cr {
                 case .text(let text, _):
+                    // fix73j-P2：首轮模型若只输出 📋 PLAN 计划（按纪律第 9 条"先规划再执行"）
+                    // 而无工具调用——绝不能当最终总结 markDone（否则"规划即结束"回归）。
+                    // 提取计划为锚定源，计一轮后继续 loop，下一轮带工具按计划执行。
+                    if self.planText == nil, let r = text.range(of: "📋 PLAN") {
+                        self.planText = String(text[r.lowerBound...]).prefix(900)
+                        self.task.addRound(tools: [])
+                        self.loop()
+                        return
+                    }
                     self.task.markDone(result: text)
                 case .toolCalls(let calls, _, let content):
                     self.execute(calls: calls, narration: content)
