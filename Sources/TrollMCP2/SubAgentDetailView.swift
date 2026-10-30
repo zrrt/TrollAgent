@@ -97,13 +97,34 @@ struct SubAgentDetailView: View {
     // MARK: - 回退视图（重启后 tasks 丢失，仅消息内摘要）
 
     private func fallbackContent(_ d: [String: Any]) -> some View {
-        let status = SubAgentStatusText.zh(d["status"] as? String ?? "?")
+        let rawStatus = d["status"] as? String ?? "?"
+        // fix73j-审计：重启后运行中的子代理任务丢失（tasks 是内存态）——fallback 里的
+        // running 状态是派发时的快照，不能再误导显示"执行中"。
+        if rawStatus == "running" {
+            return AnyView(
+                VStack(spacing: 10) {
+                    Image(systemName: "hourglass")
+                        .font(.system(size: 32))
+                        .foregroundColor(.orange)
+                    Text("任务已失效（App 重启后运行中的子代理丢失）")
+                        .font(.subheadline)
+                        .foregroundColor(.secondary)
+                    Text("重新派发该任务即可。已完成的任务结果保留在此会话中。")
+                        .font(.caption)
+                        .foregroundColor(.secondary)
+                        .multilineTextAlignment(.center)
+                }
+                .frame(maxWidth: .infinity, maxHeight: .infinity)
+                .padding(24)
+            )
+        }
+        let status = SubAgentStatusText.zh(rawStatus)
         let agent = d["agent_type"] as? String ?? "?"
         let rounds = d["rounds"] as? Int ?? 0
         let elapsed = d["elapsed_secs"] as? Int ?? 0
         let result = d["result"] as? String ?? ""
         let err = d["error"] as? String ?? ""
-        return ScrollView {
+        return AnyView(ScrollView {
             VStack(alignment: .leading, spacing: 14) {
                 HStack(spacing: 10) {
                     Image(systemName: status == "done" ? "checkmark.circle.fill" : "xmark.circle.fill")
@@ -137,7 +158,7 @@ struct SubAgentDetailView: View {
                     .foregroundColor(.secondary)
             }
             .padding(16)
-        }
+        })
     }
 }
 

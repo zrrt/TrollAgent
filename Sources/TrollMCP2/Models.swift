@@ -2487,6 +2487,15 @@ final class ConversationStore: ObservableObject {
     /// v7.1.109-peers：分档预算（OpenMinis ContextPolicy）+ 校准系数（calibration ratio）。
     private func messagesForAPI(budget: Int) -> (messages: [ChatMessage], compactSource: [ChatMessage], droppedCount: Int) {
         var all = currentMessages.filter { !$0.isError }
+        // fix73j-审计：子代理状态卡消息的 API 序列安全化——
+        // 子代理完成/派发时机完全随机，若状态卡(user)原样插在 assistant(tool_calls) 与 tool 结果
+        // 之间，API 报 "tool message must follow a message with tool_calls" 400（实测风险）。
+        // ① [SUBAGENT-RUNNING]（toolName=subagent.running）完全过滤：纯 UI 状态卡，
+        //   主 agent 自己派发的任务无需看到运行中 JSON（省上下文、防误导）；
+        // ② [SUBAGENT-DONE]（toolName=subagent.complete）移到序列末尾：回传通道保留
+        //   （user 消息结尾合法，主 agent 必然看到结果），且绝不落在 tool_calls/tool 之间。
+        let doneCards = all.filter { $0.toolName == "subagent.complete" }
+        all = all.filter { $0.toolName != "subagent.complete" && $0.toolName != "subagent.running" } + doneCards
         guard !all.isEmpty else { return ([], [], 0) }
         var priorSummary: ChatMessage?
         if let i = all.firstIndex(where: { $0.role == "system" && $0.content.hasPrefix("[Long-conversation summary") }) {
