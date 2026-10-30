@@ -284,11 +284,10 @@ public final class ToolRegistry: ObservableObject {
 
     /// 哪些工具应该用长缓存 (静态数据，不常变）
     private let longCacheTools: Set<String> = [
-        "fs_tree", "fs.list", "fs.ls",  // 文件列表
         "device.info", "device.probe",  // 设备信息
-        "injection.list", "process.list",  // 进程列表
-        "artifact.list", "macro.list",  // 列表类
-        "skill.list", "skill.read",  // 技能列表
+        "injection.list",  // 注入列表
+        "artifact.list",  // 工作区列表
+        "skills.list", "skills.read",  // 技能列表
     ]
 
     private func callKey(name: String, params: [String: Any]) -> String {
@@ -448,19 +447,18 @@ public final class ToolRegistry: ObservableObject {
     /// v3.1.66：工具已精简为 22 个大工具，全部默认启用 (shell.exec / app / inject / control 等），
     /// 新装用户开箱即用；用户手动开/关过的仍以显式状态为准。
     private static let defaultEnabledTools: Set<String> = [
-        // v3.1.66：全量注册工具默认启用
-        "artifact", "device", "memory", "assistant_memory", "verify", "container",
-        "ssh", "diagnose", "knowledge", "location", "macro", "app", "control",
-        "inject", "automation", "network.capture", "server", "project", "browser",
+        // v3.1.66：全量注册工具默认启用（fix73j-p5j 精简：verify/container/macro/server 已砍——Alpine 等价）
+        "artifact", "device", "memory", "assistant_memory",
+        "ssh", "diagnose", "knowledge", "location", "app", "control",
+        "inject", "automation", "network.capture", "project", "browser",
         "shell.exec", "shell.stop", "reminder", "rescue",
         // v7.2.0：系统侧 Mach-O 执行（jroot 越狱工具）——默认启用，AI 可直接调
         "system.exec_root",
         // v4.3.65：统一工具安装闭环
         "tool.install", "env.setup_re",
-        // v4.3.65：补齐"已注册但漏在白名单外"的分析工具——否则 AI 看不到 db/file/package，
-        // 无法用原生 sqlite3 直读 App 数据容器、无法解包分析；vpn.capture 随 VPN 抓包恢复一并默认启用；
-        // skills.* 让技能系统真正按需加载生效
-        "file", "db", "package", "vpn.capture",
+        // fix73j-p5j 精简：file/db/package 已砍（Alpine file/sqlite3/unzip 等价，AI 直跑 shell.exec）；
+        // vpn.capture 保留；skills.* 让技能系统真正按需加载生效
+        "vpn.capture",
         "skills.list", "skills.read", "skills.set_enabled",
         // 渐进式披露：调用工具前先 tool.describe 读完整说明（默认启用）
         "tool.describe",
@@ -471,10 +469,8 @@ public final class ToolRegistry: ObservableObject {
         "bind_app", "bind_app_write", "app_write_file",
         // v4.3.66：GitHub CI 工具（tool.install 触发 CI 后的查进度/取产物闭环）
         "github",
-        // v4.5.x：大文件下载（URLSession + 进度条）
-        "download",
-        // v7.2.5-fix60：原生工具能力探测（AI 不确定时查 py3-native/node-native/jtool2 等可用性与用法）
-        "native.tools",
+
+
         // v7.4.0-fix73f-3：子代理工具默认启用——否则 subagent.run 注册了但不在白名单 → 
         // enabledOpenAIToolSchema 过滤 → AI 可用工具列表里没有 → 实测"注册表能查 schema、
         // 实际调用拿不到结果"（用户真机复现）。对齐 OpenMinis subagent_task 委派能力。
@@ -782,13 +778,13 @@ public final class ToolRegistry: ObservableObject {
                     "截图": ["ui.screenshot", "control.screenshot", "ui"],
                     "抓包": ["network.capture", "debug.dump_network_log"],
                     "注入": ["injection", "injection.enable", "control.inject"],
-                    "文件": ["fs.", "bridge.", "artifact."],
+                    "文件": ["artifact.", "project."],
                     "浏览器": ["browser."],
                     "自动化": ["automation.", "macro.", "task.run"],
                     "清理": ["cleanup.", "workspace.cleanup", "rescue."],
                     "编译": ["build.", "github."],
                     "崩溃": ["crash", "diagnose.", "log.collect"],
-                    "设备": ["device.", "system.overview"],
+                    "设备": ["device."],
                     "聊天": ["knowledge.", "assistant.memory"],
                     "微信": ["wechat."],
                     "定位": ["location."],
@@ -1275,20 +1271,20 @@ public final class ToolRegistry: ObservableObject {
         // v3.1.64: 删 SystemOverviewTool (用 shell.exec("uname -a") / shell.exec("df -h") / shell.exec("free") 代替）
         // v4.4.x(优化): 重新启用 SystemOverviewTool——tool_categories 已改为从注册表动态生成
         //   (只列真实注册的大工具 + 版本从 Bundle 读)，给 AI 一个无幽灵工具名的真实目录。
-        register(SystemOverviewTool())
+        // fix73j-p5j 工具精简审计：SystemOverviewTool 被砍（合并 tools.audit）——保留类代码留档
         // v7.2.5-fix60: native.tools——原生工具能力探测（AI 不确定时查可用性/版本/用法）
-        register(NativeToolsTool())
+        // fix73j-p5j 工具精简审计：NativeToolsTool 被砍（Alpine 等价，AI 直跑 shell.exec）——保留类代码留档
         // v4.4.x(优化): tools.audit——工具注册表一致性审计（检测 summary/prerequisites 里引用
         //   但未注册的"幽灵工具名"，防文档漂移，AI 分不清工具的根因之一）。
         register(AuditTool())
         // v3.1.44: verify 大工具 + 子命令 (合并 2 个 verify.* 工具）
-        register(VerifyExecTool())
+        // fix73j-p5j 工具精简审计：VerifyExecTool 被砍（Alpine 等价，AI 直跑 shell.exec）——保留类代码留档
         // v7.4.0-sessionstore：会话索引工具（元数据先行 + 上下文占用可视化数据源）——
         // DebugDumpConversationsTool 系仅走 RemoteTerminalServer 端点，未进 ToolRegistry；
         // 本工具显式注册让 AI 可直接调用查看会话清单/token 占用。
         register(ConversationsIndexTool())
         // v4.5.x: 大文件下载工具（URLSession + 进度条，避开 shell.exec 120s 上限）
-        register(DownloadTool())
+        // fix73j-p5j 工具精简审计：DownloadTool 被砍（Alpine 等价，AI 直跑 shell.exec）——保留类代码留档
         // v7.1.107: 子代理（对齐 OpenMinis subagent_task）——委派自包含脏活到隔离会话
         register(SubAgentRunTool())
         register(SubAgentStatusTool())
@@ -1315,7 +1311,7 @@ public final class ToolRegistry: ObservableObject {
         // v3.1.60: 删 KeychainWipeTool (已合并到 inject 大工具：inject keychain_wipe）
         // v3.1.62: 删 AdvertisingTool / IdfvTool (已合并到 DeviceExecTool）
         // v3.1.41: container 大工具 + 子命令 (合并 3 个 container.* 工具）
-        register(ContainerExecTool())
+        // fix73j-p5j 工具精简审计：ContainerExecTool 被砍（Alpine 等价，AI 直跑 shell.exec）——保留类代码留档
         // v3.1.41: 删旧的 3 个 container.* 工具 (已合并到 container 大工具）
         // v4.1.0: 按需选择性绑定 App 数据容器（替代整棵 /var/mobile 绑定）
         register(BindAppTool())
@@ -1342,8 +1338,7 @@ public final class ToolRegistry: ObservableObject {
         // v3.3.0: MITM 抓包 VPN/代理（系统级抓包，覆盖自研栈 App）
         register(VpnTool())
         // v3.3.4: 解包查看别人的包（deb / ipa：列结构、解包到工作区）
-        register(PackageTool())
-
+        // fix73j-p5j 工具精简审计：PackageTool 被砍（Alpine 等价，AI 直跑 shell.exec）——保留类代码留档
         // v3.1.34: app 大工具 + 子命令 (合并 5 个 app.* 工具）
         register(AppExecTool())
         // v3.1.34: 删旧的 5 个 app.* 工具 (已合并到 app 大工具）
@@ -1353,7 +1348,7 @@ public final class ToolRegistry: ObservableObject {
         register(DiagnoseExecTool())
         // v3.1.42: 删旧的 2 个 diagnose.* 工具 (已合并到 diagnose 大工具）
         // v3.1.36: server 大工具 + 子命令 (合并 3 个 server.* 工具）
-        register(ServerExecTool())
+        // fix73j-p5j 工具精简审计：ServerExecTool 被砍（Alpine 等价，AI 直跑 shell.exec）——保留类代码留档
         // v3.1.36: 删旧的 3 个 server.* 工具 (已合并到 server 大工具）
 
         // v2.9.72：知识库 + 清理 + 符号 + 插件 + 兼容矩阵 + 崩溃复现
@@ -1454,7 +1449,7 @@ public final class ToolRegistry: ObservableObject {
         // v3.1.49: 删旧的 6 个 model.* 工具 (已合并到 model 大工具）
         // v3.1.55: 删旧的 debug 工具 (已合并到 DebugExecTool）
         // v3.1.48: macro 大工具 + 子命令 (合并 6 个 macro.* 工具）
-        register(MacroExecTool())
+        // fix73j-p5j 工具精简审计：MacroExecTool 被砍（Alpine 等价，AI 直跑 shell.exec）——保留类代码留档
         // v3.1.48: 删旧的 6 个 macro.* 工具 (已合并到 macro 大工具）
 
         // v3.0.67：toolchain 工具
@@ -1465,8 +1460,8 @@ public final class ToolRegistry: ObservableObject {
         // v3.1.62: 删 ControlTapTextTool / ControlTypeTextTool (已合并到 ControlExecTool）
 
         // v3.6.12 P5 高层跨环境工具 (v3.7.7: 自动 bind 直读 iOS 文件)
-        register(FileExecTool())
-        register(DbExecTool())
+        // fix73j-p5j 工具精简审计：FileExecTool 被砍（Alpine 等价，AI 直跑 shell.exec）——保留类代码留档
+        // fix73j-p5j 工具精简审计：DbExecTool 被砍（Alpine 等价，AI 直跑 shell.exec）——保留类代码留档
         // v4.3.65：统一工具安装（AI 自动装工具/依赖闭环）——tool.install / env.setup_re
         register(ToolInstallTool())
         register(EnvSetupRETool())

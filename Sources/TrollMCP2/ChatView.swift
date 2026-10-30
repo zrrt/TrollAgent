@@ -2737,9 +2737,9 @@ struct MessageBubble: View {
         if name.hasPrefix("inject") { return "wand.and.stars" }
         if name.hasPrefix("control.") { return "hand.tap" }
         if name.hasPrefix("container.") || name.hasPrefix("package.") || name.hasPrefix("build.") { return "shippingbox" }
-        if name.hasPrefix("file.read") || name.hasPrefix("fs.read") || name.hasPrefix("file.inspect") { return "doc.text" }
-        if name.hasPrefix("file.write") || name.hasPrefix("fs.write") { return "doc.text.fill" }
-        if name.hasPrefix("file.") || name.hasPrefix("fs.") || name.hasPrefix("artifact.") || name.hasPrefix("project.") { return "folder" }
+        if name.hasPrefix("artifact.read") { return "doc.text" }
+        if name.hasPrefix("artifact.write") { return "doc.text.fill" }
+        if name.hasPrefix("artifact.") || name.hasPrefix("project.") { return "folder" }
         if name.hasPrefix("vision.") || name == "read_image" || name == "image" { return "photo" }
         // OpenMinis delegate=person.2（子agent是人形）；thinking 才是 brain——不撞
         if name.hasPrefix("memory") { return "brain.head.profile" }

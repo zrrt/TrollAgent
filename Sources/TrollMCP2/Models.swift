@@ -2859,7 +2859,7 @@ final class ConversationStore: ObservableObject {
         // 确定性只读工具加入可合批（此前模型按提示词批量发也会被强制一条条跑，
         // 用户实测"AI 还是一条或两条发命令"）。browser 共享 WebView 仍串行。
         let readOnlyTools: Set<String> = [
-            "system_overview", "tools_audit", "verify",
+            "tools_audit",
             "web_search", "web_fetch", "knowledge_search",
             "device_info", "device_probe"
         ]

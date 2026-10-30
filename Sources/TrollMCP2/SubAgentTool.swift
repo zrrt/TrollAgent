@@ -43,7 +43,7 @@ enum SubAgentPersonas {
     static let shellWorker = SubAgentPersona(
         name: "shell-worker",
         description: "批量文件操作、日志处理、数据加工、下载解压整理、脚本执行。用于纯命令类脏活。不适合：需要 LLM 深度判断的任务。",
-        tools: ["shell.exec", "artifact", "download", "skills.read"],
+        tools: ["shell.exec", "artifact", "skills.read"],
         systemPrompt: """
         You are a SHELL WORKER. Commands must be idempotent where possible. Write large outputs to files \
         instead of printing them. If a command fails, diagnose and try a different approach (up to 3 \

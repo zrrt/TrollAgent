@@ -19,7 +19,7 @@ import Foundation
 enum BigToolCatalog {
     static let wrappedNames: Set<String> = [
         "app", "inject", "control", "browser", "device", "memory",
-        "network.capture", "vpn.capture", "automation", "project", "container", "github",
+        "network.capture", "vpn.capture", "automation", "project", "github",
     ]
 
     static func isWrapped(_ name: String) -> Bool {
@@ -30,9 +30,9 @@ enum BigToolCatalog {
 final class ToolDescribeTool: MCPTool {
     let definition = ToolDefinition(
         name: "tool.describe",
-        summary: "Load the FULL description of ANY tool before calling it — all tool schemas are slimmed to one line, so describe returns the complete subcommand list, every parameter, and prerequisites. Use for: ALWAYS call this first when about to use a tool you have not loaded — esp. BIG tools (app / inject / control / browser / device / memory / network.capture / vpn.capture / automation / project / container / github), and any small/simple tool when unsure about its exact params (wifi / location / macro / db / file / server / ssh / reminder / package / artifact / assistant_memory / knowledge / diagnose / rescue / verify / shell.exec / system.exec_root / web.search / web.fetch / download / tool.install / skills.* / subagent.* / bind_app / app_write_file …). Don't use for: list what tools exist (use system.overview). Example: before injecting a dylib → tool.describe name:\"inject\".",
+        summary: "Load the FULL description of ANY tool before calling it — all tool schemas are slimmed to one line, so describe returns the complete subcommand list, every parameter, and prerequisites. Use for: ALWAYS call this first when about to use a tool you have not loaded — esp. BIG tools (app / inject / control / browser / device / memory / network.capture / vpn.capture / automation / project / github), and any small/simple tool when unsure about its exact params (wifi / location / ssh / reminder / artifact / assistant_memory / knowledge / diagnose / rescue / shell.exec / system.exec_root / web.search / web.fetch / tool.install / skills.* / subagent.* / bind_app / app_write_file …). Don't use for: list what tools exist (use tools.audit). Example: before injecting a dylib → tool.describe name:\"inject\".",
         parameters: [
-            "name": "Tool name to describe (required), exactly as shown in the schema — e.g. \"inject\", \"app\", \"control\", \"container\", \"shell.exec\", \"web.search\"."
+            "name": "Tool name to describe (required), exactly as shown in the schema — e.g. \"inject\", \"app\", \"control\", \"shell.exec\", \"web.search\"."
         ],
         verified: true, category: "system")
 
