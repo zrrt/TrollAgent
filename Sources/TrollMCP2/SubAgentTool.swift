@@ -532,8 +532,8 @@ final class SubAgentRunner {
     private var turnWarningInjected = false
     /// v7.1.107-P0: wrap-up 已注入（最后一轮收回工具，强制写交付总结）
     private var wrapUpInjected = false
-    /// v7.4.0-fix73d：历史折叠已执行（只折叠一次——折叠后 token 骤降，重复触发无意义）
-    private var historyFolded = false
+    // fix73j-审计：historyFolded 已移除——长任务可重复折叠（30 轮任务折叠一次后
+    // 继续累积会再次超窗），每次保留最近 6 轮即可稳定。
 
     init(task: SubAgentTask, allowedTools: [String]?, maxRounds: Int, timeout: TimeInterval,
          persona: SubAgentPersona) {
@@ -612,9 +612,12 @@ final class SubAgentRunner {
     /// 请求会引入新失败点，且执行型任务的历史工具结果价值低）：保留 system + instruction +
     /// 最近 K 轮完整配对，更早轮次折叠成一条紧凑说明（含已执行工具名轨迹，供模型感知进度）。
     private func foldHistoryIfNeeded() {
-        guard !historyFolded else { return }
+        // fix73j-审计：去掉"只折叠一次"限制——30 轮长任务折叠后继续累积（每轮
+        // 3 工具×8000 字符 ≈ 6k+ token/轮），10 轮后再次超窗 → 超窗口失败。
+        // 改为可重复折叠：每次保留 system+instruction+最近 6 轮完整配对，
+        // 更早轮次（含上次折叠说明）折成一条紧凑说明。稳定态 ≈ 6 轮 + notes。
         let est = messages.reduce(0) { $0 + ConversationStore.estimateTokens($1) }
-        // 阈值 6000 token ≈ 常见窗口(8k-32k)的一半；折叠一次后骤降，无需再触发
+        // 阈值 6000 token ≈ 常见窗口(8k-32k)的一半；超过才折，折完骤降
         guard est > 6000 else { return }
         guard messages.count > 6 else { return }  // system+instruction+至少几轮才值得折
         // 从尾部保留最近 K 轮完整配对（assistant tool_calls ↔ tool 结果不能拆散——sanitize 语义）
@@ -654,7 +657,6 @@ final class SubAgentRunner {
             "Completed so far (tools used): \(toolsLine). Key findings persist in the later rounds below; " +
             "continue the task; your final summary must still cover the whole task including folded work.]")
         messages = Array(messages[..<2]) + [foldNote] + Array(messages[keepStart...])
-        historyFolded = true
     }
 
     private func loop() {
