@@ -1889,7 +1889,13 @@ final class ConversationStore: ObservableObject {
                                           config: config, tools: tools, disclosed: disclosed, depth: depth,
                                           reasoningLevel: reasoningLevel, thinkText: visibleText)
                 case .failure(let error):
-                    self.isLoading = false
+                    // fix73j-审计 M-7：后台代传（handoff）会 cancel 主请求，其 -999 取消回调
+                    // 无条件清 isLoading，而 consumeBackgroundResult 的 guard isLoading 依赖它
+                    // → 后台代传结果被静默丢弃（破坏性读取/长分析结果丢失）。修复：handoff
+                    // 在途（有 pending 结果待消费）时保留 isLoading，回前台正常消费。
+                    if !BackgroundLLM.shared.hasPendingHandoff() {
+                        self.isLoading = false
+                    }
                     self.currentClient = nil
                     self.requestRound = 0
                     self.runningTool = nil
@@ -2238,7 +2244,10 @@ final class ConversationStore: ObservableObject {
                     group.leave()
                 }
             }
-            group.notify(queue: .main) {
+            group.notify(queue: .main) { [weak self] in
+                // fix73j-审计 M-14：停止后重发竞态——若停止（stopRequested）后旧 wave 完成，
+                // 不 guard 会继续递归 runWave(rest) 执行剩余工具包，与新请求的双 runLoop 并发错乱。
+                guard let self = self, !self.stopRequested else { return }
                 runWave(rest)
             }
         }
@@ -2486,7 +2495,15 @@ final class ConversationStore: ObservableObject {
     /// 压缩时旧摘要作为 compactSource 的第一条输入（增量演进：合并更新而非重复压缩）。
     /// v7.1.109-peers：分档预算（OpenMinis ContextPolicy）+ 校准系数（calibration ratio）。
     private func messagesForAPI(budget: Int) -> (messages: [ChatMessage], compactSource: [ChatMessage], droppedCount: Int) {
-        var all = currentMessages.filter { !$0.isError }
+        // fix73j-审计 M-15：请求上下文绑定"请求发起时会话"（requestSessionId ?? activeConvId），
+        // 而非 selectedIndex（用户切会话窗口期间 selectedIndex 已漂移而 requestSessionId 未变）——
+        // 否则读 selectedIndex 的上下文、写 activeConvIndex 的结果 → 切会话窗口跨会话污染/答非所问。
+        var all: [ChatMessage]
+        if let rid = requestSessionId ?? activeConvId, let i = conversations.firstIndex(where: { $0.id == rid }) {
+            all = conversations[i].messages.filter { !$0.isError }
+        } else {
+            all = currentMessages.filter { !$0.isError }
+        }
         // fix73j-审计：子代理状态卡消息的 API 序列安全化——
         // 子代理完成/派发时机完全随机，若状态卡(user)原样插在 assistant(tool_calls) 与 tool 结果
         // 之间，API 报 "tool message must follow a message with tool_calls" 400（实测风险）。
@@ -2523,10 +2540,15 @@ final class ConversationStore: ObservableObject {
         let ratio = UsageRecorder.shared.lastRealRatio
         // 预算预留 20% 给 tools schema + 系统/开发者指令 + 请求开销（分档线已含余量，0.7→0.8）
         let theBudget = max(Int(Double(compactLine) * 0.8), 2000)
-        // 估算总 token（校准后）；低于预算直接返回 (短会话，无需压缩）
-        let total = Int(Double(all.reduce(0) { $0 + Self.estimateTokens($1) }) * ratio)
+        // fix73j-审计 M-12：裁剪基于"非状态卡消息"（core），[SUBAGENT-DONE] 卡
+        // （toolName=subagent.complete）永远附加在 result 末尾——若让卡占 suffix(6/2)
+        // 保留槽，多子代理完成后用户最新提问/最近轮次被删，主 agent 答非所问。
+        let doneCards = all.filter { $0.toolName == "subagent.complete" }
+        let core = all.filter { $0.toolName != "subagent.complete" }
+        // 估算总 token（校准后）；低于预算直接返回 (短会话，无需压缩)
+        let total = Int(Double(core.reduce(0) { $0 + Self.estimateTokens($1) }) * ratio)
         if total <= theBudget {
-            var short = all
+            var short = core + doneCards
             if let s = priorSummary { short.insert(s, at: 0) }   // 旧摘要永远保留
             return (short, [], 0)
         }
@@ -2534,13 +2556,13 @@ final class ConversationStore: ObservableObject {
         // v7.1.109-peers：极限压缩（对齐 OpenMinis 硬停思想但适配 Agent 长任务）——
         // 保底 6 条仍超预算时降为 2 条（只留最新提问），宁可裁到极限也不硬停卡住任务。
         var keepMin = 6
-        var suffix = Array(all.suffix(keepMin))
-        var prefix = Array(all.prefix(all.count - keepMin))
+        var suffix = Array(core.suffix(keepMin))
+        var prefix = Array(core.prefix(core.count - keepMin))
         var used = suffix.reduce(0) { $0 + Self.estimateTokens($1) }
-        if used > theBudget, all.count > 2 {
+        if used > theBudget, core.count > 2 {
             keepMin = 2
-            suffix = Array(all.suffix(keepMin))
-            prefix = Array(all.prefix(all.count - keepMin))
+            suffix = Array(core.suffix(keepMin))
+            prefix = Array(core.prefix(core.count - keepMin))
             used = suffix.reduce(0) { $0 + Self.estimateTokens($1) }
         }
         var kept: [ChatMessage] = []
@@ -2551,7 +2573,7 @@ final class ConversationStore: ObservableObject {
             kept.append(m)
             used += t
         }
-        var result = kept + suffix
+        var result = kept + suffix + doneCards
         // 清理孤立 tool 消息：裁剪可能导致 assistant(tool_calls) 被裁、其 tool 结果残留
         result = Self.sanitizeToolSequence(result)
         // 插入截断提示 (v2.9.88：本地生成话题摘要，而非简单丢弃 —— 不用额外请求，

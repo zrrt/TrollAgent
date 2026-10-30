@@ -249,12 +249,16 @@ final class SubAgentTask: Identifiable {
         // terminateWithAbort/watchdog/status/stop 持 manager.lock 调 mark* → finalize →
         // traceSnapshotFor 的 lock.lock() 同线程重入非递归 NSLock 必死锁）。
         // runner 消息只被其自身线程写，终态时写已停止，读快照安全（诊断数据）。
+        // fix73j-审计 M-5：trace 写必须持 stateLock（fix9 只修读侧，finalize 写 trace
+        // 无锁与详情页 snapshot() 锁内读竞争 = 数据竞争 UB）。
+        stateLock.lock()
         if let msgs = runnerRef?.snapshotMessages() {
             trace = msgs.prefix(200).map { m in
                 ["role": m.role, "content": String(m.content.prefix(2000)), "tool": m.toolName ?? ""]
             }
             hasTrace = !trace.isEmpty
         }
+        stateLock.unlock()
         // 2) 完成回传
         var payload: [String: Any] = [
             "ok": true, "task_id": id, "agent_type": personaName,

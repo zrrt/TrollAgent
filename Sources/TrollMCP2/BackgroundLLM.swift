@@ -88,6 +88,15 @@ final class BackgroundLLM: NSObject, URLSessionDownloadDelegate {
         return pendingResult
     }
 
+    /// fix73j-审计 M-7：后台代传在途判定——主请求被 handoff 取消时，URLSession 的
+    /// -999 取消回调会无条件清 isLoading，而后台结果消费的 guard isLoading 依赖它
+    /// → 后台结果被静默丢弃。回调侧用本方法区分"handoff 在途（保留 isLoading）"
+    /// 与"用户手动停止（正常清理）"。
+    func hasPendingHandoff() -> Bool {
+        lock.lock(); defer { lock.unlock() }
+        return isHandoffInFlight || pendingResult != nil
+    }
+
     /// v7.4.0-fix73b：用户发新消息/手动停止时取消后台等待（放弃旧结果，避免结果覆盖新会话）
     /// fix73b-audit：无在途任务且无结果时不重建 session（send() 每轮都会调用，避免无谓 invalidate）
     /// v7.4.0-fix73e：同 identifier 重建竞态加固——URLSession.invalidateAndCancel 是异步生效，

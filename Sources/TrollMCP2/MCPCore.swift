@@ -478,7 +478,9 @@ public final class ToolRegistry: ObservableObject {
         // v7.4.0-fix73f-3：子代理工具默认启用——否则 subagent.run 注册了但不在白名单 → 
         // enabledOpenAIToolSchema 过滤 → AI 可用工具列表里没有 → 实测"注册表能查 schema、
         // 实际调用拿不到结果"（用户真机复现）。对齐 OpenMinis subagent_task 委派能力。
-        "subagent.run", "subagent.status", "subagent.stop", "subagent.steer"
+        "subagent.run", "subagent.status", "subagent.stop", "subagent.steer",
+        // fix73j：wait_all 同步汇总等待——漏配会致主 agent 可用工具列表缺失（M-10）
+        "subagent.wait_all"
     ]
 
     /// v2.9.31：常驻核心工具名集合 (UI 用只读访问）

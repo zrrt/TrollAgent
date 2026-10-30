@@ -77,6 +77,10 @@ struct ScrollGeometryBridge: UIViewRepresentable {
 
         private func attach(to sv: UIScrollView?) {
             guard let sv else { return }
+            // fix73j-审计 M-6：attach 成功复位重试计数——否则后续 detach/重建（视图复用、
+            // 会话切换）后 attachAttempts 已到 5，layoutSubviews 兜底重试永久失效，
+            // KVO 桥接再也装不上 → 滚动按钮静默失效。
+            attachAttempts = 0
             scrollView = sv
             offsetObs = sv.observe(\.contentOffset, options: [.initial, .new]) { [weak self] sv, _ in
                 // UIKit offset.y：顶部=0（或 -adjustedInset.top），向下滚为正。
