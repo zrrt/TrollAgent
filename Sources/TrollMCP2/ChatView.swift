@@ -2748,12 +2748,11 @@ struct MessageBubble: View {
         if name == "think" || name == "thinking" { return "lightbulb.max" }
         if name.hasPrefix("code") || name.hasPrefix("py3-native") || name.hasPrefix("node-native") { return "chevron.left.forwardslash.chevron.right" }
         if name.hasPrefix("network.") { return "network" }
-        if name == "db" || name == "sqlite3" { return "cylinder.fill" }
-        if name.hasPrefix("system.") || name.hasPrefix("tools.") || name == "verify" { return "gearshape" }
+        if name.hasPrefix("system.") || name.hasPrefix("tools.") { return "gearshape" }
         if name.hasPrefix("cron.") || name.hasPrefix("reminder") || name.hasPrefix("calendar") { return "clock" }
         if name.hasPrefix("location.") { return "location" }
         if name.hasPrefix("rescue.") { return "cross.case" }
-        if name.hasPrefix("automation.") || name.hasPrefix("macro.") { return "play.circle" }
+        if name.hasPrefix("automation.") { return "play.circle" }
         return "wrench.and.screwdriver"
     }
 

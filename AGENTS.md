@@ -11,7 +11,7 @@ TrollAgent is a native MCP service deployed on iOS devices. Through its toolchai
 When you get a user task, **don't randomly try tools**. Follow this order:
 
 1. **Read RULES.md** for the operating contract (MUST/SHOULD semantics).
-2. **Route**: use `skills.list` to search for a matching skill (query with task keywords like `inject`/`capture`/`db`/`package`/`memory`). On a hit, `skills.read` the full instructions and **follow them**.
+2. **Route**: use `skills.list` to search for a matching skill (query with task keywords like `inject`/`capture`/`shell`/`memory`). On a hit, `skills.read` the full instructions and **follow them**.
 3. **No hit**: compose tools from each tool's summary documentation; for complex multi-step flows prefer existing skill methodologies.
 4. When executing, call the tool name directly (e.g. `app`, `inject`, `network.capture`) and produce structured results with evidence.
 
@@ -25,9 +25,6 @@ When you get a user task, **don't randomly try tools**. Follow this order:
 | `inject` | dylib injection & reverse engineering | `inject command:status` / `command:enable` |
 | `network.capture` | HTTP/HTTPS capture | `network.capture command:start` |
 | `vpn.capture` | System-level MITM tunnel (**WIP, under development**; degrades to local proxy when limited) | `vpn.capture command:status` |
-| `db` | SQLite forensics (auto-bridges iOS .db → Alpine sqlite3) | `db command:query ...` |
-| `file` | Cross-environment file inspection (auto-bridge iOS→Alpine) | `file command:inspect path:...` |
-| `package` | Dissect .deb/.ipa | `package command:unpack ...` |
 | `memory` | In-process memory modification (H5GG-like) | `memory ...` |
 | `device` / `location` | Device info / location | `device command:info` |
 | `shell.exec` | Shell in the unified environment (Alpine toolchain) | `shell.exec ...` |

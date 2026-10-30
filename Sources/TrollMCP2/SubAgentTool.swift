@@ -32,7 +32,7 @@ enum SubAgentPersonas {
         name: "app-auditor",
         description: "审计已安装 App：砸壳解密、entitlements 权限、二进制符号、依赖关系、注入点、缓存结构、崩溃复现。用于逆向与分析任务。不适合：网页调研、UI 操作。",
         tools: ["app.decrypt", "app.entitlements", "app.deps", "binary.symbols", "probe.inspect",
-                "apps.cache_inspect", "shell.exec", "artifact", "device.info", "download"],
+                "apps.cache_inspect", "shell.exec", "artifact", "device.info"],
         systemPrompt: """
         You are an APP AUDITOR (read-only by default). Survey first: device.info → app entitlements → \
         binary symbols → deps → cache layout. Record a baseline before deep inspection. Write findings to \

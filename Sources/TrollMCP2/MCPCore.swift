@@ -702,7 +702,7 @@ public final class ToolRegistry: ObservableObject {
             "启动": ["launch", "app.launch"],
             "重启": ["restart", "app.restart"],
             "进程": ["process", "ps"],
-            "文件": ["fs", "file"],
+            "文件": ["artifact", "read"],
             "读": ["read", "artifact"],
             "写": ["write", "artifact"],
             "目录": ["tree", "ls", "shell.exec"],

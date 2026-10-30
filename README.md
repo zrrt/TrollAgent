@@ -227,11 +227,7 @@ TrollAgent/
 - Storage ring card + 6 cache categories + quick/advanced cleanup tabs + one-tap cleanup (setuid root full-directory rebuild)
 
 ### 📂 Filesystem & data
-- `file` (inspect / analyze): native file inspection (auto-binds `file` + `strings` in the unified environment)
-- `db` (list / schema / query): read app data containers directly via native sqlite3
-- `package` (inspect / unpack): deb/ipa unpacking (ar/tar/zip)
 - `artifact` (read / write / list): workspace file management
-- `container` (refresh / resolve / write / delete): container resolution and read/write
 - `bind_app` / `bind_app_write` / `app_write_file`: read-only / backup-first writable container binding
 
 ### 🌐 Browser (WKWebView + JS injection, Playwright-style)
@@ -254,7 +250,7 @@ TrollAgent/
 - `tool.install`: unified tool install loop — one-click in the unified environment (apk→pip→CI; CI cross-compiles native iOS binaries best-effort)
 - `env.setup_re`: one-click reverse-engineering toolchain (binutils/file/python3/sqlite/tcpdump/7z…)
 - `github` (account_status / trigger_build / fetch_runs / download_artifact): trigger GitHub Actions, watch progress, grab artifacts — the CI builds and ships TrollAgent.tipa
-- `project`: workspace project management; `macro` (record / run / list / delete / export): recordable repeatable operations
+- `project`: workspace project management
 - `system.exec_root`: system-side Mach-O execution (jroot jailbreak tooling)
 
 ### 🤖 AI & models
@@ -264,7 +260,7 @@ TrollAgent/
 - Usage accounting: per-request token display (real `usage` preferred, estimated fallback)
 
 ### 📡 Gateway & automation
-- Gateway WebSocket pairing, multi-node calls, `automation` (run / list / jobs / stop / status / history / set_enabled), `ssh` (exec / scp), `server` (start / stop / status)
+- Gateway WebSocket pairing, multi-node calls, `automation` (run / list / jobs / stop / status / history / set_enabled), `ssh` (exec / scp)
 - **Remote terminal service**: built-in HTTP terminal on `127.0.0.1:8790` (/api/tools), reachable from a browser or via SSH tunnel
 
 ### 📊 Network & diagnostics
@@ -272,8 +268,8 @@ TrollAgent/
 - `web.fetch` (auto article extraction, article/main first + built-in browser fallback)
 - `network.capture` (start / stop / requests / analyze): NSURLSession capture via injected NetworkTweak; TLSHook decrypts SSL_read/SSL_write
 - `vpn.capture`: system-proxy capture — the reliable path is the local proxy (WiFi manual proxy `127.0.0.1:18180`)
-- `diagnose` (startup / injection), crash log parsing, `verify` (file / app_running)
-- `wifi_proxy`: WiFi proxy management; `download`: large-file download with progress (URLSession)
+- `diagnose` (startup / injection), crash log parsing
+- `wifi_proxy`: WiFi proxy management
 
 ### 📚 Knowledge & system
 - `knowledge` (import_text / import_file / search / delete / clear): knowledge base CRUD
@@ -302,10 +298,6 @@ TrollAgent/
 | `control` | Cross-app UI control | inject / ui_tree / screenshot / tap / swipe / type / key |
 | `browser` | In-app browser | navigate / snapshot / text / click / type / submit / form_fields / fill_form / adblock / clear |
 | `device` | Device info & spoofing | info / probe / snapshot / fake / restore / advertising / idfv |
-| `file` | File inspection | inspect / analyze |
-| `db` | sqlite3 container reads | list / schema / query |
-| `package` | deb/ipa unpacking | inspect / unpack |
-| `container` | Container management | refresh / resolve / write / delete |
 | `bind_app` / `bind_app_write` | Container binding | read-only / backup-first writable |
 | `app_write_file` | Direct file write | with pre-write backup |
 | `artifact` | Workspace files | read / write / list |
@@ -319,14 +311,10 @@ TrollAgent/
 | `env.setup_re` | RE toolchain setup | one-click |
 | `system.exec_root` | Mach-O execution | jroot tooling |
 | `ssh` | Remote shell | exec / scp |
-| `server` | HTTP terminal server | start / stop / status |
 | `automation` | Automations | run / list / jobs / stop / status / history / set_enabled |
-| `macro` | Recordable macros | record / run / list / delete / export |
 | `project` | Project management | workspace ops |
 | `diagnose` | Failure diagnosis | startup / injection |
-| `verify` | Verification | file / app_running |
 | `rescue` | Injection recovery | scan / recover_all / cleanup |
-| `download` | Large downloads | URLSession + progress |
 | `memory` / `assistant_memory` | Memory | search / modify / freeze |
 | `knowledge` | Knowledge base | import_text / import_file / search / delete / clear |
 | `location` | Location | get / fake / status / clear |
