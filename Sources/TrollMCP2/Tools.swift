@@ -169,7 +169,7 @@ final class MemoryTweakTool: MCPTool {
 final class ArtifactExecTool: MCPTool {
     let definition = ToolDefinition(
         name: "artifact",
-        summary: "Manage workspace files. Subcommands: read / write / list / output_name_get / output_name_set / output_bookmark. Params: filename (read/write), text (write), name (output_name_set). App container files use container.*, system files use shell.exec.",
+        summary: "Manage workspace files. Subcommands: read / write / list / output_name_get / output_name_set / output_bookmark. Params: filename (read/write), text (write), name (output_name_set). App container files use bind_app/app_write_file, system files use shell.exec.",
         parameters: [
             "command": "Subcommand (required): read / write / list / output_name_get / output_name_set / output_bookmark",
             "filename": "File name — REQUIRED for read/write",

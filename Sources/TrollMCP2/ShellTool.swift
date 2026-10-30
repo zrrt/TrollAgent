@@ -2268,7 +2268,7 @@ final class SystemExecRootTool: MCPTool {
 final class NativeToolsTool: MCPTool {
     let definition = ToolDefinition(
         name: "native.tools",
-        summary: "Probe iOS-native toolchain availability (ARM64 Mach-O bundled in bin/ + Python runtime). Use for: when you need to know WHICH native tools exist and HOW to call them — py3-native / node-native / jtool2 / plutil / sqlite3 / ldid / optool status, versions, and exact invocation forms. Don't use for: listing MCP tools (use system.overview). Example: 'native.tools' → availability matrix; 'native.tools name:\"py3-native\"' → one tool detail. Native tools are NOT PATH commands — invoke inside shell.exec with the usage form returned here.",
+        summary: "Probe iOS-native toolchain availability (ARM64 Mach-O bundled in bin/ + Python runtime). Use for: when you need to know WHICH native tools exist and HOW to call them — py3-native / node-native / jtool2 / plutil / sqlite3 / ldid / optool status, versions, and exact invocation forms. Don't use for: listing MCP tools (use tools.audit). Example: 'native.tools' → availability matrix; 'native.tools name:\"py3-native\"' → one tool detail. Native tools are NOT PATH commands — invoke inside shell.exec with the usage form returned here.",
         parameters: ["name": "Optional: filter to one native tool (py3-native / node-native / jtool2 / plutil / sqlite3 / ldid / optool / insert_dylib / ct_bypass / opainject / install_name_tool / nmap / nscan.py). Empty = all."],
         verified: true, category: "system")
 

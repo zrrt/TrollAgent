@@ -338,7 +338,7 @@ final class ProjectGenerateTweakTool: MCPTool {
 }
 
 final class ModelConfigTool: MCPTool {
-    let definition = ToolDefinition(name: "model.config", summary: "View LLM model configurations (which AI models are available). Use for: check what AI models are configured, see current default model. Don't use for: change model (use model.update), system overview (use system.overview). Example: user says 'which model am I using' → show model config.",
+    let definition = ToolDefinition(name: "model.config", summary: "View LLM model configurations (which AI models are available). Use for: check what AI models are configured, see current default model. Don't use for: change model (use model.update), system overview (use tools.audit). Example: user says 'which model am I using' → show model config.",
         parameters: ["action": "list (all configs) or default (current default)"], verified: true)
     func invoke(_ params: [String: Any]) throws -> [String: Any] {
         let action = params["action"] as? String ?? "list"
