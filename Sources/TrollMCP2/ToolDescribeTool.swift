@@ -9,10 +9,10 @@ import Foundation
 //    保留完整说明直接调，内部子命令照常封装调用，不必 describe。
 // 3) SIMPLE TOOLS（简单工具）：单命令、无选择器——完整说明直接调。
 //
-// 分级只看"是否值得 describe"，不看"有没有选择器"：web.search / wifi / location / macro /
-// db / file / server / ssh / remind / package 等虽有小工具子命令，但说明短、不依赖前置，
+// 分级只看"是否值得 describe"，不看"有没有选择器"：web.search / wifi / location / ssh /
+// remind / artifact 等虽有小工具子命令，但说明短、不依赖前置，
 // 归小工具直接调；app / inject / control / browser / device / memory / network.capture /
-// vpn.capture / automation / project / container / github 归大工具，必须先 describe。
+// vpn.capture / automation / project / github 归大工具，必须先 describe。
 
 /// 大工具白名单：初始 schema 精简 + 调用前必须 tool.describe 的工具。
 /// 这是唯一权威列表——MCPCore 的 schema 生成与 tool.describe 共用。
