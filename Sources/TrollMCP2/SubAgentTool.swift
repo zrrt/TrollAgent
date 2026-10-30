@@ -1007,6 +1007,11 @@ final class SubAgentRunner {
         }
         task.addRound(tools: executed)
         messages = msgs
+        // fix73j-p5f：实时轨迹落盘——运行中每轮结束即覆盖写文件（与 finalize 相同格式），
+        // 详情页运行中可看实时进度、重启后失效页可回看失效前的轨迹。
+        SubAgentTask.persistTrace(id: task.id, trace: messages.prefix(200).map { m in
+            ["role": m.role, "content": String(m.content.prefix(2000)), "tool": m.toolName ?? ""]
+        })
         loop()
     }
 

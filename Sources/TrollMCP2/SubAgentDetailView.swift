@@ -30,6 +30,9 @@ struct SubAgentDetailView: View {
     let fallbackJSON: String?
     @Environment(\.dismiss) private var dismiss
     @State private var task: SubAgentTask?
+    // fix73j-p5f：实时轨迹（运行中/重启后从落盘文件读——trace 完成时才从 runner 导出，
+    // 运行中 task.trace 为空，文件兜底显示实时进度）
+    @State private var fileTrace: [[String: Any]]?
     // fix73j：运行中打开详情页 → 2s 轮询刷新（实时进度；终态后自动停止）
     @State private var pollTimer: Timer?
 
@@ -81,6 +84,10 @@ struct SubAgentDetailView: View {
     private func refresh() {
         let t = SubAgentManager.shared.status(id: taskID)
         task = t
+        // fix73j-p5f：实时读落盘轨迹文件（运行中每轮覆盖写——详情页始终能看最新进度）
+        if let ft = SubAgentTask.loadTrace(id: taskID), !ft.isEmpty {
+            fileTrace = ft
+        }
         if let t, !t.isRunning() {
             pollTimer?.invalidate()
             pollTimer = nil
@@ -93,11 +100,21 @@ struct SubAgentDetailView: View {
         // fix73j-审计：UI 只读快照（stateLock 内拷贝）——后台 runner 并发写 task 属性，
         // 直读是 Swift 数据竞争（UB）。2s 轮询刷新时每次取新快照。
         let snap = t.snapshot()
+        // fix73j-p5f：运行中 task.trace 空（trace 完成时才从 runner 导出）→ 用实时落盘文件兜底
+        let effective: SubAgentTask.SubAgentSnapshot
+        if snap.trace.isEmpty, let ft = fileTrace, !ft.isEmpty {
+            effective = SubAgentTask.SubAgentSnapshot(
+                status: snap.status, rounds: snap.rounds, maxRounds: snap.maxRounds,
+                elapsed: snap.elapsed, sendState: snap.sendState, personaName: snap.personaName,
+                result: snap.result, error: snap.error, trace: ft, hasTrace: true)
+        } else {
+            effective = snap
+        }
         return ScrollView {
             VStack(alignment: .leading, spacing: 14) {
-                SubAgentStatusHeader(snap: snap)
-                SubAgentResultCard(snap: snap)
-                SubAgentTraceList(snap: snap)
+                SubAgentStatusHeader(snap: effective)
+                SubAgentResultCard(snap: effective)
+                SubAgentTraceList(snap: effective)
             }
             .padding(16)
         }
@@ -131,6 +148,37 @@ struct SubAgentDetailView: View {
         // fix73j-审计：重启后运行中的子代理任务丢失（tasks 是内存态）——fallback 里的
         // running 状态是派发时的快照，不能再误导显示"执行中"。
         if rawStatus == "running" {
+            // fix73j-p5f：重启后运行中任务失效——若实时轨迹文件存在，一并展示失效前的执行轨迹
+            if let ft = fileTrace, !ft.isEmpty {
+                let snap = SubAgentTask.SubAgentSnapshot(
+                    status: .interrupted, rounds: d["rounds"] as? Int ?? 0, maxRounds: 0,
+                    elapsed: TimeInterval(d["elapsed_secs"] as? Int ?? 0),
+                    sendState: "sent", personaName: d["agent_type"] as? String ?? "?",
+                    result: "", error: "", trace: ft, hasTrace: true)
+                return AnyView(ScrollView {
+                    VStack(alignment: .leading, spacing: 14) {
+                        HStack(spacing: 10) {
+                            Image(systemName: "hourglass")
+                                .font(.system(size: 28))
+                                .foregroundColor(.orange)
+                            VStack(alignment: .leading, spacing: 2) {
+                                Text("任务已失效（App 重启后运行中的子代理丢失）")
+                                    .font(.subheadline)
+                                    .foregroundColor(.secondary)
+                                Text("重新派发该任务即可。已完成的任务结果保留在此会话中。")
+                                    .font(.caption)
+                                    .foregroundColor(.secondary)
+                            }
+                            Spacer()
+                        }
+                        .padding(14)
+                        .background(Color(.secondarySystemBackground))
+                        .cornerRadius(14)
+                        SubAgentTraceList(snap: snap)
+                    }
+                    .padding(16)
+                })
+            }
             return AnyView(
                 VStack(spacing: 10) {
                     Image(systemName: "hourglass")
