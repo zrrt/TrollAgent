@@ -278,7 +278,7 @@ public final class ToolRegistry: ObservableObject {
     private var cacheHitCounts: [String: Int] = [:]
     // v4.3.26：缓存绕过工具——有状态工具（浏览器页面内容随时可变）绝不能喂缓存。
     // browser.* 全部绕过：URL 变了 params 不变，旧缓存必错 (BUG-1/BUG-2 根因)。
-    private var cacheBypassPrefixes: [String] = ["browser", "control", "device.fake", "injection.mem"]
+    private var cacheBypassPrefixes: [String] = ["browser", "control", "device.fake", "injection.mem", "subagent"]
     private let defaultCacheWindow: TimeInterval = 300.0  // 默认 5 分钟缓存窗口
     private let longCacheWindow: TimeInterval = 1800.0  // 30 分钟缓存窗口 (静态数据）
 

@@ -64,6 +64,19 @@ enum SubAgentPersonas {
         guard let n = name?.trimmingCharacters(in: .whitespacesAndNewlines), !n.isEmpty else { return general }
         return all.first { $0.name == n } ?? general
     }
+
+    /// fix73j-审计 M-8：高危工具簇硬排除名单——子代理默认禁，除非 tools 白名单
+    /// 显式包含具体工具名（精确命中才放行，前缀/大工具名一律不放行）。
+    /// 覆盖：改机/注入/伪造/清钥/装卸载/系统执行/控制台等改写型工具。
+    static func isHighRisk(_ name: String) -> Bool {
+        if name.hasPrefix("hook.") || name.hasPrefix("injection.") { return true }
+        if name.hasPrefix("device.fake") || name.hasPrefix("device.restore")
+            || name.hasPrefix("device.keychain_wipe") { return true }
+        if name.hasPrefix("system.exec_root") || name.hasPrefix("app.install")
+            || name.hasPrefix("app.uninstall") || name.hasPrefix("control.inject") { return true }
+        if name == "device.advertising" || name == "device.idfv" || name == "device.refresh_container" { return true }
+        return false
+    }
 }
 
 /// fix73j：子代理状态文案（中英）——主界面卡片/详情页统一映射
@@ -145,6 +158,11 @@ final class SubAgentTask: Identifiable {
 
     /// fix73j：身份名（agent_type），详情页/回传展示用
     private(set) var personaName: String
+    /// fix73j-审计 M-1：runner 弱引用——finalizeSubAgent 不经 manager.lock 取快照
+    /// （terminateWithAbort 持 manager.lock 时，traceSnapshotFor 的 lock.lock() 同线程
+    /// 重入非递归 NSLock → 100% 自死锁）。runner 由 manager.runners 强持有，终态时必活；
+    /// releaseRunner 在 finalizeSubAgent 尾部调用，弱引用解包安全。
+    weak var runnerRef: SubAgentRunner?
     /// fix73j：派发时的会话 id——回传写回该会话（防用户切换会话后跨会话污染）
     let sessionID: UUID?
     /// fix73j：轨迹快照（终态时从 runner 导出，供详情页回看）——[{role, content, tool}]
@@ -227,8 +245,11 @@ final class SubAgentTask: Identifiable {
     /// 回传 = user 消息（API 序列合法，主 agent 下一轮请求必然携带；
     /// UI 检测 [SUBAGENT-DONE] 前缀渲染为可点开的子代理完成卡）。
     private func finalizeSubAgent() {
-        // 1) 轨迹快照：从 manager 取 runner 当前 messages（先取引用再读，避免锁顺序死锁）
-        if let msgs = SubAgentManager.shared.traceSnapshotFor(id: id) {
+        // 1) 轨迹快照：经 task 弱引用的 runner 直接取（M-1：不经 manager.lock——
+        // terminateWithAbort/watchdog/status/stop 持 manager.lock 调 mark* → finalize →
+        // traceSnapshotFor 的 lock.lock() 同线程重入非递归 NSLock 必死锁）。
+        // runner 消息只被其自身线程写，终态时写已停止，读快照安全（诊断数据）。
+        if let msgs = runnerRef?.snapshotMessages() {
             trace = msgs.prefix(200).map { m in
                 ["role": m.role, "content": String(m.content.prefix(2000)), "tool": m.toolName ?? ""]
             }
@@ -376,6 +397,9 @@ final class SubAgentManager {
             if self.runners.removeValue(forKey: id) != nil {
                 self.runningCount = max(0, self.runningCount - 1)
             }
+            // fix73j-审计 M-3：abort 处理器随终态统一清理（run() 返回时删会让后续轮
+            // 在途请求失去 cancel 能力；终态后请求已无意义，清理防字典残留）
+            self.cancellers.removeValue(forKey: id)
             self.lock.unlock()
             self.trimFinishedTasks()
         }
@@ -435,19 +459,18 @@ final class SubAgentManager {
         // v7.4.1-fix73i：强引用保活 runner（见 runners 注释）——否则首轮 send 后即释放，
         // 执行链断在起点。
         runners[id] = runner
+        // fix73j-审计 M-1：task 弱引 runner——终态 finalize 直接取快照（无锁），
+        // 修 terminateWithAbort 持 manager.lock 时 traceSnapshotFor 同锁重入自死锁。
+        task.runnerRef = runner
         // v7.4.0-fix73g：注册真 abort——watchdog/软超时/stop 到点 cancel 在途请求，
         // 弱引用防循环；幂等（cancelInflight 内部置空 client，重复调用无害）。
         cancellers[id] = { [weak runner] in runner?.cancelInflight() }
         DispatchQueue.global(qos: .userInitiated).async {
             runner.run()
-            self.lock.lock()
-            // v7.4.0-fix73g：任务结束（正常/中止）清理 abort 处理器，防字典残留
-            self.cancellers.removeValue(forKey: id)
-            // fix73i：注意——不在这里移除 runners！run() 返回时首轮请求往往还在途，
-            // completion 回调依赖 runner 存活续跑执行链；runner 由任务终态（markDone/
-            // markFailed/markStopped/markInterrupted → releaseRunner）统一释放。
-            // fix73j：runningCount 同样由 releaseRunner 归还（终态路径，本处不减）。
-            self.lock.unlock()
+            // fix73j-审计 M-3：不再在 run() 返回时删 cancellers——run() 返回只代表首轮
+            // 请求已发出，后续轮次的在途请求仍需真 abort（stop/watchdog 到点 cancel）；
+            // 提前删除使后续轮 stop 无法取消请求（fix73g 真 abort 架空）。
+            // cancellers 由终态 releaseRunner 统一清理（防字典残留）。
         }
         // v7.4.0-fix73f-4：超时看门狗——loop() 的超时检查只在"发出请求前"执行，
         // 请求异步挂住（网络卡死/上游无响应/回调丢失）时回调不来 → loop 不再被驱动 →
@@ -581,6 +604,10 @@ final class SubAgentRunner {
         6. To surface a URL to the user's UI, include a line `minis://open?url=<URL>` in your text — the app renders it
            as a tappable link card. Plain http(s) URLs in your text are auto-detected the same way.
         7. When finished, your final text must be a concise structured summary of what was done and the key result.
+        8. SECURITY: your tool set is restricted by design. Never use shell.exec (or any command alias such as
+           `ta`) to invoke other tools or bypass your tool whitelist — call restricted capabilities through the
+           tools actually provided to you, or conclude that you cannot do it. Do not attempt hook/injection/
+           fake/install/keychain operations unless a tool for them was explicitly given to you.
         """
         if !persona.systemPrompt.isEmpty {
             p += "\n\n" + persona.systemPrompt
@@ -605,6 +632,12 @@ final class SubAgentRunner {
         for schema in all {
             guard let fn = schema["function"] as? [String: Any],
                   let n = fn["name"] as? String else { continue }
+            // fix73j-审计 M-8：高危工具硬排除——白名单前缀/大工具名（如 "device"）会
+            // 放行全家（device.fake/restore/keychain_wipe）。高危簇默认禁，除非白名单
+            // 显式包含具体工具名（如 "hook.apply" 精确命中才放行）。
+            if SubAgentPersonas.isHighRisk(n), !allowed.contains(n) {
+                continue
+            }
             // 匹配：精确 apiName 或大工具名（如 "artifact" 匹配 "artifact.read"）
             let matched = allowed.contains(n) || allowed.contains { n.hasPrefix($0 + ".") }
             if matched { picked.append(schema) }
@@ -655,9 +688,14 @@ final class SubAgentRunner {
         }
         keepStart = i + 1
         // fix73d 审计：keepStart 若正好落在 tool 消息上，它的配对 assistant(tool_calls) 会留在折叠段
-        // → 保留段出现孤儿 tool（无前导 tool_calls），API 校验/模型理解都会出问题。前移一位纳入配对。
+        // → 保留段出现孤儿 tool（无前导 tool_calls），API 校验/模型理解都会出问题。
+        // fix73j-审计 M-11：不只退一位——多工具批（assistant 带 N 个 toolCalls + N 条 tool 结果）
+        // 边界落在批内第 2+ 个 tool 时退一位仍在该批内。退到最近一个 assistant(tool_calls)
+        // （批起点），保证保留段从完整配对开始。
         if keepStart < messages.count, messages[keepStart].role == "tool", keepStart > 2 {
-            keepStart -= 1
+            var p = keepStart
+            while p > 2, messages[p - 1].role != "assistant" { p -= 1 }
+            if p > 2 { keepStart = p - 1 }
         }
         // 折叠段：从 index 1（instruction 之后）到 keepStart 之前——只折"轮次消息"，
         // 绝不折 system(0) 与 instruction(1)（那是任务的根，丢了任务就废了）
@@ -856,6 +894,14 @@ final class SubAgentRunner {
                 m.toolArgs = Self.summarizeArgs(call.arguments)
                 msgs.append(m)
             } else if let m = results[i] {
+                msgs.append(m)
+            } else {
+                // fix73j-审计 M-4：results[i] 缺失（并发闭包未及执行/异常路径）时兜底——
+                // 静默丢条会让 tool_calls 消息缺对应 tool 结果 → API 400（序列非法）。
+                var m = ChatMessage(role: "tool",
+                                    content: Self.json(["ok": false, "message": "tool execution did not produce a result (concurrent slot lost)"]),
+                                    isError: true, toolCallId: call.id, toolName: call.name)
+                m.toolArgs = Self.summarizeArgs(call.arguments)
                 msgs.append(m)
             }
             executed.append(call.name)
