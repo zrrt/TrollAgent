@@ -259,6 +259,9 @@ final class SubAgentTask: Identifiable {
             hasTrace = !trace.isEmpty
         }
         stateLock.unlock()
+        // fix73j-p5d：轨迹持久化——trace 是内存态（App 重启即丢，详情页重启后只剩摘要）。
+        // 落盘到 subagent_traces/<task_id>.json，详情页重启后从文件读回完整轨迹。
+        if hasTrace { Self.persistTrace(id: id, trace: trace) }
         // 2) 完成回传
         var payload: [String: Any] = [
             "ok": true, "task_id": id, "agent_type": personaName,
@@ -973,6 +976,43 @@ final class SubAgentRunner {
 
     /// fix73j：当前消息快照（终态时由 manager 取，存 task.trace 供详情页回看）
     func snapshotMessages() -> [ChatMessage] { messages }
+
+    // MARK: - 轨迹持久化（fix73j-p5d）
+
+    static func tracesDir() -> String {
+        let p = NSHomeDirectory().appending("/Documents/Workspace/store/subagent_traces")
+        try? FileManager.default.createDirectory(atPath: p, withIntermediateDirectories: true)
+        return p
+    }
+
+    /// 完成时落盘轨迹（原子写 + 保留最近 100 个文件）
+    static func persistTrace(id: String, trace: [[String: Any]]) {
+        let dir = tracesDir()
+        let url = URL(fileURLWithPath: dir + "/" + id + ".json")
+        if let d = try? JSONSerialization.data(withJSONObject: trace) {
+            try? d.write(to: url, options: .atomic)
+        }
+        let fm = FileManager.default
+        let files = (try? fm.contentsOfDirectory(atPath: dir)) ?? []
+        if files.count > 100 {
+            let dated = files.compactMap { f -> (String, Date)? in
+                guard let attrs = try? fm.attributesOfItem(atPath: dir + "/" + f),
+                      let t = attrs[.modificationDate] as? Date else { return nil }
+                return (f, t)
+            }.sorted { $0.1 < $1.1 }
+            for (f, _) in dated.prefix(files.count - 100) {
+                try? fm.removeItem(atPath: dir + "/" + f)
+            }
+        }
+    }
+
+    /// 详情页重启后从文件读轨迹
+    static func loadTrace(id: String) -> [[String: Any]]? {
+        let p = tracesDir() + "/" + id + ".json"
+        guard let d = try? Data(contentsOf: URL(fileURLWithPath: p)),
+              let o = try? JSONSerialization.jsonObject(with: d) as? [[String: Any]] else { return nil }
+        return o
+    }
 
     // MARK: - 工具小工具
     private static func parseArgs(_ s: String) -> [String: Any] {

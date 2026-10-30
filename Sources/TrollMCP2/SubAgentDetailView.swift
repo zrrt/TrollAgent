@@ -39,7 +39,13 @@ struct SubAgentDetailView: View {
                 if let task {
                     taskContent(task)
                 } else if let fb = fallbackJSON {
-                    fallbackContent(SubAgentCompleteCard.parse(fb))
+                    let d = SubAgentCompleteCard.parse(fb)
+                    // fix73j-p5d：重启后优先读落盘轨迹文件（完整轨迹）→ 否则纯摘要
+                    if let ft = SubAgentTask.loadTrace(id: taskID), !ft.isEmpty {
+                        persistedTraceContent(d, ft)
+                    } else {
+                        fallbackContent(d)
+                    }
                 } else {
                     VStack(spacing: 8) {
                         Image(systemName: "questionmark.circle")
@@ -87,6 +93,27 @@ struct SubAgentDetailView: View {
         // fix73j-审计：UI 只读快照（stateLock 内拷贝）——后台 runner 并发写 task 属性，
         // 直读是 Swift 数据竞争（UB）。2s 轮询刷新时每次取新快照。
         let snap = t.snapshot()
+        return ScrollView {
+            VStack(alignment: .leading, spacing: 14) {
+                SubAgentStatusHeader(snap: snap)
+                SubAgentResultCard(snap: snap)
+                SubAgentTraceList(snap: snap)
+            }
+            .padding(16)
+        }
+    }
+
+    // MARK: - 文件轨迹视图（fix73j-p5d：重启后从落盘文件读完整轨迹）
+
+    private func persistedTraceContent(_ d: [String: Any], _ trace: [[String: Any]]) -> some View {
+        let raw = d["status"] as? String ?? "done"
+        let status = SubAgentTask.Status(rawValue: raw) ?? .done
+        let snap = SubAgentTask.SubAgentSnapshot(
+            status: status, rounds: d["rounds"] as? Int ?? 0, maxRounds: 0,
+            elapsed: TimeInterval(d["elapsed_secs"] as? Int ?? 0),
+            sendState: "sent", personaName: d["agent_type"] as? String ?? "?",
+            result: d["result"] as? String ?? "", error: d["error"] as? String ?? "",
+            trace: trace, hasTrace: true)
         return ScrollView {
             VStack(alignment: .leading, spacing: 14) {
                 SubAgentStatusHeader(snap: snap)
@@ -156,7 +183,7 @@ struct SubAgentDetailView: View {
                     Text("错误").font(.subheadline).fontWeight(.semibold)
                     Text(err).font(.footnote).foregroundColor(.red).textSelection(.enabled)
                 }
-                Text("完整轨迹仅在任务存活期间可查看（App 重启后仅保留此摘要）。")
+                Text("无轨迹文件（任务运行中已重启，未生成轨迹记录）。")
                     .font(.caption2)
                     .foregroundColor(.secondary)
             }
