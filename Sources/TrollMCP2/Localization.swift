@@ -483,7 +483,7 @@ enum L10n {
             tbl["ui_184"] = ["zh": "新建宏", "en": "New Macro"]
             tbl["ui_185"] = ["zh": "宏名称（如 每日打卡）", "en": "Macro name (e.g. daily check-in)"]
             tbl["ui_186"] = ["zh": "名称不能为空", "en": "Name cannot be empty"]
-            tbl["ui_187"] = ["zh": "开始录制：去聊天让 AI 操作，完成后回来点「停止」或喊 AI 调 macro.stop", "en": "Recording started: ask AI to operate in chat, then tap Stop or call macro.stop"]
+            tbl["ui_187"] = ["zh": "开始录制：去聊天让 AI 操作，完成后回宏控中心点「停止」", "en": "Recording started: ask AI to operate in chat, then tap Stop in Macro Center"]
             tbl["ui_188"] = ["zh": "录制中", "en": "Recording"]
             tbl["ui_189"] = ["zh": "停止并保存", "en": "Stop & Save"]
             tbl["ui_190"] = ["zh": "还没有宏", "en": "No macros yet"]

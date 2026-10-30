@@ -2,8 +2,8 @@ import Foundation
 import UIKit
 
 // MARK: - v2.9.141 AI 操作宏录制/回放
-// 录制：macro.record 开启后，ui.tap/swipe/long_press/clipboard 调用自动入宏 (含截图验证点）
-// 回放：macro.run 用控制中心实时展示进度 (计划=宏步骤），纯执行+每步截图存证 (不耗 token 调 AI）
+// 录制：录制开启后，ui.tap/swipe/long_press/clipboard 调用自动入宏 (含截图验证点）
+// 回放：MacroRunner 用控制中心实时展示进度 (计划=宏步骤），纯执行+每步截图存证 (不耗 token 调 AI）
 
 enum MacroStore {
     static var dir: URL { Workspace.root.appendingPathComponent("macros", isDirectory: true) }
