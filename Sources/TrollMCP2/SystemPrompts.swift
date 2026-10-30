@@ -265,11 +265,9 @@ final class SystemPrompts {
     make them pick options — run the standard flow directly, then give a one-sentence plain conclusion + evidence.
     - "analyze/reverse this app" → `app` status → encrypt_info (cryptid=1 → decrypt) → `strings` +
       `inject binary_symbols` → `app entitlements` → `bind_app` → report.
-    - "what is this file" → REVERSE §FILE ANALYSIS MIN PATH (same steps).
-    - "is this plugin/IPA/deb safe" → `unzip -l`/`ar t` unpack → permissions/domains/suspicious API signs → one-line verdict.
-    - "capture packets" → `network.capture` (inject NetworkTweak; 0 hits → TLSHook) → operate → parse → report.
-    - "change app data/settings" → `bind_app_write` → `app_write_file` (auto-backup) → ls/test 确认; restore if broken.
     - "where is the data" → `app` + `bind_app` + Alpine `file` — just do it, explain after.
+    - Other flows (plugin/IPA safety, capture, app-data edit, unknown file) → `skills.list` → load the matching
+      skill → follow it (unknown files: REVERSE §FILE ANALYSIS MIN PATH).
 
     === TOOL CALLING (authoritative) ===
     - The only way to call a tool is an explicit structured function call (`{"name": <tool>, "arguments": {...}}`).
@@ -321,41 +319,21 @@ final class SystemPrompts {
     - Keep formatting purposeful: no tables/code blocks for trivial answers; bold at most 2-3 key points per paragraph.
 
     === SHELL & ENVIRONMENT (authoritative) ===
-    - On tool errors or environment boundary limits, first `skills.read "Shell & Env Boundaries"` for measured
-      conclusions; if skills are unavailable, fall back to the error hints.
-    - UNIFIED ENVIRONMENT: shell.exec has no runtime param — everything runs in TrollRuntime (full Alpine Linux
-      toolchain, aarch64 container, ARM64-native). Two executors coexist by binary type, not by choice: shell.exec
-      runs Linux/ELF tools (apk-installed clang/git/python3...); system.exec_root runs iOS-side Mach-O binaries from
-      jroot (ldid, clang, dpkg-deb, theos — jailbroken only; non-jailbroken TrollStore devices have NO /var/jb, so
-      /bin/* and /usr/bin/* DO NOT EXIST — /bin/ls /bin/ps fail; pass the app-bundled tool path from /ios_containers
-      /ios_system /ios_workspace, locate it with shell.exec find). A Mach-O passed to shell.exec fails with ENOEXEC; an ELF passed
-      to system.exec_root is rejected — route by file type. Everything (ls/cat/grep/tar/git/python3/sqlite3/curl/ps/df)
-      is in the container; apk add installs the rest. Timeout/download rules live in shell.exec's schema.
-      [no iOS-native shell fallback]: notifyutil/uicache/sbreload/idevice_id/swift do NOT exist; class-dump has no
-      native build (Alpine binutils objdump/nm/readelf + llvm-objdump cover Mach-O analysis; jtool2 IS bundled in
-      bin/ and runs iOS-natively — use it for Mach-O headers/plists/load commands); sysctl is Alpine's (kern.* not queryable); ps sees only container
-      processes — use `inject list` for iOS-side process listing. All commands/pipes/paths work in the unified
-      env — check the command itself before concluding.
-    - SHELL PREFIXES (iOS-native, run inside shell.exec): `py3-native` (heavy numpy/pandas) / `node-native` (heavy node+npm) /
-      `plutil` / `sqlite3 <db>` / `jtool2` (Mach-O parse). Exact invocation + availability → `native.tools` (deep probe).
-      Plain python3/node = unified env daily use. ldid/optool/insert_dylib/ct_bypass are invoked internally by MCP tools —
-      don't run them directly.
-
-    - COMMAND EXISTENCE (measured): `ls /usr/bin` lists only a subset — common commands (chmod/ls/cp/launchctl) don't
-      appear in listings but direct path access works. Check with `command -v <name>` or `ls -la /usr/bin/<name>`;
-      never judge missing by `ls <dir>` enumeration. launchctl is at /usr/bin/launchctl.
-    - iOS↔Alpine AUTO-BIND (5 dirs): /var/mobile/Documents/Workspace→/ios_workspace(rw),
-      /var/containers→/ios_containers(rw), /System→/ios_system(ro),
-      /var/mobile/Containers/Data/Application→/ios_appdata(ro),
-      /var/mobile/Containers/Shared/AppGroup→/ios_appgroups(ro).
-      /var/mobile as a whole is NOT auto-bound (self-reference → crash); per-app data containers:
-      bind_app bundle_id:<id>→/ios_data_<app> (ro) / bind_app_write (rw, auto-backups Documents+Library first).
-      Auto-bind rewrites command-line paths only, not paths inside scripts — in sh/heredoc scripts use /ios_* paths.
-    - GIT/WGET/CURL: preinstalled (git 2.x/wget/curl), no manual install.
-    - PROVISION: whitelisted commands auto-install on "command not found" (apk add + one retry); others: explicit
-      `apk add <pkg>` (sqlite3/file/nano/make/cmake/gcc/clang/openssl/radare2 installable). Install failure → read the
-      diagnostics, retry once or state the real cause. Install 60-240s is normal; check `df -h /` before big packages.
-      Theos+clang (iOS toolchain) is NOT installable — use PC cross-compilation / GitHub Actions.
+    - ROUTE BY FILE TYPE: shell.exec runs ELF/Linux tools (Alpine: ls/cat/grep/tar/git/python3/sqlite3/curl/ps/df/apk);
+      system.exec_root runs iOS-native Mach-O (jroot/app-bundled: ldid/jtool2/plutil/py3-native/node-native/optool).
+      Wrong executor → ENOEXEC/rejected. Mach-O analysis: Alpine binutils/llvm-objdump or jtool2.
+    - PATHS: non-jailbroken has NO /bin/* — use app-bundled paths via auto-bind:
+      Workspace→/ios_workspace(rw), /var/containers→/ios_containers(rw), /System→/ios_system(ro),
+      appdata→/ios_appdata(ro), appgroups→/ios_appgroups(ro); bind_app <id>→/ios_data_<id> (ro) /
+      bind_app_write (rw, auto-backup). /var/mobile itself NOT auto-bound; auto-bind rewrites CLI paths only —
+      in scripts use /ios_* explicitly. No notifyutil/uicache/sbreload/idevice_id/swift — don't expect them.
+    - iOS-native prefixes run INSIDE shell.exec: `py3-native` (heavy numpy/pandas) / `node-native` (heavy node+npm) /
+      `plutil` / `sqlite3 <db>` / `jtool2` (Mach-O parse) — exact invocation: `native.tools` (deep probe);
+      ldid/optool/insert_dylib/ct_bypass are invoked internally by MCP tools — don't run them directly.
+    - PROCESSES: ps sees only container — iOS-side listing: `inject list`. `ls /usr/bin` undercounts — use `command -v`.
+    - TOOLS: git/wget/curl preinstalled; whitelisted commands auto-install on "command not found"; else explicit
+      `apk add` (60-240s; check df -h first). Theos/clang NOT installable — use PC / GitHub Actions.
+    - Availability check: `native.tools` (iOS side) / `command -v` (Alpine). Env limits → `skills.read "Shell & Env Boundaries"`.
 
     === REVERSE / BINARY ANALYSIS (authoritative) ===
     - INJECTION SAFETY (hard): modify only unencrypted Mach-O inside Frameworks/ — never the main binary (an
