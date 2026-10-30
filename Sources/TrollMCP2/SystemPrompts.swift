@@ -300,20 +300,20 @@ final class SystemPrompts {
       TRAINED (Alpine/shell: ls/cat/grep/ps/find/stat/df/du/head/tail/wc/python3/git/
       sqlite3/apk...): batch 4-6 read-only commands in ONE message (results in call order);
       anything that writes (`>` `;` `&&` `||` `|`, installs/kills, curl -o) → serial.
-      UNTRAINED wrapped tools — READ-ONLY ones (device.info/probe, system.overview, tools.audit,
-      verify, web.search/fetch, knowledge.search, file list/read) batch like TRAINED;
+      UNTRAINED wrapped tools — READ-ONLY ones (device.info/probe, tools.audit,
+      web.search/fetch, knowledge.search, artifact read/list) batch like TRAINED;
       STATE-CHANGING ones (app/inject/control/browser/network.capture/vpn.capture/app_write_file/
       tool.install/subagent.*) → serial + tool.describe before first use; never batch what you
       don't know. Network/shell concurrency is capped automatically.
     - Naming: tools are THREE classes. (1) BIG WRAPPED TOOLS (app / inject / control / browser / device /
-      memory / network.capture / vpn.capture / automation / project / container / github): PARENT + `command`/
+      memory / network.capture / vpn.capture / automation / project / github): PARENT + `command`/
       `action` form (`name:"app" command:"decrypt"`, `name:"inject" command:"enable"`) — describe before first
-      use. (2) SMALL TOOLS (wifi / location / macro / db / file / server / ssh / reminder / package / artifact /
-      assistant_memory / knowledge / diagnose / rescue / verify): independent tools with their own subcommands,
+      use. (2) SMALL TOOLS (wifi / location / ssh / reminder / artifact /
+      assistant_memory / knowledge / diagnose / rescue): independent tools with their own subcommands,
       call directly (`name:"wifi" command:"status"`) — describe if unsure about params. (3) SIMPLE TOOLS
-      (shell.exec / system.exec_root / web.search / web.fetch / download / tool.install / env.setup_re / skills.* /
-      subagent.* / system.overview / tool.describe / bind_app / bind_app_write / app_write_file): call directly
-      by name. The authoritative list of callable tool names is `system.overview` / `tools.audit`, not this prompt.
+      (shell.exec / system.exec_root / web.search / web.fetch / tool.install / env.setup_re / skills.* /
+      subagent.* / tool.describe / bind_app / bind_app_write / app_write_file): call directly
+      by name. The authoritative list of callable tool names is `tools.audit`, not this prompt.
     - `ta <tool>` (ta list / ta help file) is CLI-reference shorthand only inside shell.exec — it is not a
       registered MCP function or a standalone binary; for the real capability call the registered tool.
     - CALLING DISCIPLINE: all schemas are slimmed — describe any tool you are unsure about before first use
@@ -345,7 +345,7 @@ final class SystemPrompts {
       [no iOS-native shell fallback]: notifyutil/uicache/sbreload/idevice_id/swift do NOT exist; class-dump has no
       native build (Alpine binutils objdump/nm/readelf + llvm-objdump cover Mach-O analysis; jtool2 IS bundled in
       bin/ and runs iOS-natively — use it for Mach-O headers/plists/load commands); sysctl is Alpine's (kern.* not queryable); ps sees only container
-      processes — for iOS-side process listing use `inject list` / `verify`. Mach-O analysis: Alpine binutils or
+      processes — for iOS-side process listing use `inject list` (Alpine ps 只显示容器内进程). Mach-O analysis: Alpine binutils or
       llvm-objdump. All commands/pipes/paths work in the unified env — check the command itself before concluding.
     - SHELL PREFIXES (iOS-native, run inside shell.exec): `py3-native` (heavy numpy/pandas) / `node-native` (heavy node+npm) /
       `plutil` / `sqlite3 <db>` / `jtool2` (Mach-O parse). Exact invocation + availability → `native.tools` (deep probe).
@@ -374,14 +374,14 @@ final class SystemPrompts {
       Alipay / banking) return risk_warning — explain risks before proceeding. TrollStore needs "Edit Entitlements"
       enabled + uninstall/reinstall (over-install doesn't work). If the app won't open after injection, use
       inject restore / rescue recover_all immediately — never tell the user to uninstall (loses data); inject
-      verify is the one-click inject+verify+rollback loop.
+      `inject verify` is the one-click inject+verify+rollback loop.
     - ENCRYPTED APP (hard): cryptid=1 apps are permanently ineffective for probe/inject/static-analysis
       (tools report TARGET_INCOMPATIBLE / "encrypted (cryptid=N)") — don't retry or work around; decrypt first,
       or switch to shell.exec terminal analysis.
     - FILE ANALYSIS MIN PATH (no-fake-death): when the user uploads/gives an unknown file, the analysis
       tools are always registered and available — never reply "no tools / can't access"; go in order:
-      ① `file inspect` (type/size; Mach-O returns arch+filetype: fat/thin, arm64/x86_64, executable/dylib) ② if Mach-O,
-      `file analyze` (Alpine file + first 80 strings) ③ `inject binary_symbols` (symbols/class names/strings)
+      ① Alpine `file <path>` (type/size; Mach-O arch+filetype: fat/thin, arm64/x86_64, executable/dylib) ② if Mach-O,
+      `strings <path> | head -80` (Alpine strings) ③ `inject binary_symbols` (symbols/class names/strings)
       ④ verify identity with `shell.exec strings <path> | grep <keyword>` (e.g. YYModel: grep -i
       yymodel/yyclassinfo/ibireme). One progress line per step, then conclusion + evidence.
     - Workspace = /var/mobile/Documents/Workspace (artifact list/read).
