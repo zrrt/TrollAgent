@@ -407,6 +407,11 @@ final class SubAgentManager {
         if n < 26 { return String(Character(UnicodeScalar(65 + n)!)) }
         return String(Character(UnicodeScalar(65 + (n % 26))!)) + String(n / 26)
     }
+    /// fix73j-p5h：按 task_id 查 UI 显示名（invoke 侧构造 RUNNING 卡用）
+    func displayNameFor(id: String) -> String? {
+        lock.lock(); defer { lock.unlock() }
+        return tasks[id]?.displayName
+    }
     /// v7.4.0-fix73g：在途 LLM 请求的真 abort 处理器——watchdog/stop/软超时到点必须
     /// cancel 掉 runner 的 OpenAIClient（此前只改任务状态，请求永远在后台挂住 → send_state 卡 sent）。
     private var cancellers: [String: () -> Void] = [:]
@@ -1084,6 +1089,8 @@ final class SubAgentRunTool: MCPTool {
         let id = try SubAgentManager.shared.start(instruction: instruction, allowedTools: wl,
                                                   maxRounds: rounds, timeout: timeout,
                                                   personaName: persona.name, sessionID: sessionID)
+        // fix73j-p5h：displayName 由 start 内部分配（task.displayName），此处查回供 RUNNING 卡显示
+        let displayName = SubAgentManager.shared.displayNameFor(id: id) ?? id
         // fix73j：主界面立即可见"执行中"卡（派发即上屏，完成时再补 [SUBAGENT-DONE] 完成卡）
         let runningBody: [String: Any] = [
             "ok": true, "task_id": id, "display_name": displayName,
