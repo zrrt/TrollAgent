@@ -411,9 +411,9 @@ final class SubAgentManager {
 
     private var tasks: [String: SubAgentTask] = [:]
     /// fix73j：并发子代理计数（替代 v7.1.107 的 activeTaskID 单任务独占锁）。
-    /// iOS 资源墙：主会话同时最多派发 maxConcurrentSubagents 个子代理。
+    /// fix73j-p5e：仅作统计展示（subagent.status），不再作为派发限制——
+    /// 子代理槽位各自独立，不共享配额上限。
     private var runningCount = 0
-    static let maxConcurrentSubagents = 4
     /// v7.4.0-fix73g：在途 LLM 请求的真 abort 处理器——watchdog/stop/软超时到点必须
     /// cancel 掉 runner 的 OpenAIClient（此前只改任务状态，请求永远在后台挂住 → send_state 卡 sent）。
     private var cancellers: [String: () -> Void] = [:]
@@ -482,10 +482,9 @@ final class SubAgentManager {
                timeout: TimeInterval, personaName: String = "general",
                sessionID: UUID? = nil) throws -> String {
         lock.lock()
-        if runningCount >= SubAgentManager.maxConcurrentSubagents {
-            lock.unlock()
-            throw MCPError.failed("已达子代理并发上限 \(SubAgentManager.maxConcurrentSubagents)。先 subagent.status 等待已有任务完成，或 subagent.stop 停止后再委派新任务。")
-        }
+        // fix73j-p5e：去掉派发配额上限（用户确认：子代理槽位各自独立，不共享配额——
+        // iOS 不会因并发数/线程多杀 App，历史杀后台已定位为落盘 bug p3e）。
+        // runningCount 仅作统计供 subagent.status 展示，不再作为派发限制。
         runningCount += 1
         let id = String(UUID().uuidString.prefix(8))
         let persona = SubAgentPersonas.find(personaName)
