@@ -1142,10 +1142,15 @@ final class ConversationStore: ObservableObject {
 
     func select(_ id: UUID) {
         // v2.9.12：打开会话即视为"最近使用"，刷新 updatedAt 并重排到最前
-        if selectedId != id, let idx = conversations.firstIndex(where: { $0.id == id }) {
+        let switching = selectedId != id
+        if switching, let idx = conversations.firstIndex(where: { $0.id == id }) {
             conversations[idx].updatedAt = Date()
         }
         selectedId = id
+        // fix73k-P3（A）：真正切换会话时清空工具会话状态（approved+unloaded）——
+        // 每会话工具集独立（describe/卸载不跨会话污染），KV 前缀各自稳定；
+        // 切回原会话需重新 describe，但模型记忆仍可调（dispatch isEnabled 放行）。
+        if switching { ToolRegistry.shared.clearSessionApproval() }
         // v6.0.28：切换会话清空TTS队列，不要读上一段的内容
         TTSService.shared.stop()
         sortAndSave()
