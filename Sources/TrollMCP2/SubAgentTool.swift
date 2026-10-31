@@ -720,6 +720,18 @@ final class SubAgentRunner {
         return p
     }
 
+    /// fix73k：persona 白名单是原名（shell.exec），schema 用 apiName（shell_exec，
+    /// 点/空格等非法字符→下划线）——原名直接匹配必失败 → 子代理工具集只剩无点号工具
+    /// （artifact），shell-worker 看不到 shell.exec（用户实测"本会话仅暴露 artifact、
+    /// skills.read"）。这里做 apiName 归一化：原名 → 同名 apiName 后精确+前缀双路匹配。
+    private func apiSafe(_ name: String) -> String {
+        let allowed = CharacterSet(charactersIn: "abcdefghijklmnopqrstuvwxyzABCDEFGHIJKLMNOPQRSTUVWXYZ0123456789_-")
+        var s = name.components(separatedBy: allowed.inverted).joined(separator: "_")
+        if s.isEmpty { s = "tool" }
+        if s.first?.isNumber ?? false { s = "t_\(s)" }
+        return s
+    }
+
     /// 过滤后的工具 schema：身份默认集 ∪ 白名单（apiName 前缀匹配大工具）
     private func subAgentTools() -> [[String: Any]]? {
         var allowed = persona.tools
@@ -734,11 +746,16 @@ final class SubAgentRunner {
             // fix73j-审计 M-8：高危工具硬排除——白名单前缀/大工具名（如 "device"）会
             // 放行全家（device.fake/restore/keychain_wipe）。高危簇默认禁，除非白名单
             // 显式包含具体工具名（如 "hook.apply" 精确命中才放行）。
-            if SubAgentPersonas.isHighRisk(n), !allowed.contains(n) {
+            if SubAgentPersonas.isHighRisk(n),
+               !allowed.contains(n),
+               !allowed.contains(where: { n == apiSafe($0) }) {
                 continue
             }
             // 匹配：精确 apiName 或大工具名（如 "artifact" 匹配 "artifact.read"）
-            let matched = allowed.contains(n) || allowed.contains { n.hasPrefix($0 + ".") }
+            let matched = allowed.contains(n)
+                || allowed.contains { n.hasPrefix($0 + ".") }
+                // fix73k：原名→apiName 归一化（shell.exec ↔ shell_exec）
+                || allowed.contains { n == apiSafe($0) || n.hasPrefix(apiSafe($0) + "_") }
             if matched { picked.append(schema) }
         }
         return picked.isEmpty ? nil : picked
