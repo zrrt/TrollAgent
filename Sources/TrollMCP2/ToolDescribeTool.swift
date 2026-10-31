@@ -126,10 +126,10 @@ final class ToolDescribeTool: MCPTool {
     }
 }
 
-/// fix73k-P3：tool.unload——会话内卸载（可逆）。
-/// 从会话已授权集移除 → 下一轮 schema 不含 → 模型看不到；目录标回 [describe to load]，
-/// tool.describe 可重新加载。对称闭环：describe=加载（schema 注入）、unload=卸载（schema 移除）。
-/// 只影响会话可见性，不动全局 isEnabled（执行权保留——模型看不到就不会调，执行层兜底仍开）。
+/// fix73k-P3：tool.unload——会话内真拔（可逆）。
+/// 从会话已授权集移除 + 插入卸载集 → 下一轮 schema 不含、目录不列（模型不知道存在）；
+/// dispatch 兜底拦截记忆调用；tool.describe 即重载通道。对称闭环：describe=加载、unload=卸载。
+/// 只影响会话可见性，不动全局 isEnabled（设置开关是永久通道；远程 API 是管理通道不走 dispatch）。
 final class ToolUnloadTool: MCPTool {
     let definition = ToolDefinition(
         name: "tool.unload",
