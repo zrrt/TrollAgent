@@ -717,7 +717,10 @@ struct MarkdownTableView: View {
                 )
             }
             // v7.1.109-peers：行数多限高内部滚动（<4 行不触发，自适应高度）
-            .frame(maxHeight: 300)
+            // v7.1.278-fix：表格随内容变长而变长——移除 300pt 硬限高（用户实测长表格
+            // 只能看到正方形窗口、内容要一直内部滑动）；表格直接在消息流完整展开，
+            // 随页面滚动阅读。仅极端超长（>60 行）保留内部滚动，防单 cell 过高卡顿。
+            .frame(maxHeight: rows.count > 60 ? 480 : .infinity)
         }
     }
 }
