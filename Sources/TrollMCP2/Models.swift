@@ -2637,10 +2637,14 @@ final class ConversationStore: ObservableObject {
         // 而非 selectedIndex（用户切会话窗口期间 selectedIndex 已漂移而 requestSessionId 未变）——
         // 否则读 selectedIndex 的上下文、写 activeConvIndex 的结果 → 切会话窗口跨会话污染/答非所问。
         var all: [ChatMessage]
+        // v7.1.267-audit6：isError 过滤改为"只滤非工具消息"——工具失败消息（role=tool,
+        // isError=true，含 classify 的 reason/next_step）必须发给 AI，否则模型下一轮看不到
+        // 失败原因（只剩 repairDanglingToolCalls 补的占位），会盲试重调同一工具（死循环）。
+        // 非工具 isError（报错回复/系统错误卡）照旧过滤（不污染 AI 上下文）。
         if let rid = requestSessionId ?? activeConvId, let i = conversations.firstIndex(where: { $0.id == rid }) {
-            all = conversations[i].messages.filter { !$0.isError }
+            all = conversations[i].messages.filter { !($0.isError && $0.role != "tool") }
         } else {
-            all = currentMessages.filter { !$0.isError }
+            all = currentMessages.filter { !($0.isError && $0.role != "tool") }
         }
         // fix73j-审计：子代理状态卡消息的 API 序列安全化——
         // 子代理完成/派发时机完全随机，若状态卡(user)原样插在 assistant(tool_calls) 与 tool 结果
