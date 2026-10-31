@@ -1133,6 +1133,26 @@ final class SubAgentRunner {
         }
         return entries.isEmpty ? nil : entries.joined(separator: ", ")
     }
+
+    /// fix73k：fork 式上下文继承——取主会话当前对话最近几轮 user/assistant 正文
+    /// （含工具结果摘要?否——只取正文，背景提示不引爆炸 token；每条截 500 字符，
+    /// 最多 8 轮 ≈ ≤4000 字符背景）。只读不写，线程安全（只读 conversations）。
+    private static func parentContextTurns() -> String {
+        guard let idx = ConversationStore.shared.selectedIndex,
+              idx < ConversationStore.shared.conversations.count else { return "" }
+        let msgs = ConversationStore.shared.conversations[idx].messages
+        var parts: [String] = []
+        var seen = 0
+        for m in msgs.reversed() {
+            if m.role == "user" || m.role == "assistant" {
+                let body = String(m.content.prefix(500))
+                parts.append("[\(m.role)] \(body)")
+                seen += 1
+                if seen >= 8 { break }
+            }
+        }
+        return parts.reversed().joined(separator: "\n\n")
+    }
 }
 
 // MARK: - 子代理工具注册（subagent.run / subagent.status / subagent.stop）
@@ -1147,6 +1167,7 @@ final class SubAgentRunTool: MCPTool {
             "tools": "Optional comma-separated tool whitelist ADDED to the persona's default set (e.g. 'shell.exec,artifact'). High-risk tools (hook.apply/injection.mem/device.fake/keychain_wipe/system.exec_root/app.install/app.uninstall/control.inject) are denied unless explicitly listed here.",
             "max_rounds": "Optional max tool rounds (default 12, max 30)",
             "timeout_secs": "Optional timeout seconds (default 180, max 600)",
+            "inherit_context": "Optional true to seed the subagent with the parent conversation's recent turns as background context (fork-style context inheritance — DSH fork-in-process analog). Default false. Use when the task depends on prior conversation context.",
         ],
         verified: true, category: "system")
 
@@ -1157,6 +1178,20 @@ final class SubAgentRunTool: MCPTool {
         }
         // 指令截断（对齐 OpenMinis 子会话指令 4000 字上限的防护精神）
         let instruction = raw.count > 8000 ? String(raw.prefix(8000)) + "\n... [instruction truncated]" : raw
+        // fix73k：fork 式上下文继承——inherit_context=true 时把主会话最近几轮
+        // user/assistant 正文作为背景上下文 seed 进子代理（对齐 DSH fork-in-process
+        // 继承父已完成 turn 前缀：子代理不用从零读材料，上下文连续）。
+        let finalInstruction: String
+        if params["inherit_context"] as? Bool == true {
+            let ctx = SubAgentRunTool.parentContextTurns()
+            if !ctx.isEmpty {
+                finalInstruction = "[Parent-conversation context (recent turns — background only, follow the task below)]\n\n\(ctx)\n\n[Task]\n\(instruction)"
+            } else {
+                finalInstruction = instruction
+            }
+        } else {
+            finalInstruction = instruction
+        }
         let agentType = params["agent_type"] as? String
         let persona = SubAgentPersonas.find(agentType)
         let wl = (params["tools"] as? String)?
@@ -1176,7 +1211,7 @@ final class SubAgentRunTool: MCPTool {
         }()
         // fix73j：记录派发时的会话 id——回传写回该会话（用户切换会话不污染）
         let sessionID = ConversationStore.shared.currentSessionID()
-        let id = try SubAgentManager.shared.start(instruction: instruction, allowedTools: wl,
+        let id = try SubAgentManager.shared.start(instruction: finalInstruction, allowedTools: wl,
                                                   maxRounds: rounds, timeout: timeout,
                                                   personaName: persona.name, sessionID: sessionID)
         // fix73j-p5h：displayName 由 start 内部分配（task.displayName），此处查回供 RUNNING 卡显示
