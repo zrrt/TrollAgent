@@ -703,10 +703,16 @@ public final class ToolRegistry: ObservableObject {
             .sorted { $0.name < $1.name }
         var lines: [String] = []
         for d in defs {
+            // fix73k-P3（认知层完整）：前置标记 [jb]/[ts] 入目录——模型 describe 前就知道
+            // 环境是否支持（requiresJailbreak/requiresTrollStore），不浪费加载轮次。
+            var flags: [String] = []
+            if d.requiresJailbreak { flags.append("jb") }
+            if d.requiresTrollStore { flags.append("ts") }
+            let flagStr = flags.isEmpty ? "" : " [\(flags.joined(separator: ","))]"
             if isCore(d.apiName) || isSessionApproved(d.apiName) || isSessionApproved(d.name) {
-                lines.append("\(d.name) — \(d.shortSummary)")
+                lines.append("\(d.name) — \(d.shortSummary)\(flagStr)")
             } else {
-                lines.append("\(d.name) — \(d.shortSummary) [describe to load]")
+                lines.append("\(d.name) — \(d.shortSummary)\(flagStr) [describe to load]")
             }
         }
         return lines.joined(separator: "\n")

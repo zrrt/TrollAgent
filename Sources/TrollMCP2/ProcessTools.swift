@@ -422,7 +422,7 @@ final class AppExecTool: MCPTool {
             "duration": "Duration seconds (for stats)",
             "text": "Text to input (for open_and_input)"
         ],
-        verified: true, category: "app_control", prerequisites: ["install/uninstall needs TrollStore entitlements; on failure see diagnose"])
+        verified: true, category: "app_control", requiresTrollStore: true, prerequisites: ["install/uninstall needs TrollStore entitlements; on failure see diagnose"])
     
     func invoke(_ params: [String: Any]) throws -> [String: Any] {
         guard let command = params["command"] as? String else {
