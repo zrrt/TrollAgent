@@ -303,11 +303,12 @@ final class SubAgentTask: Identifiable {
         // 主 AI 永远"执行中"）。异步 + busy_timeout 2s + 事务化 = 终态写不阻塞任何路径。
         let finSnapshot = (status: status.rawValue, rounds: rounds, elapsed: elapsed,
                            result: result, error: error, trace: hasTrace ? trace : [])
+        let tid = id
         DispatchQueue.global(qos: .utility).async {
             if !finSnapshot.trace.isEmpty {
-                Self.persistTrace(id: id, trace: finSnapshot.trace)
+                Self.persistTrace(id: tid, trace: finSnapshot.trace)
             }
-            SubAgentStore.shared.finalizeTask(taskID: id, status: finSnapshot.status,
+            SubAgentStore.shared.finalizeTask(taskID: tid, status: finSnapshot.status,
                                               rounds: finSnapshot.rounds, elapsed: finSnapshot.elapsed,
                                               result: finSnapshot.result, error: finSnapshot.error)
         }
@@ -914,7 +915,9 @@ final class SubAgentRunner {
             self.task.markSendReplied()
             var failCode = 0
             if case .failure(let e) = result { failCode = (e as NSError).code }
-            subagentDiag("REPLY: task=\(self.task.id) round=\(self.task.rounds + 1) ok=\(result.isSuccess ? "true" : "false") errCode=\(failCode)")
+            var okFlag = "false"
+            if case .success = result { okFlag = "true" }
+            subagentDiag("REPLY: task=\(self.task.id) round=\(self.task.rounds + 1) ok=\(okFlag) errCode=\(failCode)")
             // fix73j-p4：任务级降级缓存——本请求 settle 的兼容级别记入任务缓存，
             // 下一轮新 client 从缓存起步（不重试降级链），且不污染主会话 config。
             if let lv = self.client?.resolvedLevel { self.compatOverride = lv }
@@ -1059,9 +1062,10 @@ final class SubAgentRunner {
             ["role": m.role, "content": String(m.content.prefix(2000)), "tool": m.toolName ?? ""]
         }
         let rds = task.rounds
+        let tid = task.id
         DispatchQueue.global(qos: .utility).async {
-            SubAgentTask.persistTrace(id: task.id, trace: snap)
-            SubAgentStore.shared.touchTask(taskID: task.id, rounds: rds)
+            SubAgentTask.persistTrace(id: tid, trace: snap)
+            SubAgentStore.shared.touchTask(taskID: tid, rounds: rds)
         }
         loop()
     }
