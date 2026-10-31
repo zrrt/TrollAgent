@@ -658,6 +658,10 @@ final class SubAgentRunner {
     private let maxRounds: Int
     private let deadline: Date
     private var messages: [ChatMessage] = []
+    /// fix73k：完整轨迹归档（append-only）——折叠只压缩"模型看到的请求上下文"（messages），
+    /// 被折叠的早期轮次原文归档到这里，详情页轨迹（snapshotMessages）据此显示完整历史
+    /// （对齐 DeepSeek Harness append-only 事件流思路：请求用折叠版、回放用完整版）。
+    private var fullTrace: [ChatMessage] = []
     private var client: OpenAIClient?
     /// fix73j-P2：模型首轮按纪律输出的 📋 PLAN 段（计划锚定——每轮 send 注入上下文末尾，
     /// 对齐 Manus "把计划念到上下文末尾"防目标漂移；不写进 messages，避免折叠污染）。
@@ -825,6 +829,9 @@ final class SubAgentRunner {
             foldCount = folded.count
         }
         guard foldCount > 0 else { return }
+        // fix73k：归档被折叠段到完整轨迹（详情页回放用）——折叠只压缩模型上下文，
+        // 完整执行历史不丢；重复折叠时归档段不重叠（每次归档的是上次 fold 后保留的轮次）。
+        fullTrace.append(contentsOf: folded)
         // 折叠说明：列出被折轮次用过的工具名（来自消息里的 tool 角色 title/name，简化取 role==tool 的 toolName）
         var used = Set<String>()
         for m in folded where m.role == "tool" {
@@ -1095,7 +1102,14 @@ final class SubAgentRunner {
     }
 
     /// fix73j：当前消息快照（终态时由 manager 取，存 task.trace 供详情页回看）
-    func snapshotMessages() -> [ChatMessage] { messages }
+    /// fix73k：完整轨迹——system+instruction + 全部被折叠轮次（fullTrace）+ 当前保留轮次。
+    /// 折叠只影响模型请求上下文；详情页回放用完整版（对齐 DSH append-only 事件流）。
+    func snapshotMessages() -> [ChatMessage] {
+        guard !fullTrace.isEmpty else { return messages }
+        let head = Array(messages.prefix(2))          // system + instruction
+        let tail = Array(messages.dropFirst(2))       // foldNote + 最近 K 轮
+        return head + fullTrace + tail
+    }
 
     // MARK: - 工具小工具
     private static func parseArgs(_ s: String) -> [String: Any] {
