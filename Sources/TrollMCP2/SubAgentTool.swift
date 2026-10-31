@@ -428,9 +428,13 @@ final class SubAgentManager {
     /// 子代理槽位各自独立，不共享配额上限。
     private var runningCount = 0
     /// fix73j-p5h：UI 显示名分配（A→B→C…→Z→A1→B1…）
+    /// fix73k-根因修复：调用者必须已持 lock（唯一调用点 start() 已持 lock）——
+    /// 原实现内部 lock.lock() 与 start() 的 lock 同线程重入非递归 NSLock → 永久死锁 →
+    /// start() 永不返回 → subagent.run invoke 卡 → 主会话占位卡永不填充 → 杀后台重启
+    /// CRASH-REWRITE（用户实测"执行中几小时"的真正根因，p5h 加 displayName 引入的回归）。
     private var letterCounter = 0
     func nextDisplayName() -> String {
-        lock.lock(); defer { lock.unlock() }
+        // 无锁：调用方持锁（start()）。不可自行加锁（重入死锁）。
         let n = letterCounter
         letterCounter += 1
         if n < 26 { return String(Character(UnicodeScalar(65 + n)!)) }
