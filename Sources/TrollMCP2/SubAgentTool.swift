@@ -1,6 +1,21 @@
 import Foundation
 import SQLite3
 
+// MARK: - 子代理全链路诊断日志（fix73k-p3g）
+/// 用户反馈"发出的消息根本没记录日志"：subagent 内部（loop/send/回调/工具/watchdog/终态）
+/// 此前零埋点——subagent_run dispatch 后 diagnostic.log 一片空白，卡在哪（首轮请求挂住？
+/// 工具执行卡死？watchdog 未触发？）完全不可见。本函数与主会话 diag 写同一文件，
+/// 前缀 SUBAGENT-DIAG 区分，让子代理每个关键环节留痕。
+func subagentDiag(_ s: String) {
+    let p = NSHomeDirectory().appending("/Documents/Workspace/store/diagnostic.log")
+    let line = "[\(Date())] SUBAGENT-DIAG: " + s + "\n"
+    if let h = try? FileHandle(forWritingTo: URL(fileURLWithPath: p)) {
+        h.seekToEndOfFile(); h.write(Data(line.utf8)); try? h.close()
+    } else {
+        try? Data(line.utf8).write(to: URL(fileURLWithPath: p), options: .atomic)
+    }
+}
+
 // MARK: - 子代理身份注册表（v7.4.1-fix73j：对齐 Claude Code .claude/agents 声明式身份）
 /// 身份 = 预定义 {name, description, 工具集, 纪律特化}。主 agent 按任务语义选 agent_type，
 /// 身份决定"是谁+能用什么"，instruction 决定"做什么"。每个身份独立上下文天然不交错。
@@ -221,6 +236,7 @@ final class SubAgentTask: Identifiable {
         noDeliverable = result.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty
         elapsed = Date().timeIntervalSince(createdAt)
         stateLock.unlock()
+        subagentDiag("FINAL: task=\(id) status=done errLen=0 resultLen=\(result.count)")
         // fix73j：finalize 移出持锁区间——traceSnapshotFor 内部取 manager.lock，
         // 若在 stateLock 内调用会与 status/stop 的 manager.lock→stateLock 反向死锁。
         finalizeSubAgent()
@@ -233,6 +249,7 @@ final class SubAgentTask: Identifiable {
         error = err
         elapsed = Date().timeIntervalSince(createdAt)
         stateLock.unlock()
+        subagentDiag("FINAL: task=\(id) status=failed err=\(err.prefix(120))")
         finalizeSubAgent()
     }
 
@@ -242,6 +259,7 @@ final class SubAgentTask: Identifiable {
         status = .stopped
         elapsed = Date().timeIntervalSince(createdAt)
         stateLock.unlock()
+        subagentDiag("FINAL: task=\(id) status=stopped")
         finalizeSubAgent()
     }
 
@@ -254,6 +272,7 @@ final class SubAgentTask: Identifiable {
         error = "interrupted by app backgrounding (background window expired) — re-dispatch to resume"
         elapsed = Date().timeIntervalSince(createdAt)
         stateLock.unlock()
+        subagentDiag("FINAL: task=\(id) status=interrupted")
         finalizeSubAgent()
     }
 
@@ -495,8 +514,14 @@ final class SubAgentManager {
         tasks[id] = task
         lock.unlock()
         // fix73j-p5g：独立 SQLite 建行（记录关联主会话 id）
-        SubAgentStore.shared.insertTask(taskID: id, sessionID: sessionID?.uuidString,
-                                        agentType: persona.name, maxRounds: clampedRounds)
+        // fix73k-p3g：insertTask 改后台异步——此前同步 SQLite 写在磁盘满/锁竞争时阻塞
+        // subagent_run invoke → dispatch 不返回 → 主会话占位卡（空+isRunning）永不填充 →
+        // 杀后台重启 repairCrashResidue 判 wasEmpty=true → CRASH-REWRITE 误判"Execution
+        // interrupted"（用户"完成变失败"根因）。异步后 invoke 立即返回，占位卡秒填。
+        DispatchQueue.global(qos: .userInitiated).async {
+            SubAgentStore.shared.insertTask(taskID: id, sessionID: sessionID?.uuidString,
+                                            agentType: persona.name, maxRounds: clampedRounds)
+        }
 
         let runner = SubAgentRunner(task: task, allowedTools: allowedTools,
                                     maxRounds: clampedRounds, timeout: clampedTimeout,
@@ -523,6 +548,7 @@ final class SubAgentManager {
         // 64s 仍 running（旧逻辑 65s 才触发，用户观察点恰好没到）。deadline 到点立即
         // 强制中断，不依赖请求回调；已 done/failed/stopped 的任务 isRunning()=false 不受影响。
         DispatchQueue.global(qos: .userInitiated).asyncAfter(deadline: .now() + clampedTimeout) {
+            subagentDiag("WATCHDOG: task=\(id) deadline-hit, checking trigger")
             self.lock.lock()
             if let t = self.tasks[id], t.isRunning() {
                 self.terminateWithAbort(id) { $0.markFailed("timeout after \(Int($0.timeoutSecs))s (watchdog — request hung without callback; in-flight tool call may still finish but the task is terminated and the LLM request is aborted)") }
@@ -779,6 +805,7 @@ final class SubAgentRunner {
     }
 
     private func loop() {
+        subagentDiag("LOOP: task=\(task.id) round=\(task.rounds + 1)/\(maxRounds) remaining=\(Int(deadline.timeIntervalSinceNow))s")
         // 停止检查（线程安全读取——stop 可能由工具线程随时触发）
         if !task.isRunning() { return }
         // v7.4.0-fix73d：多轮中间折叠（对齐大厂子任务 compaction）——在轮次预算/超时检查之后、
@@ -871,10 +898,13 @@ final class SubAgentRunner {
             sendMessages.append(ChatMessage(role: "system", content: anchor))
         }
         task.markSendStarted()   // v7.4.0-fix73f-6：请求已发出——status 可见 send_state=sent
+        subagentDiag("SEND: task=\(task.id) round=\(task.rounds + 1) tools=\(tools?.count ?? -1) reqTimeout=\(Int(client.requestTimeoutOverride ?? 0))s")
         client.send(messages: sendMessages, tools: tools) { [weak self] result in
             guard let self = self else { return }
             // v7.4.0-fix73f-6：收到响应（成功/失败都算）——send_state=replied
             self.task.markSendReplied()
+            let failCode = (result.failure as? NSError)?.code ?? -1
+            subagentDiag("REPLY: task=\(self.task.id) round=\(self.task.rounds + 1) ok=\(result.isSuccess ? "true" : "false") errCode=\(failCode)")
             // fix73j-p4：任务级降级缓存——本请求 settle 的兼容级别记入任务缓存，
             // 下一轮新 client 从缓存起步（不重试降级链），且不污染主会话 config。
             if let lv = self.client?.resolvedLevel { self.compatOverride = lv }
@@ -918,6 +948,7 @@ final class SubAgentRunner {
     /// DispatchSemaphore(3) 限制在途，DispatchGroup 等待全部完成，结果按 index 原序合并
     /// （Anthropic/OpenAI API 要求 tool 结果顺序镜像 tool_calls 顺序——乱序会 400）。
     private func execute(calls: [ToolCall], narration: String? = nil) {
+        subagentDiag("TOOLS: task=\(task.id) round=\(task.rounds + 1) calls=\(calls.map { $0.name }.joined(separator: ","))")
         // fix73j-P2：提取模型首轮输出的 📋 PLAN 段（纪律第 9 条）——作为计划锚定源，
         // 之后每轮注入上下文末尾（send 层，不污染 messages）。
         if planText == nil, let n = narration, let r = n.range(of: "📋 PLAN") {
@@ -1288,6 +1319,10 @@ final class SubAgentStore {
             CREATE INDEX IF NOT EXISTS idx_sub_tasks_session ON subagent_tasks(session_id);
             """
             _ = sqlite3_exec(db, schema, nil, nil, nil)
+            // fix73k-p3g：busy_timeout 2s——磁盘满/锁竞争时写事务最多等 2s 立即返回失败，
+            // 不再无限阻塞（此前 insertTask/finalizeTask 同步写卡住 → subagent_run dispatch
+            // 不返回 → 主会话占位卡永远空 → 杀后台重启 CRASH-REWRITE 误判失败）。
+            sqlite3_busy_timeout(h, 2000)
         }
     }
     deinit { if let db { sqlite3_close(db) } }
