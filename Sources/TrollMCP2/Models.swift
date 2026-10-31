@@ -1162,6 +1162,9 @@ final class ConversationStore: ObservableObject {
     func appendToCurrent(_ message: ChatMessage) -> Bool {
         guard let idx = activeConvIndex else {
             diag("APPEND-FAIL: activeConvIndex nil — message \(message.role) not appended (session switched?)")
+            // v7.1.267-audit：失败写 NetworkLog——"看不到的根本测不出来"，用户在
+            // 网络兼容日志页可直接截图反馈（diag 只进控制台，用户不可见）
+            NetworkLog.shared.log("[render] APPEND-FAIL activeConvIndex nil — \(message.role) not appended (session switched?)")
             return false
         }
         var conv = conversations[idx]
@@ -1206,6 +1209,8 @@ final class ConversationStore: ObservableObject {
         // 异步 save 杀后台会丢编辑内容）。
         guard let idx = activeConvIndex else {
             diag("UPDATE-FAIL: activeConvIndex nil — content not applied (session switched?)")
+            // v7.1.267-audit：失败写 NetworkLog——用户在网络兼容日志页可截图反馈
+            NetworkLog.shared.log("[render] UPDATE-FAIL activeConvIndex nil — content not applied (session switched?)")
             return false
         }
         let ok = updateMessage(in: conversations[idx].id, msgId: id) { msg in
@@ -1777,8 +1782,10 @@ final class ConversationStore: ObservableObject {
         }, onCompacted: { summary in
             // v7.1.41：LLM Compaction 持久化——摘要写回会话历史（对齐 Claude Code /compact 的破坏性替换），
             // 下次请求不再重复压缩同一堆旧消息，而是增量合并
+            // v7.1.267-audit：绑定压缩发起时会话（requestSessionId 快照）——回调异步，防切会话后删错会话
             DispatchQueue.main.async {
-                self.applyCompaction(summary: summary, droppedCount: prepared.droppedCount)
+                self.applyCompaction(summary: summary, droppedCount: prepared.droppedCount,
+                                     conversationID: self.requestSessionId ?? self.activeConvId ?? self.selectedId)
             }
         }) { result in
             DispatchQueue.main.async {
@@ -2759,8 +2766,18 @@ final class ConversationStore: ObservableObject {
     // MARK: - v7.1.41 LLM Compaction 持久化（对齐 Claude Code /compact：摘要替换进会话历史，增量演进）
 
     /// 压缩确认后应用——删除被裁消息、替换/插入摘要 system 消息（破坏性替换，写回并持久化）
-    func applyCompaction(summary: String, droppedCount: Int) {
-        guard droppedCount > 0, let idx = activeConvIndex ?? selectedIndex else { return }
+    /// v7.1.267-audit：conversationID 绑定"压缩发起时会话"（requestSessionId 快照）——
+    /// 摘要回调是异步的，若回调时用户已切会话，旧代码 activeConvIndex 漂移 → 删错会话头部消息
+    /// （跨会话污染：用户最新会话的历史被无端删掉）。绑定发起会话后回调写回必然正确。
+    func applyCompaction(summary: String, droppedCount: Int, conversationID: UUID? = nil) {
+        guard droppedCount > 0 else { return }
+        let idx: Int?
+        if let cid = conversationID, let i = conversations.firstIndex(where: { $0.id == cid }) {
+            idx = i
+        } else {
+            idx = activeConvIndex ?? selectedIndex
+        }
+        guard let idx else { return }
         var conv = conversations[idx]
         // 删除头部 droppedCount 条非 error 消息（isError 消息保留不删——与 messagesForAPI 的过滤口径一致）
         var remaining = droppedCount
