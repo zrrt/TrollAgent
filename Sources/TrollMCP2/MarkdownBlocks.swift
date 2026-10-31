@@ -496,6 +496,7 @@ struct MarkdownBlocksView: View {
                     .cornerRadius(8)
                 case .quote(let q):
                     // v7.2.1：引用块——左侧竖线 + 缩进 + 浅色底（Kimi/豆包式）
+                    // v7.1.278-fix：同列表项——HStack 内 AttributedString 换行 bug，正文 Text 明确宽度
                     HStack(alignment: .top, spacing: 8) {
                         RoundedRectangle(cornerRadius: 2)
                             .fill(Color.accentColor.opacity(0.55))
@@ -503,6 +504,7 @@ struct MarkdownBlocksView: View {
                         Text(coloredBody(q))
                             .font(.body)
                             .textSelection(.enabled)
+                            .frame(maxWidth: .infinity, alignment: .leading)
                     }
                     .padding(.vertical, 6)
                     .padding(.horizontal, 10)
@@ -523,15 +525,20 @@ struct MarkdownBlocksView: View {
                 case .list(let items):
                     // v7.2.1：有序/无序列表——marker 列 + 正文（首行基线对齐）
                     // v7.2.3-fix5：嵌套缩进——按 item.level 每级 16pt 左移
+                    // v7.1.278-fix：列表项正文 HStack 内 AttributedString 换行 bug（iOS16 多 run 文本
+                    // 不换行单行截断加"…"，勾选触发布局重建才显示完整）——正文 Text 加 maxWidth 明确
+                    // 宽度传播强制换行，marker fixedSize 防压缩。
                     VStack(alignment: .leading, spacing: 3) {
                         ForEach(Array(items.enumerated()), id: \.offset) { _, item in
                             HStack(alignment: .firstTextBaseline, spacing: 6) {
                                 Text(item.marker)
                                     .font(.body.weight(item.ordered ? .semibold : .bold))
                                     .foregroundColor(.secondary)
+                                    .fixedSize()
                                 Text(coloredBody(item.text))
                                     .font(.body)
                                     .textSelection(.enabled)
+                                    .frame(maxWidth: .infinity, alignment: .leading)
                             }
                             .padding(.leading, CGFloat(item.level) * 16)
                         }
