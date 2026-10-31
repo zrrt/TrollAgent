@@ -1125,11 +1125,16 @@ struct UsageStatsView: View {
         let model = r["model"] as? String ?? "-"
         let error = r["error"] as? String ?? ""
         // v7.1.98：token 显示——优先真实 usage total_tokens，无则回退估算输入
-        let realTok = r["totalTokens"] as? Int ?? 0
+        // v7.1.267-precision：精确拆分——真实 usage 按 prompt/completion 分开读，
+        // 缓存命中/新增（cacheRead/cacheMiss）单列——显示从"≈total"升级为"输入+输出+缓存+新增"
+        let realIn = r["promptTokens"] as? Int ?? 0
+        let realOut = r["completionTokens"] as? Int ?? 0
+        let cacheR = r["cacheReadTokens"] as? Int ?? 0
+        let cacheM = r["cacheMissTokens"] as? Int ?? 0
         let estTok = r["estInputTokens"] as? Int ?? 0
         let tokText: String
-        if realTok > 0 {
-            tokText = "≈\(fmtK(realTok)) tok"
+        if realIn > 0 || realOut > 0 {
+            tokText = "≈\(fmtK(realIn + realOut)) tok"
         } else if estTok > 0 {
             tokText = "≈\(fmtK(estTok)) tok(估)"
         } else {
@@ -1152,6 +1157,12 @@ struct UsageStatsView: View {
                 Text(f.string(from: d)).font(.caption2).foregroundColor(.secondary)
             }
             Text(model).font(.caption).foregroundColor(.secondary).lineLimit(1)
+            // v7.1.267-precision：每条请求精确拆分——输入(全量)/缓存命中/新增/输出，
+            // 一眼看清真实计费口径（缓存命中按低价计、新增按全价、输出单独）
+            if realIn > 0 || cacheR > 0 || cacheM > 0 || realOut > 0 {
+                Text("输入 \(fmtK(realIn)) · 缓存 \(fmtK(cacheR)) · 新增 \(fmtK(cacheM)) · 输出 \(fmtK(realOut))")
+                    .font(.caption2).foregroundColor(.secondary)
+            }
             if !ok, !error.isEmpty {
                 Text(error).font(.caption2).foregroundColor(.red).lineLimit(2)
             }

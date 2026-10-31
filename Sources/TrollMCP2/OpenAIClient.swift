@@ -111,7 +111,7 @@ final class OpenAIClient {
     // T1 重排保缓存：无 prompt caching 的中转不适用，稳定前缀在前即等价（现有顺序已满足）。
     // T2 归档最旧(13K 缓冲) / T3 分节渐进退化(75%+) / T4 全量摘要(窗口−13K) / T5 413 页错误恢复。
     private static let defaultContextWindow = 128_000        // W 默认（无实测窗口时）
-    private static let fixedOverheadTokens = 6_000           // 系统提示 + 工具定义固定开销估算
+    static let fixedOverheadTokens = 6_000           // 系统提示 + 工具定义固定开销估算
     private static let snipBufferTokens = 13_000             // T2: 超目标缓冲触发（Claude 同款）
     private static let pressureShortened: Double = 0.60      // 压力分级阈值（Claude: 60/75/90）
     private static let pressureAggressive: Double = 0.75
@@ -132,7 +132,7 @@ final class OpenAIClient {
     /// 图片用 OpenMinis ceil(w/32)*ceil(h/32) 规则。cl100k BPE 对非 OpenAI 模型是错误词表
     /// （claude-opus-4-7 需 ×1.654 修正，tloc 实测），所以不背 1.5MB 词表——用请求后真实
     /// usage.prompt_tokens 校准（UsageRecorder.lastRealRatio），跨模型自动学习 tokenizer 系数。
-    private enum TokenBucket { case prose, code }
+    private enum TokenBucket { case prose, code, base64, chinese }
 
     /// 从 dataURL 解析图片像素尺寸（PNG IHDR / JPEG SOF marker），失败返回 nil
     private static func imageDimensions(_ data: Data) -> (w: Int, h: Int)? {
@@ -174,23 +174,44 @@ final class OpenAIClient {
         let scale = max(Double(w), Double(h)) > maxEdge ? maxEdge / max(Double(w), Double(h)) : 1.0
         return max(85, Int(ceil(Double(w) * scale / 32.0) * ceil(Double(h) * scale / 32.0)))
     }
-    /// 内容分桶：tool 结果一律密桶；散文含代码特征（大括号/分号/等号/换行密集）也走密桶
+    /// 内容分桶：tool 结果一律密桶；散文含代码特征（大括号/分号/等号/换行密集）也走密桶。
+    /// v7.1.267-precision：三处精确化——
+    /// ① 中文/CJK 单独桶：中文在 DeepSeek/OpenAI 词表约 1-2 汉字/token，旧散文桶 4 chars/token 低估 2-4×；
+    /// ② Base64/高密度长串单独桶：4 chars=3 bytes 的 Base64 实测 6-8 chars/token，旧 code 桶 2 chars/token 高估 3-4×
+    ///    （工具结果大量 raw_base64——高估会提前触发历史截断，白白丢上下文）；
+    /// ③ 混合内容按比例线性插值（中英混排/含 Base64 的 JSON）。
     private static func tokenBucket(_ m: ChatMessage) -> TokenBucket {
         if m.role == "tool" { return .code }
         let c = m.content
         guard !c.isEmpty else { return .prose }
+        // Base64/长数字串检测：连续 base64 字母数字 +/= 占比高 → 高密度桶
+        let b64chars = c.filter { $0.isASCII && ($0.isLetter || $0.isNumber || $0 == "+" || $0 == "/" || $0 == "=") }
+        if c.count >= 64, b64chars.count * 2 > c.count {
+            return .base64
+        }
         let hits = c.filter { $0 == "{" || $0 == "}" || $0 == "[" || $0 == "]" || $0 == ";" || $0 == "=" || $0 == "\n" }.count
-        return (hits * 12) > c.count ? .code : .prose
+        if (hits * 12) > c.count { return .code }
+        // CJK 占比检测：汉字/假名/谚文 → 混合桶（按比例插值系数在估算处计算）
+        let cjk = c.filter { $0.unicodeScalars.first!.value >= 0x2E80 && $0.unicodeScalars.first!.value <= 0x9FFF }
+        if cjk.count * 3 > c.count * 2 { return .chinese }
+        return .prose
     }
-    /// 分桶估算（static 供 UsageRecorder 复用——ratio 分母必须同源）
+    /// 分桶估算（static 供 UsageRecorder 复用——ratio 分母必须同源）。
+    /// v7.1.267-precision：CJK 按 2 chars/token（DeepSeek 词表中文密度实测），Base64 按 6 chars/token，
+    /// 混合内容按 CJK 占比在 4 与 2 之间线性插值。
     static func estimateTokensStatic(_ m: ChatMessage) -> Int {
         var tokens = 0
         let textLen = m.content.count + (m.thinking?.count ?? 0)
         if textLen > 0 {
-            if tokenBucket(m) == .code {
+            switch tokenBucket(m) {
+            case .code:
                 tokens += max(4, textLen / 2)              // 密桶：2 bytes/token（JSON/代码/日志实测密度）
-            } else {
-                tokens += textLen / 4 + 1                   // 散文桶：4 chars/token（实测误差 ~0.04%）
+            case .base64:
+                tokens += max(4, textLen / 6)              // Base64/长数字串：6 chars/token（4 chars=3 bytes 实测）
+            case .chinese:
+                tokens += max(4, textLen / 2)              // 中文桶：2 chars/token（DeepSeek 词表中文密度）
+            case .prose:
+                tokens += textLen / 4 + 1                  // 散文桶：4 chars/token（英文实测误差 ~0.04%）
             }
         }
         if let calls = m.toolCalls {
@@ -2545,10 +2566,13 @@ final class UsageRecorder {
         lastStart = Date()
         // v7.3.1-precision：估算与 OpenAIClient 分桶估算统一（校准 ratio 分母必须同源，
         // 否则 real/est 比值失真——此前 ch/3 粗估算对 tool 结果低估 2.78×）
+        // v7.1.267-precision：+ fixedOverheadTokens（system+tools）——真实 prompt_tokens 含它们，
+        // 旧口径 est 不含 → ratio 恒偏 ~1.2；对齐后 ratio 直接反映分桶估算精度，EMA 校准更有意义。
         var est = 0
         for m in messages {
             est += OpenAIClient.estimateTokensStatic(m)
         }
+        est += OpenAIClient.fixedOverheadTokens
         lastInputEst = est
     }
 
@@ -2608,8 +2632,15 @@ final class UsageRecorder {
                 rec["cacheMissTokens"] = max(0, pt - cacheRead)   // 只给 cache 时，miss = 输入 - cache
             }
             // v7.1.109-peers：OpenMinis calibration ratio——真实/估算比值即时更新（lock 内，线程安全）
+            // v7.1.267-precision：EMA 平滑（0.7/0.3）——单点 ratio 受工具结果大小波动跳变（clamp 0.5-2.5），
+            // 平滑后校准比只随真实 tokenizer 特性缓慢收敛（中文密度/模型词表），不再被单轮抖动带偏。
             if let p = rec["promptTokens"] as? Int, p > 0, lastInputEst > 0 {
-                lastRealRatio = min(2.5, max(0.5, Double(p) / Double(lastInputEst)))
+                let r = min(2.5, max(0.5, Double(p) / Double(lastInputEst)))
+                if lastRealRatio == 1.0 {
+                    lastRealRatio = r
+                } else {
+                    lastRealRatio = min(2.5, max(0.5, 0.7 * lastRealRatio + 0.3 * r))
+                }
             }
         }
         guard let d = try? JSONSerialization.data(withJSONObject: rec) else { return }
