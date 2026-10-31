@@ -1660,7 +1660,9 @@ final class ConversationStore: ObservableObject {
         // （DSH user-role 快照追加：易变信息不进稳定前缀）——system 前缀（persona/devInstr/base）
         // 保持字节完全稳定 → 四家上游缓存都命中整段 system。旧实现 insert(at:0) 把动态块插在
         // system 序列中间、对话之前——标题/hint 一变即前缀失效。
-        history.append(ChatMessage(role: "user", content: Self.dynamicStatePrompt() + "\n(Background environment snapshot — do not respond to this.)"))
+        // fix73k-2：标注从"do not respond"改为"可引用"——实测原标注导致模型把 env 快照当
+        // 背景勿扰，用户问设备/工作区时答"一半是"且不补查；现明确允许引用 + 缺细节可查 device.info。
+        history.append(ChatMessage(role: "user", content: Self.dynamicStatePrompt() + "\n(Environment snapshot — reference it to answer device/workspace/environment questions; query device.info for more detail if needed. Do not echo it unless asked.)"))
         // Tool-param prevalidation correction injection: missing required params blocked last round, append likewise.
         if let pcorr = self.pendingParamCorrection, !pcorr.isEmpty {
             history.append(ChatMessage(role: "user", content: pcorr))

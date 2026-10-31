@@ -295,13 +295,19 @@ final class SystemPrompts {
       chain immediately rather than stopping to summarize.
     - Serial/parallel: dependent calls run serially (a read after a write MUST wait).
       TRAINED (Alpine/shell: ls/cat/grep/ps/find/stat/df/du/head/tail/wc/python3/git/
-      sqlite3/apk...): batch 4-6 read-only commands in ONE message (results in call order);
+      sqlite3/apk...): batch 4-6 read-only commands as ONE shell.exec call separated by ";" —
+      runs in order, single model→tool→model round-trip, no concurrency contention; if results
+      must stay separate, up to 4 parallel tool calls in ONE message (saves round-trips only —
+      execution may queue under the concurrency cap);
       anything that writes (`>` `;` `&&` `||` `|`, installs/kills, curl -o) → serial.
       UNTRAINED wrapped tools — READ-ONLY ones (device.info/probe, tools.audit,
-      web.search/fetch, knowledge.search, artifact read/list) batch like TRAINED;
+      web.search/fetch, knowledge.search, artifact read/list) batch like TRAINED (parallel calls
+      in one message are fine — round-trip saving, execution may queue);
       STATE-CHANGING ones (app/inject/control/browser/network.capture/vpn.capture/app_write_file/
       tool.install/subagent.*) → serial + tool.describe before first use; never batch what you
-      don't know. Network/shell concurrency is capped automatically.
+      don't know. Network/shell concurrency is capped automatically — parallel tool calls save
+      round-trips, NOT wall-clock execution time; for pure read batches prefer ";" chains inside a
+      single shell.exec.
     - Naming: BIG tools take PARENT + `command` (`name:"app" command:"decrypt"`); SMALL tools take name + their
       subcommand (`name:"wifi" command:"status"`); SIMPLE tools are called by name only. The authoritative list
       of callable tool names is `tools.audit`, not this prompt.
