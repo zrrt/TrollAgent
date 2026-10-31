@@ -300,6 +300,17 @@ final class OpenAIClient {
             c.compatLevel = 0
             NetworkLog.shared.log("\(c.name): protocol auto-corrected \(c.apiProtocol)→\(corrected) (model=\(c.model)), compat level reset")
             c.apiProtocol = corrected
+            // v7.1.279-fix：修正结果持久化写回共享配置——否则每次 init 都重复修正+reset（死循环：
+            // 级别页显示 L5 但每次请求从 L0 试探；L0 完整载荷套 Responses 协议字段不匹配→"无法解析响应"
+            // →降级重试每次多耗 10s+）。写回后下次 init 直接读到正确协议，不再修正、不再 reset，
+            // compatLevel 记忆（L5=Responses+工具）真正生效，直接从可用级别发起。
+            DispatchQueue.main.async {
+                guard let idx = ModelStore.shared.configs.firstIndex(where: { $0.id == config.id }) else { return }
+                if ModelStore.shared.configs[idx].apiProtocol != corrected {
+                    ModelStore.shared.configs[idx].apiProtocol = corrected
+                    ModelStore.shared.save()
+                }
+            }
         }
         // v4.4.17：OpenAI 格式端点自动补 /v1 (用户已填 v1/含版本路径则不补)
         // v7.1.109-peers：OpenRouter 同是 OpenAI 兼容路径，纳入自动补
