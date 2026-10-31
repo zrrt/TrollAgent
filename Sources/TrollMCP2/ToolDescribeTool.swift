@@ -124,3 +124,62 @@ final class ToolDescribeTool: MCPTool {
         return out
     }
 }
+
+/// fix73k-P3：tool.unload——会话内卸载（可逆）。
+/// 从会话已授权集移除 → 下一轮 schema 不含 → 模型看不到；目录标回 [describe to load]，
+/// tool.describe 可重新加载。对称闭环：describe=加载（schema 注入）、unload=卸载（schema 移除）。
+/// 只影响会话可见性，不动全局 isEnabled（执行权保留——模型看不到就不会调，执行层兜底仍开）。
+final class ToolUnloadTool: MCPTool {
+    let definition = ToolDefinition(
+        name: "tool.unload",
+        summary: "Unload a tool from THIS session (reversible) — removes its schema so the model stops seeing it; the catalog marks it [describe to load] again, and tool.describe reloads it. Use for: pruning tools you no longer need in this conversation (smaller requests, sharper focus). Core tools (shell.exec, web, skills, subagent, memory…) cannot be unloaded. Don't use for: permanently disabling a tool (use the settings toggle instead).",
+        parameters: [
+            "name": "Tool name to unload (required), exactly as shown in the schema — e.g. \"inject\", \"app\", \"github\"."
+        ],
+        verified: true, category: "system")
+
+    func invoke(_ params: [String: Any]) throws -> [String: Any] {
+        guard let name = (params["name"] as? String)?.trimmingCharacters(in: .whitespacesAndNewlines),
+              !name.isEmpty else {
+            throw MCPError.invalidParams("name required — the tool name from the schema, e.g. \"inject\"")
+        }
+        let reg = ToolRegistry.shared
+
+        // 与 tool.describe 相同的三路解析：原始名 → ghost 别名 → apiName
+        var resolved = reg.tool(named: name)
+        if resolved == nil, let (real, _) = ToolRegistry.ghostAlias(name) {
+            resolved = reg.tool(named: real)
+        }
+        if resolved == nil {
+            for n in reg.allToolNames() {
+                if let t = reg.tool(named: n), t.definition.apiName == name {
+                    resolved = t
+                    break
+                }
+            }
+        }
+        guard let tool = resolved else {
+            throw MCPError.invalidParams("tool not found: \(name). Call tools.audit to see the exact tool names.")
+        }
+
+        let d = tool.definition
+        // 保护：核心/管理工具常驻，不可卸载（否则破坏基线集，KV 前缀跨会话稳定失效）
+        let core = ToolRegistry.shared.isCore(name: d.name)
+        if core || d.name == "tool.describe" || d.name == "tool.unload" {
+            return [
+                "unloaded": false,
+                "name": d.name,
+                "reason": "core tool — always resident in this session; cannot be unloaded (it is part of the stable baseline). Use tool.describe to see it, or the settings toggle to disable globally.",
+            ]
+        }
+
+        reg.removeSessionApproval(name: d.name)
+        return [
+            "unloaded": true,
+            "name": d.name,
+            "effect": "schema removed from this session — the model will stop seeing this tool's parameters; the TOOL CATALOG marks it [describe to load] again.",
+            "reload": "call tool.describe name:\"\(d.name)\" to load it back into this session",
+            "scope": "session only — global toggle in settings is unchanged",
+        ]
+    }
+}

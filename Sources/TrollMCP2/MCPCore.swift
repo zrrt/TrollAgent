@@ -506,7 +506,7 @@ public final class ToolRegistry: ObservableObject {
         // fix73k-5 catalog 核心常驻：高频/兜底工具——任何任务起步必需，
         // 其余已启用工具进"目录"（系统提示词可见），模型 tool.describe 后动态注入
         "artifact", "device.info", "web.search", "web.fetch",
-        "skills.list", "skills.read", "tool.describe", "tools.audit",
+        "skills.list", "skills.read", "tool.describe", "tool.unload", "tools.audit",
         "subagent.run", "subagent.status", "subagent.stop", "subagent.steer", "subagent.wait_all",
         "memory", "knowledge"
     ]
@@ -524,6 +524,15 @@ public final class ToolRegistry: ObservableObject {
     public func approveForSession(_ name: String) {
         lock.lock()
         sessionApproved.insert(name)
+        lock.unlock()
+    }
+
+    /// fix73k-P3：会话内卸载（可逆）——从 approved 移除 → 下一轮 catalogOpenAIToolSchema
+    /// 不再含它 → 模型看不到 schema；目录标回 [describe to load]，tool.describe 可重新加载。
+    /// 只影响会话可见性，不动 isEnabled（全局开关/执行权保留）。
+    public func removeSessionApproval(_ name: String) {
+        lock.lock()
+        sessionApproved.remove(name)
         lock.unlock()
     }
 
@@ -1465,6 +1474,7 @@ public final class ToolRegistry: ObservableObject {
         // 渐进式披露：工具说明按需加载——初始 schema 只下发"工具名 + 一句话用途"，
         // AI 调用某工具前先 tool.describe 读取完整说明（长 summary + parameters + prerequisites）。
         register(ToolDescribeTool())
+        register(ToolUnloadTool())
         // v3.1.31: 之前 shell 是 Alpine，访问不到 iOS 文件系统，所以 fs.* 工具加回来了
         // v3.1.46: 现在 shell.exec 已经做了 iOS 原生命令，可以访问 iOS 文件系统了！
         // 删掉 12 个 fs.* 工具 (shell.exec 可以实现）
