@@ -1,5 +1,6 @@
 import Foundation
 import UIKit
+import Network
 
 /// v2.9.181：远程终端服务器——TrollAgent 自身暴露公网 HTTP API
 ///
@@ -77,6 +78,15 @@ final class RemoteTerminalServer {
         // v2.9.183：远程终端开启即自动启动后台保活 (静音音频），
         // 目标 App 在前台时 TrollAgent 退后台仍保持服务在线，避免 iOS 挂起断线。
         BackgroundKeepAlive.shared.start()
+        // fix73k-3：iOS 14+ 本地网络权限主动触发——App 监听 0.0.0.0 端口但从未发起过
+        // 局域网访问时，iOS 不弹"允许访问本地网络"授权窗 → 权限未授权 → 其他设备（N1/云端）
+        // 连不上监听端口（本机 127.0.0.1 不受影响，实测症状）。start NWBrowser（Bonjour 服务
+        // 发现）是 iOS 标准触发方式：首次 browse 即弹授权窗，用户允许后入站监听同步放行。
+        if #available(iOS 14.0, *) {
+            let browser = NWBrowser(for: .bonjour(type: "_trollagent._tcp"), using: .tcp)
+            browser.start(queue: .main)
+            DispatchQueue.main.asyncAfter(deadline: .now() + 2) { browser.cancel() }
+        }
         return true
     }
 
