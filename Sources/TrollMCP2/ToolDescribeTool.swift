@@ -120,7 +120,7 @@ final class ToolDescribeTool: MCPTool {
         out["slimmed"] = true
         // fix73k-5：catalog 化——describe 过的工具注入会话已授权集，
         // 下一轮 baseTools（catalogOpenAIToolSchema）即带其完整 schema，模型可直接调用。
-        reg.approveForSession(name: d.name)
+        reg.approveForSession(d.name)
         return out
     }
 }
@@ -173,7 +173,7 @@ final class ToolUnloadTool: MCPTool {
             ]
         }
 
-        reg.removeSessionApproval(name: d.name)
+        reg.removeSessionApproval(d.name)
         return [
             "unloaded": true,
             "name": d.name,
