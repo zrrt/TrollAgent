@@ -1418,12 +1418,32 @@ final class ShellExecTool: MCPTool {
     ///   ① App 内置原生 bin/（jtool2）  ② 统一环境 rootfs  ③ 原生命令表（plutil/sqlite3/ta）
     /// 支持批量：一条命令探测多个工具（command -v git; command -v curl; python3 --version）逐个合并返回。
     /// 任一段是真实执行（git status / curl 实际请求）→ 整条不拦截，走原路由。
-    /// v7.1.45：原生 df——iOS 宿主 statfs 取磁盘空间，格式化 df -h 风格（替代容器内 df：Asbestos /proc 不稳会段错误崩 App）
+    /// v7.1.45：原生 df——iOS 宿主取磁盘空间，格式化 df -h 风格（替代容器内 df：Asbestos /proc 不稳会段错误崩 App）
+    /// fix73k：磁盘统计改 APFS 感知口径——statfs 单卷快照不含 APFS 共享/快照/预留，
+    /// 显示总量/可用与 iOS 设置面板偏差大。URLResourceValues 的
+    /// volumeTotalCapacity / volumeAvailableCapacityForImportantUsage（iOS 13+）
+    /// 与"设置→通用→iPhone 存储"同口径（考虑 APFS 快照/克隆/预留空间）。
     private static func nativeDf(_ command: String) -> [String: Any] {
         let path = "/"
-        let attrs = try? FileManager.default.attributesOfFileSystem(forPath: path)
-        let total = (attrs?[.systemSize] as? NSNumber)?.int64Value ?? 0
-        let free = (attrs?[.systemFreeSize] as? NSNumber)?.int64Value ?? 0
+        var total: Int64 = 0, free: Int64 = 0
+        // APFS 感知优先（同一卷——/ 与 App 沙盒同卷，取一次即可）
+        for p in [path, NSHomeDirectory()] {
+            let u = URL(fileURLWithPath: p)
+            if let v = try? u.resourceValues(forKeys: [.volumeTotalCapacityKey,
+                                                       .volumeAvailableCapacityForImportantUsageKey,
+                                                       .volumeAvailableCapacityKey]) {
+                if let t = v.volumeTotalCapacity { total = Int64(t) }
+                if let f = v.volumeAvailableCapacityForImportantUsage { free = Int64(f) }
+                else if let a = v.volumeAvailableCapacity { free = Int64(a) }
+                if total > 0 { break }
+            }
+        }
+        if total == 0 {
+            // 回退 statfs（旧口径）
+            let attrs = try? FileManager.default.attributesOfFileSystem(forPath: path)
+            total = (attrs?[.systemSize] as? NSNumber)?.int64Value ?? 0
+            free = (attrs?[.systemFreeSize] as? NSNumber)?.int64Value ?? 0
+        }
         let used = max(total - free, 0)
         let pct = total > 0 ? Int((Double(used) / Double(total)) * 100) : 0
         func h(_ b: Int64) -> String {
@@ -1431,12 +1451,12 @@ final class ShellExecTool: MCPTool {
             if gb >= 1 { return String(format: "%.1fG", gb) }
             return String(format: "%.0fM", Double(b) / 1_048_576)
         }
-        let line = String(format: "Filesystem  Size  Used Avail Use%% Mounted on\n/  %@  %@  %@  %d%%  / (iOS host)", h(total), h(used), h(free), pct)
+        let line = String(format: "Filesystem  Size  Used Avail Use%% Mounted on\n/  %@  %@  %@  %d%%  / (iOS host, APFS-aware)", h(total), h(used), h(free), pct)
         return [
             "command": command,
             "exit_code": 0,
             "stdout": line,
-            "hint": "Native df (iOS host filesystem). Container df skipped — Asbestos /proc is unstable and crashes the app."
+            "hint": "Native df (iOS host filesystem, APFS-aware: volumeTotalCapacity + volumeAvailableCapacityForImportantUsage — matches iOS Settings storage view). Container df skipped — Asbestos /proc is unstable and crashes the app."
         ]
     }
 
