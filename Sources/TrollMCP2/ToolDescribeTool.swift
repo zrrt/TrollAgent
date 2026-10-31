@@ -165,7 +165,7 @@ final class ToolUnloadTool: MCPTool {
 
         let d = tool.definition
         // 保护：核心/管理工具常驻，不可卸载（否则破坏基线集，KV 前缀跨会话稳定失效）
-        let core = ToolRegistry.shared.isCore(name: d.name)
+        let core = ToolRegistry.shared.isCore(d.name)
         if core || d.name == "tool.describe" || d.name == "tool.unload" {
             return [
                 "unloaded": false,
