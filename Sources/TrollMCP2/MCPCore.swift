@@ -659,7 +659,7 @@ public final class ToolRegistry: ObservableObject {
         lock.lock()
         defer { lock.unlock() }
         let defs = tools.values.map { $0.definition }
-            .filter { isEnabled(name: $0.name) }
+            .filter { isEnabled(name: $0.name) && !$0.remoteOnly }
             .sorted { $0.name < $1.name }
         var lines: [String] = []
         for d in defs {
