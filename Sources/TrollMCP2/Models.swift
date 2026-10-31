@@ -1329,7 +1329,10 @@ final class ConversationStore: ObservableObject {
         isLoading = true
 
         // v3.1.66：全量加载所有工具 (tool_search 已删除，不再渐进式披露）
-        var baseTools: [[String: Any]]? = config.apiProtocol == "Anthropic Messages" ? nil : ToolRegistry.shared.enabledOpenAIToolSchema()
+        // fix73k-5：catalog 化——baseTools = 核心常驻 + 会话已授权（describe 过）工具；
+        // 其余工具经"工具目录"（runLoop 内注入系统提示词）对模型可见，tool.describe 后注入。
+        // 收益：请求变小 + 工具集会话内只增不减 → 前缀稳定 → KV 缓存命中率升。
+        var baseTools: [[String: Any]]? = config.apiProtocol == "Anthropic Messages" ? nil : ToolRegistry.shared.catalogOpenAIToolSchema()
         // v7.2.3：语音角色模式不带工具（人设对话，无 schema 注入）
         if personaPrompt != nil {
             baseTools = nil
@@ -1649,7 +1652,10 @@ final class ConversationStore: ObservableObject {
             // 判定即模型自判：≥2 步工具/依赖链/目标模糊 → 先输出短计划再调工具；
             // 平凡任务直接做。追加在稳定基础块内，保持稳定前缀缓存语义。
             let base = SystemPrompts.shared.selected.content + "\n\n" + Self.taskPlanningDiscipline
-            history.insert(ChatMessage(role: "system", content: base), at: 0)
+            // fix73k-5：catalog 工具目录注入稳定前缀——全部已启用工具名+一句话用途；
+            // 不在当前 schema 的工具标 [describe to load]，模型先 tool.describe 再调（动态注入）。
+            // 目录保证"模型始终知道有什么工具"（不会找不到），非核心 schema 不常驻省 token。
+            history.insert(ChatMessage(role: "system", content: base + "\n\nTOOL CATALOG (tools not in your schema are marked [describe to load] — call tool.describe to load them):\n" + ToolRegistry.shared.toolCatalogText()), at: 0)
             if let devInstr = DeveloperInstructionStore.shared.defaultInjectionContent(), !devInstr.isEmpty {
                 history.insert(ChatMessage(role: "system", content: "Developer instructions below, always follow:\n" + devInstr), at: 0)
             }

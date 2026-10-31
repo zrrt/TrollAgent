@@ -118,6 +118,9 @@ final class ToolDescribeTool: MCPTool {
                 : "Complete the prerequisites first (" + d.prerequisites.joined(separator: "; ") + "), then call the tool with the parameters above."
         }
         out["slimmed"] = true
+        // fix73k-5：catalog 化——describe 过的工具注入会话已授权集，
+        // 下一轮 baseTools（catalogOpenAIToolSchema）即带其完整 schema，模型可直接调用。
+        reg.approveForSession(name: d.name)
         return out
     }
 }

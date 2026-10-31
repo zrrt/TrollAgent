@@ -488,17 +488,27 @@ public final class ToolRegistry: ObservableObject {
     /// v3.0.73：根据当前系统指令模式智能叠加常驻工具
     public func isCore(_ name: String) -> Bool {
         if Self.coreToolNames.contains(name) { return true }
+        // fix73k-5：apiName 归一化匹配（schema 名 shell_exec ↔ 原名 shell.exec）
+        let norm = name.replacingOccurrences(of: "_", with: ".")
+        if Self.coreToolNames.contains(norm) { return true }
         // 叠加当前模式的额外常驻工具
         let extra = SystemPrompts.shared.currentExtraCoreTools
-        return extra.contains(name)
+        return extra.contains(name) || extra.contains(norm)
     }
 
     /// v2.9.31：常驻核心工具 (历史渐进披露设计，tool_search 已删，现仅作 UI 参考）。
+    /// fix73k-5：恢复 catalog 渐进披露——核心常驻 + describe 动态注入（见 catalogOpenAIToolSchema）。
     private static let _coreToolNames: Set<String> = [
         // 最常用：终端 (代替了 artifact）
         "shell.exec",
         // 最常用：截图
-        "control.screenshot"
+        "control.screenshot",
+        // fix73k-5 catalog 核心常驻：高频/兜底工具——任何任务起步必需，
+        // 其余已启用工具进"目录"（系统提示词可见），模型 tool.describe 后动态注入
+        "artifact", "device.info", "web.search", "web.fetch",
+        "skills.list", "skills.read", "tool.describe", "tools.audit",
+        "subagent.run", "subagent.status", "subagent.stop", "subagent.steer", "subagent.wait_all",
+        "memory", "knowledge"
     ]
 
     public func isEnabled(name: String) -> Bool {
@@ -534,7 +544,9 @@ public final class ToolRegistry: ObservableObject {
 
     public func isSessionApproved(_ name: String) -> Bool {
         // v3.0.90：去掉锁——只读操作
-        return sessionApproved.contains(name)
+        if sessionApproved.contains(name) { return true }
+        // fix73k-5：apiName 归一化匹配（schema 名 shell_exec ↔ 原名 shell.exec）
+        return sessionApproved.contains(name.replacingOccurrences(of: "_", with: "."))
     }
 
     public func setEnabled(name: String, enabled: Bool) {
@@ -627,6 +639,37 @@ public final class ToolRegistry: ObservableObject {
         }
         apiNameToOriginal = map
         return result
+    }
+
+    /// fix73k-5：catalog 化工具 schema——主会话 baseTools = 核心常驻 + 会话已授权（describe 过）
+    /// 的工具；其余已启用工具经"工具目录"（系统提示词）对模型可见，模型 tool.describe 后
+    /// approveForSession 注入下一轮。收益：请求变小 + 工具集会话内只增不减 → 前缀稳定 → KV 命中升。
+    /// 目录可见性保证"不会找不到工具"（模型始终知道有什么，参数细节按需 describe）。
+    public func catalogOpenAIToolSchema() -> [[String: Any]] {
+        let all = enabledOpenAIToolSchema()
+        return all.filter { def -> Bool in
+            guard let fn = def["function"] as? [String: Any], let n = fn["name"] as? String else { return false }
+            return isCore(n) || isSessionApproved(n)
+        }
+    }
+
+    /// fix73k-5：工具目录（catalog）——全部已启用工具名 + 一句话用途，注入系统提示词。
+    /// 模型据此知道"有什么工具"，非核心工具先 tool.describe 再调。
+    public func toolCatalogText() -> String {
+        lock.lock()
+        defer { lock.unlock() }
+        let defs = tools.values.map { $0.definition }
+            .filter { isEnabled(name: $0.name) }
+            .sorted { $0.name < $1.name }
+        var lines: [String] = []
+        for d in defs {
+            if isCore(d.apiName) || isSessionApproved(d.apiName) || isSessionApproved(d.name) {
+                lines.append("\(d.name) — \(d.shortSummary)")
+            } else {
+                lines.append("\(d.name) — \(d.shortSummary) [describe to load]")
+            }
+        }
+        return lines.joined(separator: "\n")
     }
 
     /// v3.1.3：向量语义搜索缓存——工具描述的词袋向量 (简化版，不需要 embedding 模型）
