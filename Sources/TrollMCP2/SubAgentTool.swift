@@ -1377,7 +1377,6 @@ final class SubAgentStore {
             // 不再无限阻塞（此前 insertTask/finalizeTask 同步写卡住 → subagent_run dispatch
             // 不返回 → 主会话占位卡永远空 → 杀后台重启 CRASH-REWRITE 误判失败）。
             sqlite3_busy_timeout(h, 2000)
-        }
     }
     deinit { if let db { sqlite3_close(db) } }
 
