@@ -260,6 +260,9 @@ public final class ToolRegistry: ObservableObject {
     private let disabledKey = "trollmcp2.disabled_tools"
     /// v2.9.22：会话内已授权工具 (AI 调用即自动放行，无需用户手动开 Toggle）。新会话时清空。
     private var sessionApproved: Set<String> = []
+    /// fix73k-P3：会话内已卸载工具（真拔）——从目录/schema 一起隐藏，dispatch 兜底拦截。
+    /// 与 sessionApproved 对称：describe=加载（移除 unloaded + approve）、unload=卸载（插入 unloaded + 移除 approved）。
+    private var sessionUnloaded: Set<String> = []
     /// v2.9.26：策略版本号。setEnabled 时递增，通过 @Published 可靠触发
     /// 工具权限策略页刷新 (修复 iOS16 List 内 Toggle 只靠 objectWillChange.send()
     /// 刷新不可靠、开关点了没反应/弹回的问题）。
@@ -536,6 +539,31 @@ public final class ToolRegistry: ObservableObject {
         lock.unlock()
     }
 
+    /// fix73k-P3：真拔——会话内卸载（unloaded 集插入 + approved 移除）。
+    /// 目录/tools.audit 不可见、schema 不注入、dispatch 兜底拦截——模型不知道它存在。
+    /// 重载通道：tool.describe（知道名字）或设置页全局开关或新会话自动重置。
+    public func unloadFromSession(_ name: String) {
+        lock.lock()
+        sessionUnloaded.insert(name)
+        sessionApproved.remove(name)
+        lock.unlock()
+    }
+
+    /// fix73k-P3：真拔——重载（describe 触发）：移除 unloaded + 重新 approve。
+    public func reloadInSession(_ name: String) {
+        lock.lock()
+        sessionUnloaded.remove(name)
+        sessionApproved.insert(name)
+        lock.unlock()
+    }
+
+    /// fix73k-P3：dispatch 兜底检查（调用方不持锁）。
+    public func isSessionUnloaded(_ name: String) -> Bool {
+        lock.lock()
+        defer { lock.unlock() }
+        return sessionUnloaded.contains(name)
+    }
+
     /// v2.9.175：本会话已授权工具名 (原名，仅返回已注册的），
     /// 供跨消息持久注入——AI 每轮新消息都能看到调用过的工具 schema，
     /// 根治"调用过 app.decrypt 但下一轮够不到"。
@@ -548,6 +576,7 @@ public final class ToolRegistry: ObservableObject {
     public func clearSessionApproval() {
         lock.lock()
         sessionApproved.removeAll()
+        sessionUnloaded.removeAll()   // fix73k-P3：新会话同时重置卸载集（回基线）
         lock.unlock()
     }
 
@@ -668,7 +697,7 @@ public final class ToolRegistry: ObservableObject {
         lock.lock()
         defer { lock.unlock() }
         let defs = tools.values.map { $0.definition }
-            .filter { isEnabled(name: $0.name) && !$0.remoteOnly }
+            .filter { isEnabled(name: $0.name) && !$0.remoteOnly && !sessionUnloaded.contains($0.name) }
             .sorted { $0.name < $1.name }
         var lines: [String] = []
         for d in defs {
@@ -934,6 +963,11 @@ public final class ToolRegistry: ObservableObject {
         // 修复 bug：coreToolNames 里的工具 (如 artifact.find）schema 已发给模型，
         // 但 defaultEnabledTools 未收录时 isEnabled 返回 false → 报"未加载"。
         // 常驻核心必然放行 (它本来就在初始请求里，用户开关不应对它二次拦截）。
+        // fix73k-P3：真拔兜底——会话内已卸载工具优先拦截（模型从历史记忆调用时），
+        // 报错引导重载；核心工具不可卸载（unload 时已拒），此处只兜非核心。
+        if isSessionUnloaded(originalName) {
+            throw MCPError.invalidParams("tool '\(originalName)' is unloaded in this session — reload it via tool.describe name:\"\(originalName)\" (if you know the name) or the settings toggle; a new conversation resets automatically.")
+        }
         if isEnabled(name: originalName) || isSessionApproved(originalName) || isCore(originalName) {
             // v2.9.36：统一审计 (老 MCP 样式：OK/failed · 权限 · 耗时 · 数据量）
             let start = CFAbsoluteTimeGetCurrent()

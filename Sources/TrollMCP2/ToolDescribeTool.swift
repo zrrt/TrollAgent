@@ -120,7 +120,8 @@ final class ToolDescribeTool: MCPTool {
         out["slimmed"] = true
         // fix73k-5：catalog 化——describe 过的工具注入会话已授权集，
         // 下一轮 baseTools（catalogOpenAIToolSchema）即带其完整 schema，模型可直接调用。
-        reg.approveForSession(d.name)
+        // fix73k-P3：真拔——describe 同时是重载通道（移除 sessionUnloaded + 重新 approve）。
+        reg.reloadInSession(d.name)
         return out
     }
 }
@@ -173,12 +174,12 @@ final class ToolUnloadTool: MCPTool {
             ]
         }
 
-        reg.removeSessionApproval(d.name)
+        reg.unloadFromSession(d.name)
         return [
             "unloaded": true,
             "name": d.name,
-            "effect": "schema removed from this session — the model will stop seeing this tool's parameters; the TOOL CATALOG marks it [describe to load] again.",
-            "reload": "call tool.describe name:\"\(d.name)\" to load it back into this session",
+            "effect": "removed from THIS session: schema AND the TOOL CATALOG (the model no longer sees this tool at all). Any call from stale memory is rejected until reloaded.",
+            "reload": "call tool.describe name:\"\(d.name)\" to reload it into this session, or use the settings toggle; a new conversation resets automatically",
             "scope": "session only — global toggle in settings is unchanged",
         ]
     }
