@@ -774,6 +774,12 @@ final class OpenAIClient {
         }
         let task = sessionToUse.dataTask(with: request) { data, response, error in
             watchdog.cancel()
+            // v7.1.279-fix：子代理独立 session（requestTimeoutOverride 非 nil 时每次 attempt 新建）
+            // 用毕即 invalidate——否则不释放连接，多次降级/多轮请求累积半死连接（子代理连接泄漏源）；
+            // 共享 session（主会话 sessionToUse === session）保持复用不受影响。invalidateAndCancel 幂等。
+            if sessionToUse !== self.session {
+                sessionToUse.invalidateAndCancel()
+            }
             if self.cancelled {
                 completion(.failure(NSError(domain: "OpenAIClient", code: -999,
                     userInfo: [NSLocalizedDescriptionKey: "Request cancelled"])))
@@ -1807,6 +1813,9 @@ final class OpenAIClient {
         delegate.onComplete = { [weak self] err in
             guard let self = self else { return }
             idleTimer?.cancel()
+            // v7.1.279-fix：Gemini 流式正常/错误完成统一 invalidate——失败路径(首字节超时/idle)已
+            // invalidate，唯独 onComplete 漏掉，流结束连接不释放会累积（对齐 Responses 流式 2391）
+            streamSession.invalidateAndCancel()
             if fellBackToNonStream { return }
             if let err = err {
                 NetworkLog.shared.log("\(self.config.name): Gemini 流式错误 \(err.localizedDescription)")
