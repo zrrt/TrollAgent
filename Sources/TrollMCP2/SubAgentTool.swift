@@ -298,10 +298,19 @@ final class SubAgentTask: Identifiable {
         stateLock.unlock()
         // fix73j-p5g：轨迹持久化——trace 是内存态，落盘独立 SQLite（subagent_index.sqlite），
         // 详情页重启后从库读回完整轨迹；终态一并写入任务行。
-        if hasTrace { Self.persistTrace(id: id, trace: trace) }
-        SubAgentStore.shared.finalizeTask(taskID: id, status: status.rawValue,
-                                          rounds: rounds, elapsed: elapsed,
-                                          result: result, error: error)
+        // fix73k：SQLite 写改后台异步——watchdog/status/stop 持 manager.lock 调 mark* →
+        // finalize 若同步写库，磁盘满时写卡会连带锁住 manager.lock（status 轮询全卡，
+        // 主 AI 永远"执行中"）。异步 + busy_timeout 2s + 事务化 = 终态写不阻塞任何路径。
+        let finSnapshot = (status: status.rawValue, rounds: rounds, elapsed: elapsed,
+                           result: result, error: error, trace: hasTrace ? trace : [])
+        DispatchQueue.global(qos: .utility).async {
+            if !finSnapshot.trace.isEmpty {
+                Self.persistTrace(id: id, trace: finSnapshot.trace)
+            }
+            SubAgentStore.shared.finalizeTask(taskID: id, status: finSnapshot.status,
+                                              rounds: finSnapshot.rounds, elapsed: finSnapshot.elapsed,
+                                              result: finSnapshot.result, error: finSnapshot.error)
+        }
         // 2) 完成回传
         var payload: [String: Any] = [
             "ok": true, "task_id": id, "display_name": displayName, "agent_type": personaName,
@@ -1042,10 +1051,17 @@ final class SubAgentRunner {
         messages = msgs
         // fix73j-p5f/p5g：实时轨迹落盘——每轮结束覆盖写 SQLite（运行中详情页实时可见；
         // 重启后失效页回看失效前轨迹）；rounds 同步更新。
-        SubAgentTask.persistTrace(id: task.id, trace: messages.prefix(200).map { m in
+        // fix73k：改后台异步 fire-and-forget——此前同步写卡住 execute → 循环停 →
+        // 任务 running（磁盘满/WAL checkpoint 失败时全量覆盖写放大，写几秒到几十秒）；
+        // 异步后写盘慢/失败不影响子代理执行，busy_timeout 2s + 事务化兜底不卡。
+        let snap = messages.prefix(200).map { m in
             ["role": m.role, "content": String(m.content.prefix(2000)), "tool": m.toolName ?? ""]
-        })
-        SubAgentStore.shared.touchTask(taskID: task.id, rounds: task.rounds)
+        }
+        let rds = task.rounds
+        DispatchQueue.global(qos: .utility).async {
+            SubAgentTask.persistTrace(id: task.id, trace: snap)
+            SubAgentStore.shared.touchTask(taskID: task.id, rounds: rds)
+        }
         loop()
     }
 
@@ -1383,9 +1399,13 @@ final class SubAgentStore {
     }
 
     /// 覆盖式写轨迹（保持当前快照语义，防无限增长）
+    /// fix73k：单事务包裹（BEGIN IMMEDIATE → DELETE+逐行 INSERT → COMMIT）——
+    /// 此前每行自动提交（无事务），WAL 膨胀快 + 磁盘满时 checkpoint 失败写放大；
+    /// 事务化后写放大降一个数量级，busy_timeout 2s 保证写失败快速静默（不卡）。
     func replaceTraces(taskID: String, trace: [[String: Any]]) {
         lock.lock(); defer { lock.unlock() }
         guard let db else { return }
+        _ = sqlite3_exec(db, "BEGIN IMMEDIATE;", nil, nil, nil)
         var del: OpaquePointer?
         if sqlite3_prepare_v2(db, "DELETE FROM subagent_traces WHERE task_id=?1", -1, &del, nil) == SQLITE_OK {
             sqlite3_bind_text(del, 1, (taskID as NSString).utf8String, -1, transient)
@@ -1407,6 +1427,7 @@ final class SubAgentStore {
             sqlite3_step(stmt)
             sqlite3_finalize(stmt)
         }
+        _ = sqlite3_exec(db, "COMMIT;", nil, nil, nil)
     }
 
     func loadTraces(taskID: String) -> [[String: Any]] {
