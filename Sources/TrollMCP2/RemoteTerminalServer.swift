@@ -83,8 +83,8 @@ final class RemoteTerminalServer {
         // 连不上监听端口（本机 127.0.0.1 不受影响，实测症状）。start NWBrowser（Bonjour 服务
         // 发现）是 iOS 标准触发方式：首次 browse 即弹授权窗，用户允许后入站监听同步放行。
         if #available(iOS 14.0, *) {
-            let browser = NWBrowser(for: .bonjour(type: "_trollagent._tcp"), using: .tcp)
-            browser.start(queue: .main)
+            let browser = NWBrowser(for: .bonjour(type: "_trollagent._tcp", domain: nil), using: .tcp)
+            browser.start(queue: DispatchQueue.main)
             DispatchQueue.main.asyncAfter(deadline: .now() + 2) { browser.cancel() }
         }
         return true
