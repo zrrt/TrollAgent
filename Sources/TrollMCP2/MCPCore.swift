@@ -558,10 +558,12 @@ public final class ToolRegistry: ObservableObject {
     }
 
     /// fix73k-P3：dispatch 兜底检查（调用方不持锁）。
+    /// apiName 归一化（schema 名 shell_exec ↔ 原名 shell.exec），与 isSessionApproved 对称。
     public func isSessionUnloaded(_ name: String) -> Bool {
         lock.lock()
         defer { lock.unlock() }
-        return sessionUnloaded.contains(name)
+        if sessionUnloaded.contains(name) { return true }
+        return sessionUnloaded.contains(name.replacingOccurrences(of: "_", with: "."))
     }
 
     /// v2.9.175：本会话已授权工具名 (原名，仅返回已注册的），

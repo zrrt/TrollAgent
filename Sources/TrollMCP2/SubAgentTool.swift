@@ -763,6 +763,8 @@ final class SubAgentRunner {
                !allowed.contains(where: { n == apiSafe($0) }) {
                 continue
             }
+            // fix73k-P3：真拔一致性——主会话已卸载工具子agent 也不下发（schema 与 dispatch 同口径）
+            if ToolRegistry.shared.isSessionUnloaded(n) { continue }
             // 匹配：精确 apiName 或大工具名（如 "artifact" 匹配 "artifact.read"）
             let matched = allowed.contains(n)
                 || allowed.contains { n.hasPrefix($0 + ".") }
