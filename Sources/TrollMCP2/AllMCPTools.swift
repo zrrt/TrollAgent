@@ -662,7 +662,7 @@ final class AuditTool: MCPTool {
         name: "tools.audit",
         summary: "Audit tool registry consistency: find ghost tools referenced in descriptions/prerequisites that aren't registered; report tool totals and verified/jailbreak/trollStore distribution. Use for: after adding/removing tools, when AI is confused about available tools, before long sessions. NOTE: this audits consistency — for the tool list see the TOOL CATALOG in your system prompt.",
         parameters: [:],
-        returns: ["total_tools": "registered tool count", "verified_count": "tools marked verified:true", "ghost_ref_count": "total references to unregistered tools", "ghost_refs": "map of tool → unregistered tool names it references (empty = docs consistent with registry)", "tool_names": "ALL registered tool names, comma-separated (loaded or not) — feed any name to tool.describe to load it"],
+        returns: ["total_tools": "registered tool count", "verified_count": "tools marked verified:true", "ghost_ref_count": "total references to unregistered tools", "ghost_refs": "map of tool → unregistered tool names it references (empty = docs consistent with registry)", "tool_names": "ALL registered tools as 'name: one-line purpose [jb/ts flags]', one per line (loaded or not) — pick what you need and feed the name to tool.describe to load it"],
         verified: true, category: "system")
 
     func invoke(_ params: [String: Any]) throws -> [String: Any] {
@@ -724,10 +724,20 @@ final class AuditTool: MCPTool {
         var sortedGhost: [String: [String]] = [:]
         for (k, v) in ghostRefs.sorted(by: { $0.key < $1.key }) { sortedGhost[k] = v.sorted() }
 
-        // fix73k-P3（发现路径闭环）：返回全部注册工具名（含未加载）——
+        // fix73k-P3（发现路径闭环）：返回全部注册工具名+一句话用途+前置标记（含未加载）——
         // catalog 只列核心+已加载，模型 confused 时无法从目录得知未加载工具存在；
-        // 此列表让模型拿到完整名字清单 → tool.describe 按名加载 → 渐进披露闭环。
-        let toolNames = all.sorted().joined(separator: ", ")
+        // 裸名字不够（app.decrypt 看不出用途）——带一句话用途让模型判断"哪个值得 describe"，
+        // 前置标记（jb/ts）让模型 describe 前就知道环境是否支持。完整参数/子命令仍由 tool.describe 提供。
+        let toolNames = all.sorted().map { name -> String in
+            guard let t = reg.tool(named: name) else { return name }
+            let d = t.definition
+            let brief = !d.uiSummary.isEmpty ? d.uiSummary : (d.summary.components(separatedBy: ".").first ?? "")
+            var flags: [String] = []
+            if d.requiresJailbreak { flags.append("jb") }
+            if d.requiresTrollStore { flags.append("ts") }
+            let flagStr = flags.isEmpty ? "" : " [\(flags.joined(separator: ","))]"
+            return "\(name): \(brief)\(flagStr)"
+        }.joined(separator: "\n")
 
         return [
             "total_tools": all.count,
