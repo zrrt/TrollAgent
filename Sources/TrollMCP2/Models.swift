@@ -1660,7 +1660,7 @@ final class ConversationStore: ObservableObject {
             // fix73k-5：catalog 工具目录注入稳定前缀——全部已启用工具名+一句话用途；
             // 不在当前 schema 的工具标 [describe to load]，模型先 tool.describe 再调（动态注入）。
             // 目录保证"模型始终知道有什么工具"（不会找不到），非核心 schema 不常驻省 token。
-            history.insert(ChatMessage(role: "system", content: base + "\n\nTOOL CATALOG (tools not in your schema are marked [describe to load] — call tool.describe to load them):\n" + ToolRegistry.shared.toolCatalogText()), at: 0)
+            history.insert(ChatMessage(role: "system", content: base + "\n\nTOOL CATALOG (tools not in your schema are marked [describe to load] — call tool.describe to load them; to enumerate ALL registered tool names call tools.audit, it returns tool_names):\n" + ToolRegistry.shared.toolCatalogText()), at: 0)
             if let devInstr = DeveloperInstructionStore.shared.defaultInjectionContent(), !devInstr.isEmpty {
                 history.insert(ChatMessage(role: "system", content: "Developer instructions below, always follow:\n" + devInstr), at: 0)
             }
