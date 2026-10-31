@@ -1133,26 +1133,6 @@ final class SubAgentRunner {
         }
         return entries.isEmpty ? nil : entries.joined(separator: ", ")
     }
-
-    /// fix73k：fork 式上下文继承——取主会话当前对话最近几轮 user/assistant 正文
-    /// （含工具结果摘要?否——只取正文，背景提示不引爆炸 token；每条截 500 字符，
-    /// 最多 8 轮 ≈ ≤4000 字符背景）。只读不写，线程安全（只读 conversations）。
-    private static func parentContextTurns() -> String {
-        guard let idx = ConversationStore.shared.selectedIndex,
-              idx < ConversationStore.shared.conversations.count else { return "" }
-        let msgs = ConversationStore.shared.conversations[idx].messages
-        var parts: [String] = []
-        var seen = 0
-        for m in msgs.reversed() {
-            if m.role == "user" || m.role == "assistant" {
-                let body = String(m.content.prefix(500))
-                parts.append("[\(m.role)] \(body)")
-                seen += 1
-                if seen >= 8 { break }
-            }
-        }
-        return parts.reversed().joined(separator: "\n\n")
-    }
 }
 
 // MARK: - 子代理工具注册（subagent.run / subagent.status / subagent.stop）
@@ -1235,6 +1215,26 @@ final class SubAgentRunTool: MCPTool {
         }
         return ["ok": true, "task_id": id, "agent_type": persona.name,
                 "message": "subagent \(id) (\(persona.name)) started. Poll with subagent.status task_id=\(id); steer with subagent.steer task_id=\(id); stop with subagent.stop task_id=\(id). Completion is pushed back as a card in the conversation."]
+    }
+
+    /// fix73k：fork 式上下文继承——取主会话当前对话最近几轮 user/assistant 正文
+    /// （只取正文，背景提示不引爆炸 token；每条截 500 字符，最多 8 轮 ≈ ≤4000 字符背景）。
+    /// 只读不写，线程安全（只读 conversations）。
+    private static func parentContextTurns() -> String {
+        guard let idx = ConversationStore.shared.selectedIndex,
+              idx < ConversationStore.shared.conversations.count else { return "" }
+        let msgs = ConversationStore.shared.conversations[idx].messages
+        var parts: [String] = []
+        var seen = 0
+        for m in msgs.reversed() {
+            if m.role == "user" || m.role == "assistant" {
+                let body = String(m.content.prefix(500))
+                parts.append("[\(m.role)] \(body)")
+                seen += 1
+                if seen >= 8 { break }
+            }
+        }
+        return parts.reversed().joined(separator: "\n\n")
     }
 }
 
