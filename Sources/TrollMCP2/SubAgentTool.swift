@@ -71,10 +71,12 @@ enum SubAgentPersonas {
         defaultRounds: 10, defaultTimeout: 180)
     static let general = SubAgentPersona(
         name: "general",
-        description: "通用综合任务兜底（shell/文件/设备/联网/技能）。",
+        description: "通用综合任务兜底（shell/文件/联网/技能）。",
         // fix73j-审计：原 "device" 是前缀匹配（hasPrefix("device.")），会把 device.fake
         // /device.keychain_wipe/device.restore 等高危工具一起放行——改为精确 "device.info"。
-        tools: ["shell.exec", "artifact", "device.info", "web.search", "web.fetch", "skills.read"],
+        // fix73k-4：补 tool.describe 渐进披露——子代理不确定工具用法时先查说明，不再瞎猜
+        // 列表外工具名（对齐业界"查而非猜"）。
+        tools: ["shell.exec", "artifact", "device.info", "web.search", "web.fetch", "skills.read", "tool.describe"],
         systemPrompt: "",
         defaultRounds: 12, defaultTimeout: 180)
     static let all: [SubAgentPersona] = [webResearcher, appAuditor, shellWorker, general]
@@ -722,7 +724,10 @@ final class SubAgentRunner {
             p += "\nTOOL WHITELIST (use ONLY these): \(wl.joined(separator: ", "))"
         } else {
             let names = persona.tools.sorted().joined(separator: ", ")
-            p += "\nTools: \(names) (use these; others may exist in schema — stay within your allowed set)"
+            // fix73k-4：删除误导性 "others may exist in schema"——实际 schema 只有 persona 工具，
+            // 该句诱导模型猜测并调用未下发工具（实测 B 报 device/native_tools unknown tool）。
+            // 改为明确"仅限列表、其余不存在"，对齐大厂信息隐藏（模型不知道 = 不会调）。
+            p += "\nTools available in this session (ONLY these — tools outside this list do not exist here, never call them): \(names)"
         }
         return p
     }
