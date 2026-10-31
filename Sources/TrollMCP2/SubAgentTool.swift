@@ -1309,10 +1309,43 @@ final class SubAgentStore {
         let dir = NSHomeDirectory().appending("/Documents/Workspace/store")
         try? FileManager.default.createDirectory(atPath: dir, withIntermediateDirectories: true)
         let path = dir + "/subagent_index.sqlite"
+        let walPath = path + "-wal"
+        let shmPath = path + "-shm"
+        // fix73k：孤儿 WAL/SHM 清理——主文件被删/损坏但 -wal/-shm 残留时，SQLite 打开
+        // 新主文件会触发 WAL recovery，残留与文件不匹配 → recovery 挂起 → 后续
+        // sqlite3_step 永久卡（用户实测"删 db 后子代理卡住"的候选根因）。主文件不存在
+        // 但有 -wal/-shm = 残留，先删再 open，杜绝 recovery 卡死路径。
+        if !FileManager.default.fileExists(atPath: path) {
+            try? FileManager.default.removeItem(atPath: walPath)
+            try? FileManager.default.removeItem(atPath: shmPath)
+        }
         var h: OpaquePointer?
-        if sqlite3_open_v2(path, &h, SQLITE_OPEN_READWRITE | SQLITE_OPEN_CREATE | SQLITE_OPEN_FULLMUTEX, nil) == SQLITE_OK {
+        func openDB() -> Bool {
+            sqlite3_open_v2(path, &h, SQLITE_OPEN_READWRITE | SQLITE_OPEN_CREATE | SQLITE_OPEN_FULLMUTEX, nil) == SQLITE_OK
+        }
+        if openDB() {
             db = h
-            _ = sqlite3_exec(db, "PRAGMA journal_mode=WAL;", nil, nil, nil)
+            // fix73k：损坏检测——quick_check 非 "ok" → 关闭删除重建（防损坏库后续
+            // step 挂起/读错数据；小库每次启动毫秒级，可接受）。
+            var healthy = true
+            var check: OpaquePointer?
+            if sqlite3_prepare_v2(h, "PRAGMA quick_check;", -1, &check, nil) == SQLITE_OK {
+                if sqlite3_step(check) == SQLITE_ROW, let r = sqlite3_column_text(check, 0) {
+                    healthy = (String(cString: r) == "ok")
+                }
+                sqlite3_finalize(check)
+            }
+            if !healthy {
+                sqlite3_close(h)
+                try? FileManager.default.removeItem(atPath: path)
+                try? FileManager.default.removeItem(atPath: walPath)
+                try? FileManager.default.removeItem(atPath: shmPath)
+                h = nil; db = nil
+                if openDB() { db = h }
+            }
+        }
+        guard let db else { return }
+        _ = sqlite3_exec(db, "PRAGMA journal_mode=WAL;", nil, nil, nil)
             let schema = """
             CREATE TABLE IF NOT EXISTS subagent_tasks (
                 task_id TEXT PRIMARY KEY,
