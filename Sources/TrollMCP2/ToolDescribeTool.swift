@@ -121,6 +121,9 @@ final class ToolDescribeTool: MCPTool {
         // fix73k-5：catalog 化——describe 过的工具注入会话已授权集，
         // 下一轮 baseTools（catalogOpenAIToolSchema）即带其完整 schema，模型可直接调用。
         // fix73k-P3：真拔——describe 同时是重载通道（移除 sessionUnloaded + 重新 approve）。
+        // fix73k-P3（生效时机）：模型连续 describe 8 次无效循环——本轮 schema 固定，
+        // describe 结果下一条消息才进函数列表；显式告知，防止重复 describe。
+        out["loaded"] = "YES — approved into this session. IMPORTANT: your function list is FIXED for this turn; this tool appears in your functions on your NEXT message (schema refreshes per request). Do NOT re-describe it — send your next message and call it directly."
         reg.reloadInSession(d.name)
         return out
     }
@@ -179,6 +182,7 @@ final class ToolUnloadTool: MCPTool {
             "unloaded": true,
             "name": d.name,
             "effect": "removed from this conversation: schema AND the TOOL CATALOG (the model no longer sees this tool at all). Any call from stale memory is rejected until reloaded.",
+            "timing": "takes effect from your NEXT message (this turn's function list is already fixed and still shows it); from then on the tool is gone until reloaded.",
             "reload": "call tool.describe name:\"\(d.name)\" to reload it, use the settings toggle, or start a new conversation (tool state resets there)",
             "scope": "this conversation — switching conversations keeps or resets tool state per the session model; the global toggle in settings is unchanged",
         ]
