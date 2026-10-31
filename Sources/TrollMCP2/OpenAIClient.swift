@@ -799,9 +799,9 @@ final class OpenAIClient {
                 let isSSL = (err.code == -1202 || err.code == -1200 || err.code == -1204 || err.code == -1205
                     || error.localizedDescription.contains("SSL")
                     || error.localizedDescription.contains("安全连接"))
-                if isSSL, sslRetryCount < 2 {
-                    sslRetryCount += 1
-                    NetworkLog.shared.log("\(self.config.name) L\(level) SSL handshake failed (\(err.code)) — retrying same level with a fresh connection (attempt \(sslRetryCount + 1)/3)")
+                if isSSL, self.sslRetryCount < 2 {
+                    self.sslRetryCount += 1
+                    NetworkLog.shared.log("\(self.config.name) L\(level) SSL handshake failed (\(err.code)) — retrying same level with a fresh connection (attempt \(self.sslRetryCount + 1)/3)")
                     self.attempt(level: level, isFirst: false, messages: messages, tools: tools, onStatus: onStatus, onDelta: onDelta, onThinking: onThinking, avoidL5: avoidL5, completion: completion)
                     return
                 }
@@ -2389,9 +2389,9 @@ final class OpenAIClient {
                     || nsErr.code == -1204 || nsErr.code == -1205
                     || error.localizedDescription.contains("SSL")
                     || error.localizedDescription.contains("安全连接"))
-                if isSSLNoContent, sslRetryCount < 2 {
-                    sslRetryCount += 1
-                    NetworkLog.shared.log("\(self.config.name): 流式 SSL 握手失败 (\(nsErr.code))，未收到首字节——新连接重试 (attempt \(sslRetryCount + 1)/3)")
+                if isSSLNoContent, self.sslRetryCount < 2 {
+                    self.sslRetryCount += 1
+                    NetworkLog.shared.log("\(self.config.name): 流式 SSL 握手失败 (\(nsErr.code))，未收到首字节——新连接重试 (attempt \(self.sslRetryCount + 1)/3)")
                     self.performResponsesStream(messages: messages, tools: tools, onStatus: onStatus,
                                                 onDelta: onDelta, onThinking: onThinking, completion: guardedCompletion)
                     return
