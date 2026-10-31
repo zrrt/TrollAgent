@@ -660,7 +660,7 @@ final class AutomationExecTool: MCPTool {
 final class AuditTool: MCPTool {
     let definition = ToolDefinition(
         name: "tools.audit",
-        summary: "Audit tool registry consistency: find ghost tools referenced in descriptions/prerequisites that aren't registered; report tool totals and verified/jailbreak/trollStore distribution. Use for: after adding/removing tools, when AI is confused about available tools, before long sessions. Listing tools goes through tools.audit.",
+        summary: "Audit tool registry consistency: find ghost tools referenced in descriptions/prerequisites that aren't registered; report tool totals and verified/jailbreak/trollStore distribution. Use for: after adding/removing tools, when AI is confused about available tools, before long sessions. NOTE: this audits consistency — for the tool list see the TOOL CATALOG in your system prompt.",
         parameters: [:],
         returns: ["total_tools": "registered tool count", "verified_count": "tools marked verified:true", "ghost_ref_count": "total references to unregistered tools", "ghost_refs": "map of tool → unregistered tool names it references (empty = docs consistent with registry)"],
         verified: true, category: "system")

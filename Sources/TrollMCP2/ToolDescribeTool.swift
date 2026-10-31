@@ -178,9 +178,9 @@ final class ToolUnloadTool: MCPTool {
         return [
             "unloaded": true,
             "name": d.name,
-            "effect": "removed from THIS session: schema AND the TOOL CATALOG (the model no longer sees this tool at all). Any call from stale memory is rejected until reloaded.",
-            "reload": "call tool.describe name:\"\(d.name)\" to reload it into this session, or use the settings toggle; a new conversation resets automatically",
-            "scope": "session only — global toggle in settings is unchanged",
+            "effect": "removed from this conversation: schema AND the TOOL CATALOG (the model no longer sees this tool at all). Any call from stale memory is rejected until reloaded.",
+            "reload": "call tool.describe name:\"\(d.name)\" to reload it, use the settings toggle, or start a new conversation (tool state resets there)",
+            "scope": "this conversation — switching conversations keeps or resets tool state per the session model; the global toggle in settings is unchanged",
         ]
     }
 }
