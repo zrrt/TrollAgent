@@ -662,7 +662,7 @@ final class AuditTool: MCPTool {
         name: "tools.audit",
         summary: "Audit tool registry consistency: find ghost tools referenced in descriptions/prerequisites that aren't registered; report tool totals and verified/jailbreak/trollStore distribution. Use for: after adding/removing tools, when AI is confused about available tools, before long sessions. NOTE: this audits consistency — for the tool list see the TOOL CATALOG in your system prompt.",
         parameters: [:],
-        returns: ["total_tools": "registered tool count", "verified_count": "tools marked verified:true", "ghost_ref_count": "total references to unregistered tools", "ghost_refs": "map of tool → unregistered tool names it references (empty = docs consistent with registry)"],
+        returns: ["total_tools": "registered tool count", "verified_count": "tools marked verified:true", "ghost_ref_count": "total references to unregistered tools", "ghost_refs": "map of tool → unregistered tool names it references (empty = docs consistent with registry)", "tool_names": "ALL registered tool names, comma-separated (loaded or not) — feed any name to tool.describe to load it"],
         verified: true, category: "system")
 
     func invoke(_ params: [String: Any]) throws -> [String: Any] {
@@ -724,6 +724,11 @@ final class AuditTool: MCPTool {
         var sortedGhost: [String: [String]] = [:]
         for (k, v) in ghostRefs.sorted(by: { $0.key < $1.key }) { sortedGhost[k] = v.sorted() }
 
+        // fix73k-P3（发现路径闭环）：返回全部注册工具名（含未加载）——
+        // catalog 只列核心+已加载，模型 confused 时无法从目录得知未加载工具存在；
+        // 此列表让模型拿到完整名字清单 → tool.describe 按名加载 → 渐进披露闭环。
+        let toolNames = all.sorted().joined(separator: ", ")
+
         return [
             "total_tools": all.count,
             "verified_count": verifiedCount,
@@ -731,7 +736,8 @@ final class AuditTool: MCPTool {
             "requires_trollstore_count": tsCount,
             "ghost_ref_count": refCount,
             "ghost_refs": sortedGhost,
-            "note": "ghost_refs maps a tool to unregistered tool names it references. Fix by renaming the reference to a registered tool or registering it. Empty ghost_refs = docs consistent with registry."
+            "tool_names": toolNames,
+            "note": "tool_names lists ALL registered tools (loaded or not) — use tool.describe name:\"...\" to load any of them into this session. ghost_refs maps a tool to unregistered tool names it references. Fix by renaming the reference to a registered tool or registering it. Empty ghost_refs = docs consistent with registry."
         ]
     }
 
