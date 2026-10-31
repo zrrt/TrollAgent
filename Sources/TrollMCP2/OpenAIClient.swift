@@ -68,6 +68,8 @@ final class OpenAIClient {
     /// v2.9.13：取消支持——置位标志 + 取消当前 in-flight 任务
     private var cancelled = false
     private weak var activeTask: URLSessionDataTask?
+    /// v7.1.267-fix3：SSL 握手错误重试计数（同级别新连接重试，最多 2 次——attempt 递归共享实例计数）
+    private var sslRetryCount = 0
     /// v2.9.15：本轮请求起始时间 (用于耗时统计，写入网络兼容日志）
     private var requestStart = Date()
     /// v2.9.107：本轮是否占用 HalfOpen 探测名额 (熔断记录时释放）
@@ -790,6 +792,19 @@ final class OpenAIClient {
                 // URLSession 报 CannotDecodeContentData(-1016)/CannotParseResponse(-1017)，
                 // 中文即"无法解析响应"。此前不降级→单次 L0 死等 60s 后 failed。
                 // 同一载荷偶发成功（如 Botcf 4653ms）证明是上游不稳定，轻量载荷大概率能过。
+                // v7.1.267-fix3：SSL/连接层握手错误（-1202 SecureConnectionFailed / -1204 / -1205
+                // 证书不受信等）——与 payload 无关（降级丢工具不值得），且主模型成功子代理失败的
+                // 案例证明是瞬时/坏节点 TLS 协商（Botcf 多节点证书不一致）。
+                // 同级别新连接重试（最多 2 次）——当前 0 轮 3s 直接 markFailed 是白跑。
+                let isSSL = (err.code == -1202 || err.code == -1200 || err.code == -1204 || err.code == -1205
+                    || error.localizedDescription.contains("SSL")
+                    || error.localizedDescription.contains("安全连接"))
+                if isSSL, sslRetryCount < 2 {
+                    sslRetryCount += 1
+                    NetworkLog.shared.log("\(self.config.name) L\(level) SSL handshake failed (\(err.code)) — retrying same level with a fresh connection (attempt \(sslRetryCount + 1)/3)")
+                    self.attempt(level: level, isFirst: false, messages: messages, tools: tools, onStatus: onStatus, onDelta: onDelta, onThinking: onThinking, avoidL5: avoidL5, completion: completion)
+                    return
+                }
                 let isTimeout = (err.code == NSURLErrorTimedOut
                     || err.domain == NSURLErrorDomain && err.code == -1001
                     || err.code == NSURLErrorCannotDecodeContentData
