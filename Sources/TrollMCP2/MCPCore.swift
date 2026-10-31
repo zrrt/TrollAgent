@@ -715,6 +715,8 @@ public final class ToolRegistry: ObservableObject {
                 lines.append("\(d.name) — \(d.shortSummary)\(flagStr) [describe to load]")
             }
         }
+        // fix73k-P3：缩写说明——模型要懂 [jb]/[ts] 含义（自定义缩写不可自明）
+        lines.append("Legend: [jb]=requires jailbreak, [ts]=requires TrollStore; [describe to load]=not in your schema — call tool.describe name:\"...\" to load it.")
         return lines.joined(separator: "\n")
     }
 
