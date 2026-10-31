@@ -1157,8 +1157,13 @@ final class ConversationStore: ObservableObject {
     }
 
     /// v3.1.70：写入活动请求的会话 (无活动请求时写入当前选中会话）
-    func appendToCurrent(_ message: ChatMessage) {
-        guard let idx = activeConvIndex else { return }
+    /// v7.1.267-fix：返回 Bool——渲染确认（完成音播放条件）；guard 失败打日志（可观测的静默失败）。
+    @discardableResult
+    func appendToCurrent(_ message: ChatMessage) -> Bool {
+        guard let idx = activeConvIndex else {
+            diag("APPEND-FAIL: activeConvIndex nil — message \(message.role) not appended (session switched?)")
+            return false
+        }
         var conv = conversations[idx]
         if conv.messages.isEmpty {
             conv.title = title(from: message.content)
@@ -1167,6 +1172,7 @@ final class ConversationStore: ObservableObject {
         conv.updatedAt = Date()
         conversations[idx] = conv
         sortAndSave()
+        return true
     }
 
     /// fix73j：当前会话上下文 id（子代理派发时记录，完成回传写回该会话——
@@ -1193,14 +1199,20 @@ final class ConversationStore: ObservableObject {
     }
 
     /// v3.1.70：更新活动请求会话内消息内容 (无活动请求时用当前选中会话）
-    func updateMessageContent(id: UUID, content: String) {
+    /// v7.1.267-fix：返回 Bool——渲染确认（完成音播放条件；UPDATE-FAIL 静默失败时不再误播"完成"音）。
+    @discardableResult
+    func updateMessageContent(id: UUID, content: String) -> Bool {
         // fix73j-p5：走统一变更入口——自动标 dirty + 同步落盘（编辑属数据安全关键点，
         // 异步 save 杀后台会丢编辑内容）。
-        guard let idx = activeConvIndex else { return }
-        _ = updateMessage(in: conversations[idx].id, msgId: id) { msg in
+        guard let idx = activeConvIndex else {
+            diag("UPDATE-FAIL: activeConvIndex nil — content not applied (session switched?)")
+            return false
+        }
+        let ok = updateMessage(in: conversations[idx].id, msgId: id) { msg in
             msg.content = content
         }
-        conversations[idx].updatedAt = Date()
+        if ok { conversations[idx].updatedAt = Date() }
+        return ok
     }
 
     /// fix73j-p5：统一消息变更入口（治本——解决"改消息忘了标 dirty/save"的隐性错误模式）。
@@ -1498,11 +1510,14 @@ final class ConversationStore: ObservableObject {
         if result.toolCalls.isEmpty {
             var msg = ChatMessage(role: "assistant", content: result.text)
             msg.thinking = result.thinking
-            appendToCurrent(msg)
+            let appended = appendToCurrent(msg)
             TaskNotify.shared.endBackground()
             TaskNotify.shared.notifyIfBackground(title: "✅ AI replied", body: String(result.text.prefix(60)))
             // v7.4.0-fix73d：后台代传结果回前台 → 前台播放所选提示音
-            TaskNotify.shared.playCompletionSoundIfForeground()
+            // v7.1.267-fix：渲染确认（appendToCurrent 成功）且非空文本才播——否则"音响无结果"
+            if appended && !result.text.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty {
+                TaskNotify.shared.playCompletionSoundIfForeground()
+            }
             isLoading = false
             currentClient = nil
             activeConvId = nil
@@ -1791,11 +1806,12 @@ final class ConversationStore: ObservableObject {
                     // v2.9.82：done通知 (后台时）
                     TaskNotify.shared.endBackground()
                     TaskNotify.shared.notifyIfBackground(title: "✅ AI replied", body: String(text.prefix(60)))
-                    // v7.4.0-fix73d：任务完成提示音（前台播放所选音色，后台由通知声音负责）
-                    TaskNotify.shared.playCompletionSoundIfForeground()
+                    // v7.4.0-fix73d：任务完成提示音——v7.1.267-fix 移到渲染确认之后（见 1846 行），
+                    // 渲染失败（UPDATE-FAIL/APPEND-FAIL）或空回复不再误播"完成"音（用户实测"音响无结果"根因）
+                    var rendered = false
                     if let sid = self.streamingMessageId {
                         // 流式已显示，更新最终文本 + thinking
-                        self.updateMessageContent(id: sid, content: text)
+                        rendered = self.updateMessageContent(id: sid, content: text)
                         if let idx = self.activeConvIndex,
                            let mi = self.conversations[idx].messages.firstIndex(where: { $0.id == sid }),
                            let th = thinking, !th.isEmpty {
@@ -1826,10 +1842,17 @@ final class ConversationStore: ObservableObject {
                         if !reused {
                             var am = ChatMessage(role: "assistant", content: text)
                             if let th = thinking, !th.isEmpty { am.thinking = th }
-                            self.appendToCurrent(am)
+                            rendered = self.appendToCurrent(am)
                             self.liveProducedID = am.id
                             self.attachTrail(to: am.id, thinking: thinking)
+                        } else {
+                            rendered = true
                         }
+                    }
+                    // v7.1.267-fix：完成音——渲染确认且非空文本才播（空回复走下方纠错机制，不响"完成"音；
+                    // 渲染失败不打 误导 的完成音——声音 = "回答已上屏"的语义）
+                    if rendered && !text.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty {
+                        TaskNotify.shared.playCompletionSoundIfForeground()
                     }
                     // v4.3.25：空回复兜底——工具结果回来、模型最终却输出空文本时，
                     // 不再静默结束（用户实测"空结果会卡死，AI 不进行下一步，必须重新发消息"）。
