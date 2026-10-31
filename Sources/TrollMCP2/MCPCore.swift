@@ -914,6 +914,11 @@ public final class ToolRegistry: ObservableObject {
 
     /// 返回单个工具的完整 OpenAI function schema (供模型按名动态注入）
     public func openAISchema(for name: String) -> [String: Any]? {
+        // v7.1.267-audit：会话内已卸载工具 schema 一律返回 nil——统一所有注入路径
+        // （全量 enabledOpenAIToolSchema 已过滤，但单工具路径/disclosed 合并未过滤——
+        // 同一 send 的工具链内旧 disclosed 残留已卸载工具名，AI 看到却调不动→试错循环）。
+        // 与 dispatch 兜底拦截对称：schema 处处消失 + 记忆调用拦截 = 完整"真拔"。
+        if isSessionUnloaded(name) { return nil }
         // v3.0.90：去掉锁——只读操作
         guard let tool = tools[name] else { return nil }
         let def = tool.definition
