@@ -1812,12 +1812,23 @@ final class ConversationStore: ObservableObject {
                     if let sid = self.streamingMessageId {
                         // 流式已显示，更新最终文本 + thinking
                         rendered = self.updateMessageContent(id: sid, content: text)
-                        if let idx = self.activeConvIndex,
-                           let mi = self.conversations[idx].messages.firstIndex(where: { $0.id == sid }),
-                           let th = thinking, !th.isEmpty {
-                            self.conversations[idx].messages[mi].thinking = th
+                        if rendered {
+                            if let idx = self.activeConvIndex,
+                               let mi = self.conversations[idx].messages.firstIndex(where: { $0.id == sid }),
+                               let th = thinking, !th.isEmpty {
+                                self.conversations[idx].messages[mi].thinking = th
+                            }
+                            self.attachTrail(to: sid, thinking: thinking)
+                        } else {
+                            // v7.1.267-fix：流式消息丢失兜底——UPDATE-FAIL（消息被清理/会话漂移/
+                            // sid 生命周期错乱）时追加新消息，保证最终回答一定上屏（"音响无结果"根治——
+                            // 结果不再因消息找不到而静默丢失）。
+                            NetworkLog.shared.log("[render] UPDATE-FAIL — streaming message lost, appending fresh reply instead")
+                            var am = ChatMessage(role: "assistant", content: text)
+                            if let th = thinking, !th.isEmpty { am.thinking = th }
+                            rendered = self.appendToCurrent(am)
+                            self.attachTrail(to: am.id, thinking: thinking)
                         }
-                        self.attachTrail(to: sid, thinking: thinking)
                         self.streamingMessageId = nil
                     } else {
                         // v3.5.16：修复"思考显示两次"——流式中 onThinking 可能已建了一条"空正文+思考"消息
