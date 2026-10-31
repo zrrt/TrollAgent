@@ -912,7 +912,8 @@ final class SubAgentRunner {
             guard let self = self else { return }
             // v7.4.0-fix73f-6：收到响应（成功/失败都算）——send_state=replied
             self.task.markSendReplied()
-            let failCode = (result.failure as? NSError)?.code ?? -1
+            var failCode = 0
+            if case .failure(let e) = result { failCode = (e as NSError).code }
             subagentDiag("REPLY: task=\(self.task.id) round=\(self.task.rounds + 1) ok=\(result.isSuccess ? "true" : "false") errCode=\(failCode)")
             // fix73j-p4：任务级降级缓存——本请求 settle 的兼容级别记入任务缓存，
             // 下一轮新 client 从缓存起步（不重试降级链），且不污染主会话 config。
