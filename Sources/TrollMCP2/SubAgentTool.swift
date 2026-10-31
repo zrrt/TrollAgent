@@ -64,6 +64,9 @@ enum SubAgentPersonas {
         instead of printing them. If a command fails, diagnose and try a different approach (up to 3 \
         attempts), then move on. Keep commands under 1000 chars; for longer scripts write them to a file \
         first, then run the file.
+        fix73k df rule: `df` MUST be run alone (`df -h /`) and NEVER combined with | ; && (the env \
+        intercepts compound df). A standalone `df -h /` always returns disk info successfully; do not \
+        retry compound df variants — go straight to the standalone form.
         """,
         defaultRounds: 10, defaultTimeout: 180)
     static let general = SubAgentPersona(

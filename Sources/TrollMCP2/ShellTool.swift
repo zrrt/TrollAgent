@@ -157,7 +157,7 @@ final class ShellExecTool: MCPTool {
             if trimmed.contains(";") || trimmed.contains("&&") || trimmed.contains("|") {
                 return ["command": command, "exit_code": 1,
                         "stdout": "df now runs natively (container df crashes the app — Asbestos /proc unstable). Run it alone: `df -h /` for disk space. Then run the other part separately.",
-                        "hint": "split compound commands containing df — disk queries via native df, everything else stays in the unified env"]
+                        "hint": "split compound commands containing df — disk queries via native df, everything else stays in the unified env. Do NOT retry this compound df command — a standalone `df -h /` returns the disk info successfully."]
             }
             AuditLog.shared.log("shell.exec (native df)", detail: String(trimmed.prefix(100)))
             return ShellExecTool.nativeDf(command)
