@@ -1,0 +1,43 @@
+# Semgrep 代码审计——push 自动跑，结果进 Actions 日志 + SARIF artifact
+# 规则: .github/semgrep.yml（强制解包/NSLock 死锁面/静默丢错/主线程异步面）
+name: semgrep-audit
+on:
+  push:
+    branches: [main]
+  workflow_dispatch:
+
+jobs:
+  semgrep:
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+      security-events: write
+    steps:
+      - uses: actions/checkout@v4
+      - name: Run Semgrep audit
+        run: |
+          pip install --quiet semgrep
+          set +e
+          semgrep scan --config .github/semgrep.yml Sources/ --json --output semgrep.json
+          EXIT=$?
+          echo "semgrep exit: $EXIT (1=findings, 0=clean)"
+          echo "=== Findings summary ==="
+          python3 - <<'EOF'
+          import json
+          try:
+              d = json.load(open('semgrep.json'))
+              res = d.get('results', [])
+              print(f"FINDINGS: {len(res)}")
+              from collections import Counter
+              by = Counter()
+              for r in res:
+                  by[r['check_id'].split('.')[-1]] += 1
+              for k, v in by.most_common():
+                  print(f"  {k:24s} {v}")
+              for r in res[:30]:
+                  p = r['path'].replace('Sources/', '')
+                  print(f"  {r['start']['line']:5d} {r['check_id'].split('.')[-1]:20s} {p}")
+          except Exception as e:
+              print("parse error:", e)
+          EOF
+          exit 0

@@ -1,0 +1,26 @@
+rules:
+  - id: swift-force-unwrap
+    message: 强制解包(!)崩溃风险——nil 即闪退；优先 guard let
+    languages: [swift]
+    severity: WARNING
+    pattern: $EXPR!
+  - id: swift-force-cast
+    message: as! 强制转换——类型不符即崩溃
+    languages: [swift]
+    severity: WARNING
+    pattern: $EXPR as!
+  - id: swift-nslock
+    message: NSLock 使用点——非递归锁重入死锁风险（已发生过 start() 内 nextDisplayName 死锁）
+    languages: [swift]
+    severity: INFO
+    pattern: $LOCK.lock()
+  - id: swift-main-async
+    message: 主线程异步块——核查闭包捕获与绑定会话（activeConvIndex 漂移面）
+    languages: [swift]
+    severity: INFO
+    pattern: DispatchQueue.main.async
+  - id: swift-tryopt-discard
+    message: _ = try? 丢弃错误——静默失败（"看不到的 bug"源头）
+    languages: [swift]
+    severity: WARNING
+    pattern: _ = try? $EXPR
