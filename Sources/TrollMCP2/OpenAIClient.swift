@@ -1258,9 +1258,12 @@ final class OpenAIClient {
             if err.domain == NSURLErrorDomain {
                 let c = err.code
                 // v7.2.3-audit2：+坏体响应码（中转返回损坏响应体 → 重试/降级）
+                // v7.1.267-audit：+SSL 握手错误（-1202/-1200/-1204/-1205）——握手与 payload 无关，
+                // 新连接重试可绕开 Botcf 坏节点（此前 SSL 直接失败→回落 L3 丢工具）
                 return c == NSURLErrorTimedOut || c == NSURLErrorNetworkConnectionLost
                     || c == NSURLErrorCannotConnectToHost || c == NSURLErrorNotConnectedToInternet
                     || c == NSURLErrorCannotDecodeContentData || c == NSURLErrorCannotParseResponse
+                    || c == -1202 || c == -1200 || c == -1204 || c == -1205
             }
             if statusCode >= 500 { return true }
             let d = err.localizedDescription
@@ -1648,7 +1651,11 @@ final class OpenAIClient {
         let method = config.authMethod.trimmingCharacters(in: .whitespacesAndNewlines)
         if method == "Query key" || method == "Query api_key" {
             let key = config.apiKey.trimmingCharacters(in: .whitespacesAndNewlines)
-            if !key.isEmpty { urlStr += "&key=" + key.addingPercentEncoding(withAllowedCharacters: .urlQueryAllowed)! }
+            // v7.1.267-audit: 去掉强制解包——编码失败回落原文（崩溃风险修）
+            if !key.isEmpty {
+                let encKey = key.addingPercentEncoding(withAllowedCharacters: .urlQueryAllowed) ?? key
+                urlStr += "&key=" + encKey
+            }
         }
         guard let url = URL(string: urlStr) else {
             completion(.failure(NSError(domain: "OpenAIClient", code: 0, userInfo: [NSLocalizedDescriptionKey: "Invalid baseURL"])))
@@ -1812,7 +1819,13 @@ final class OpenAIClient {
     /// Gemini 非流式回落（首字节超时/中转不推 SSE 时）
     private func performGeminiNonStream(messages: [ChatMessage], tools: [[String: Any]]?, body: [String: Any], url: URL, applyAuth: (inout URLRequest) -> Void, completion: @escaping (Result<ChatResult, Error>) -> Void) {
         let urlStr = url.absoluteString.replacingOccurrences(of: ":streamGenerateContent?alt=sse", with: ":generateContent")
-        var request = URLRequest(url: URL(string: urlStr)!, timeoutInterval: 120)
+        // v7.1.267-audit: 去掉强制解包——构造失败走失败回调（崩溃风险修）
+        guard let nonStreamURL = URL(string: urlStr) else {
+            completion(.failure(NSError(domain: "OpenAIClient", code: 0,
+                                        userInfo: [NSLocalizedDescriptionKey: "Invalid URL after replacing stream endpoint"])))
+            return
+        }
+        var request = URLRequest(url: nonStreamURL, timeoutInterval: 120)
         request.httpMethod = "POST"
         request.setValue("application/json", forHTTPHeaderField: "Content-Type")
         applyAuth(&request)
@@ -2108,7 +2121,7 @@ final class OpenAIClient {
 
     /// 给 URL 追加单个 query 项（已含 ? 或 &，不重复添加同名键）。
     private static func appendingQueryItem(_ name: String, value: String, to url: URL) -> URL {
-        var comps = URLComponents(url: url, resolvingAgainstBaseURL: false) ?? URLComponents(string: url.absoluteString)!
+        var comps = URLComponents(url: url, resolvingAgainstBaseURL: false) ?? URLComponents(string: url.absoluteString) ?? URLComponents()
         var items = comps.queryItems ?? []
         items.removeAll { $0.name == name }
         items.append(URLQueryItem(name: name, value: value))
@@ -2369,6 +2382,20 @@ final class OpenAIClient {
             if fellBackToNonStream { return }
 
             if let error = error {
+                // v7.1.267-audit：SSL 握手错误且未收到任何首字节（握手层失败=无内容，重试安全）——
+                // 同级别新连接重试（最多 2 次），绕开 Botcf 瞬时坏节点；有内容时不重试防重复输出
+                let nsErr = error as NSError
+                let isSSLNoContent = !firstByteReceived && (nsErr.code == -1202 || nsErr.code == -1200
+                    || nsErr.code == -1204 || nsErr.code == -1205
+                    || error.localizedDescription.contains("SSL")
+                    || error.localizedDescription.contains("安全连接"))
+                if isSSLNoContent, sslRetryCount < 2 {
+                    sslRetryCount += 1
+                    NetworkLog.shared.log("\(self.config.name): 流式 SSL 握手失败 (\(nsErr.code))，未收到首字节——新连接重试 (attempt \(sslRetryCount + 1)/3)")
+                    self.performResponsesStream(messages: messages, tools: tools, onStatus: onStatus,
+                                                onDelta: onDelta, onThinking: onThinking, completion: guardedCompletion)
+                    return
+                }
                 guardedCompletion(.failure(error))
                 return
             }

@@ -1848,13 +1848,19 @@ final class ConversationStore: ObservableObject {
                                msgs[li].role == "assistant",
                                msgs[li].content.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty,
                                msgs[li].thinking?.isEmpty == false {
-                                msgs[li].content = text
-                                if let th = thinking, !th.isEmpty { msgs[li].thinking = th }
-                                self.conversations[ci].messages = msgs
-                                self.streamingMessageId = nil
-                                self.liveProducedID = nil
-                                self.attachTrail(to: msgs[li].id, thinking: thinking)
-                                reused = true
+                                // v7.1.267-audit：走统一变更入口（dirty+flush）——此前裸改不标 dirty，
+                                // 杀后台瞬间丢最终回答（fix73j-p5 原则在此路径被绕过）
+                                let mid = msgs[li].id
+                                let ok = self.updateMessage(in: self.conversations[ci].id, msgId: mid) { m in
+                                    m.content = text
+                                    if let th = thinking, !th.isEmpty { m.thinking = th }
+                                }
+                                if ok {
+                                    self.streamingMessageId = nil
+                                    self.liveProducedID = nil
+                                    self.attachTrail(to: mid, thinking: thinking)
+                                    reused = true
+                                }
                             }
                         }
                         if !reused {
@@ -1895,8 +1901,8 @@ final class ConversationStore: ObservableObject {
                             if let li = msgs.indices.last,
                                msgs[li].role == "assistant",
                                msgs[li].content.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty {
-                                msgs.remove(at: li)
-                                self.conversations[ci].messages = msgs
+                                // v7.1.267-audit：走 removeMessage（标 dirty）——裸删不落盘重启残留空气泡
+                                self.removeMessage(id: msgs[li].id)
                             }
                         }
                         self.streamingMessageId = nil
