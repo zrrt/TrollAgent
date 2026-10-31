@@ -1654,8 +1654,13 @@ final class ConversationStore: ObservableObject {
                 history.insert(ChatMessage(role: "system", content: "Developer instructions below, always follow:\n" + devInstr), at: 0)
             }
         }
-        // 动态状态块：最新信息放最后，不影响稳定前缀缓存
-        history.insert(ChatMessage(role: "system", content: Self.dynamicStatePrompt()), at: 0)
+        // fix73k：KV 缓存前缀稳定（对齐 DeepSeek 硬盘缓存/GLM 上下文缓存/Kimi Context Caching/
+        // GPT prompt caching 四家"开头逐字匹配"规则）——动态状态块（设备/App/工作区/当前会话
+        // 标题/自动提取 hint，随会话内容变化）从 system 前缀移到请求末尾的 user 消息
+        // （DSH user-role 快照追加：易变信息不进稳定前缀）——system 前缀（persona/devInstr/base）
+        // 保持字节完全稳定 → 四家上游缓存都命中整段 system。旧实现 insert(at:0) 把动态块插在
+        // system 序列中间、对话之前——标题/hint 一变即前缀失效。
+        history.append(ChatMessage(role: "user", content: Self.dynamicStatePrompt() + "\n(Background environment snapshot — do not respond to this.)"))
         // Tool-param prevalidation correction injection: missing required params blocked last round, append likewise.
         if let pcorr = self.pendingParamCorrection, !pcorr.isEmpty {
             history.append(ChatMessage(role: "user", content: pcorr))
