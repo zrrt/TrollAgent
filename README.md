@@ -475,9 +475,10 @@ Built with & thanks to these open-source projects and authors (mirrors the in-ap
 | [ios-linuxkit Asbestos](https://github.com/rcarmo/ios-linuxkit) | Rui Carmo (rcarmo) | TrollRuntime ARM64 interpreter (unified env core since v6.5.0) |
 | [Alpine Linux](https://alpinelinux.org) | Alpine team | TrollRuntime rootfs (aarch64 Linux userspace) |
 | [iSH](https://github.com/ish-app/ish) | iSH team | Earlier emulation engine (retired since v6.6.0) |
+| [TrollSpeed](https://github.com/Lessica/TrollSpeed) | Lessica | HUD floating-window framework (MIT, base of the desktop mascot) |
 | [GitHub Actions](https://github.com/features/actions) | GitHub | Cloud build |
 
-Agent-loop design reference: [Open Minis](https://openminis.app/) — per-stream isolated sessions, sub-agent delegation & progress tracking. Pluggable tool/registry architecture reference: [DeepSeek Harness (dsh)](https://github.com/deepseek-ai/deepseek-harness). Also [TrollStore](https://github.com/opa334/TrollStore) for install / sign mechanics.
+Agent-loop design reference: [Open Minis](https://openminis.app/) — per-stream isolated sessions, sub-agent delegation & progress tracking. Pluggable tool/registry architecture reference: [DeepSeek Harness (dsh)](https://github.com/deepseek-ai/deepseek-harness). HUD floating-window interaction reference: [TheBall (nate-parrott/ball)](https://github.com/nate-parrott/ball). Also [TrollStore](https://github.com/opa334/TrollStore) for install / sign mechanics.
 
 And every open-source contributor — thank you.
 
