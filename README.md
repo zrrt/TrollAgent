@@ -61,6 +61,8 @@
 
 ## Screenshots
 
+### Interface — the workbench
+
 | | |
 |---|---|
 | <img src="docs/screenshots/01-home.png" width="300"/> | <img src="docs/screenshots/02-tool-cards.png" width="300"/> |
@@ -69,6 +71,15 @@
 | **AI chat** — natural language answers with 9 capability areas | **Device Environment** — all-green self-check on non-jailbroken TrollStore (iOS 16.3) |
 | <img src="docs/screenshots/05-settings.png" width="300"/> | <img src="docs/screenshots/06-hud-character.png" width="300"/> |
 | **Settings** — MCP / Models / Tools / Network & Capture / Cloud Build | **HUD character** — Bunny / Loli / Catgirl, size, bubble style & quick menu |
+
+### AI in Action — one sentence, full pipeline
+
+| | |
+|---|---|
+| <img src="docs/screenshots/07-request-run-commands.png" width="300"/> | <img src="docs/screenshots/08-tool-load-shell.png" width="300"/> |
+| **Request** — "Run a few commands." AI plans a read-only check | **Tool loading** — AI describes & loads `shell.exec`, schema refreshes next turn |
+| <img src="docs/screenshots/09-four-tools-executed.png" width="300"/> | <img src="docs/screenshots/10-command-results.png" width="300"/> |
+| **Execution** — 4 shell tools run automatically (pwd / date / uname / ls) | **Result** — human-readable answer with Alpine TrollRuntime context |
 
 ---
 
