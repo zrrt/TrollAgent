@@ -63,12 +63,10 @@
 
 ### Interface — the workbench
 
-| | |
-|---|---|
-| <img src="docs/screenshots/01-home.png" width="300"/> | <img src="docs/screenshots/02-tool-cards.png" width="300"/> |
-| **Home** — quick cards & one-line input | **Tool cards** — 8 domains, 45 registered tools |
-| <img src="docs/screenshots/04-device-env.png" width="300"/> | <img src="docs/screenshots/06-hud-character.png" width="300"/> |
-| **Device Environment** — all-green self-check on non-jailbroken TrollStore (iOS 16.3) | **HUD character** — Bunny / Loli / Catgirl, size, bubble style & quick menu |
+| | | |
+|---|---|---|
+| <img src="docs/screenshots/01-home.png" width="220"/> | <img src="docs/screenshots/02-tool-cards.png" width="220"/> | <img src="docs/screenshots/04-device-env.png" width="220"/> |
+| **Home** — quick cards & one-line input | **Tool cards** — 8 domains, 45 registered tools | **Device Environment** — all-green self-check on non-jailbroken TrollStore (iOS 16.3) |
 
 ### AI in Action — one sentence, full pipeline
 
