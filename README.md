@@ -388,7 +388,7 @@ TrollAgent/
 | P1 Unified userspace | ✅ done | TrollRuntime (Asbestos interpreter) took over; iSH emulation retired |
 | P2 Dual-track routing convergence | ✅ done (v6.6.0) | Routing abolished + unified env layer landed: runtime param removed, ISHEngine → TrollRuntimeEngine, iSH copy cleared; CELF/elf-runner/static busybox retired |
 | P3 Full nativization | 🎯 target | aarch64 Linux ELF running directly; the AI perceives a single environment (N1 gateway LAN tunneling for debugging) |
-| Supporting | ongoing | Tool batching for throughput, HUD voice loop, versioned build & release (7.1.x auto-bump) |
+| Supporting | ongoing | Tool batching, adaptive streaming fallback (`streamUnsupported`), protocol auto-correct (L0-L5, persisted), per-stream isolated sessions, sub-agent orchestration, HUD voice loop, versioned build & release (7.1.x auto-bump) |
 
 ### Historical timeline (unification, v6.5.0 → v6.6.0)
 
@@ -405,6 +405,11 @@ TrollAgent/
 | 7.1.93-97 | Performance & navigation: removed HUD diag log real-time reads, model-manager jump fixes (delayed push → in-sheet `NavigationLink`), saveAndTest → lightweight connectivity test, upstream-model fetch in the model picker, update-install now jumps to TrollStore (main-thread fix) |
 | 7.1.98 | Usage-stats token display: real `usage` captured in `OpenAIClient`, per-request "≈N tok" rendering |
 | 7.1.99-103 | Tool batching for throughput: read-only batch ≤4, interpreter batching with script blacklist, audit fixes for env/curl/kill/sed — double-layer safety (classification + dangerous-command interception) |
+| 7.1.266-275 | Deep audit — 11 logic fixes shipped in one release: pluggable closed-loop, tool-failure `isError` false-kill, SSL auto-retry, URL force-unwrap ×3, APPEND / UPDATE-FAIL fallbacks, completion-sound timing, token accounting precision, zip cross-session pollution, sub-agent SSL no-op, closure `self.` compile fix |
+| 7.1.276-277 | Rendering fixes (list/quote wrapping truncation, table max-height removed) + protocol dead-loop root fix (auto-correct result persisted back to shared config — no more per-request L0 reset) |
+| 7.1.278 | 60s main-chat streaming + `streamUnsupported` memory (first-byte timeout → non-stream, remembered); expert fixed-mode (`protocolAutoFixEnabled` / `compatMaxLevel`); device reading fixes (physical pixels, storage capacity); per-stream isolated sessions with fail-path release; floating arrows ︿﹀ |
+| 7.1.279 | Encapsulated-tool icons → blue flat `.fill` set (tool-prefix branches) |
+| 7.1.280 | HUD character English name Loli → Chibi (avoid lolicon association); repo facade (README badges / compatibility table / 45 tools / screenshots / architecture / LICENSE / Credits) |
 
 ---
 
