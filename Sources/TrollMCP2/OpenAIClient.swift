@@ -1748,16 +1748,26 @@ final class OpenAIClient {
 
         let delegate = SSEStreamDelegate()
         let streamSession = URLSession(configuration: .default, delegate: delegate, delegateQueue: nil)
+        // v7.1.281-fix：Gemini 流式首字节超时主会话 60s/子代理 10s（对齐 Responses 流式）
+        let firstByteTimeout: TimeInterval = (requestTimeoutOverride != nil && requestTimeoutOverride! > 0) ? 10 : 60
         let firstByteTimer = DispatchWorkItem { [weak self] in
             guard let self = self else { return }
             if !firstByteReceived && !fellBackToNonStream {
                 fellBackToNonStream = true
-                NetworkLog.shared.log("\(self.config.name): Gemini 流式首字节超时 (10s)，回落非流式")
+                NetworkLog.shared.log("\(self.config.name): Gemini 流式首字节超时 (\(Int(firstByteTimeout))s)，回落非流式")
                 streamSession.invalidateAndCancel()
+                // v7.1.281-fix：确认不支持流式 → 持久化，下次直接非流式
+                DispatchQueue.main.async {
+                    guard let idx = ModelStore.shared.configs.firstIndex(where: { $0.id == self.config.id }) else { return }
+                    if !ModelStore.shared.configs[idx].streamUnsupported {
+                        ModelStore.shared.configs[idx].streamUnsupported = true
+                        ModelStore.shared.save()
+                    }
+                }
                 self.performGeminiNonStream(messages: messages, tools: tools, body: body, url: url, applyAuth: { [weak self] r in self?.applyAuth(to: &r) }, completion: guardedCompletion)
             }
         }
-        DispatchQueue.main.asyncAfter(deadline: .now() + 10, execute: firstByteTimer)
+        DispatchQueue.main.asyncAfter(deadline: .now() + firstByteTimeout, execute: firstByteTimer)
 
         var idleTimer: DispatchWorkItem?
         func resetIdleWatchdog() {
@@ -2212,6 +2222,13 @@ final class OpenAIClient {
                                         onDelta: ((String) -> Void)?,
                                         onThinking: ((String) -> Void)? = nil,
                                         completion: @escaping (Result<ChatResult, Error>) -> Void) {
+        // v7.1.281-fix：已确认该中转不支持流式（首字节超时切非流式时持久化）→ 直接非流式，
+        // 不再每次白等首字节；配置页"流式传输"开关可恢复。
+        if config.streamUnsupported {
+            NetworkLog.shared.log("\(config.name): 中转已确认不支持流式(streamUnsupported)，直接非流式")
+            performResponses(messages: messages, tools: tools, onStatus: onStatus, onThinking: onThinking, completion: completion)
+            return
+        }
         let base = config.baseURL.trimmingCharacters(in: CharacterSet(charactersIn: "/"))
         guard let url = URL(string: base + "/responses") else {
             completion(.failure(NSError(domain: "OpenAIClient", code: 0, userInfo: [NSLocalizedDescriptionKey: "Invalid baseURL"])))
@@ -2286,21 +2303,32 @@ final class OpenAIClient {
         }
         let streamSession = URLSession(configuration: streamCfg, delegate: delegate, delegateQueue: nil)
 
-        // 首字节超时定时器 (10 秒）
+        // 首字节超时定时器——v7.1.281-fix：主会话 10s→60s（对齐官方 SDK 60s 标准；长会话
+        // prefill 慢/中转排队时 10s 误切白耗重发，非流式 watchdog 90s 兜底挂死）；
+        // 子代理(requestTimeoutOverride 非 nil)保持 10s 快速失败（rt 硬上限兜底）。
+        let firstByteTimeout: TimeInterval = (requestTimeoutOverride != nil && requestTimeoutOverride! > 0) ? 10 : 60
         // v7.4.0-fix73g：子代理流式硬上限句柄——提前声明，供 firstByteTimer / idle / onComplete 取消。
         var hardCap: DispatchWorkItem?
         let firstByteTimer = DispatchWorkItem { [weak self] in
             guard let self = self else { return }
             if !firstByteReceived && !fellBackToNonStream {
                 fellBackToNonStream = true
-                NetworkLog.shared.log("\(self.config.name): 流式首字节超时 (10s)，自动降级非流式")
+                NetworkLog.shared.log("\(self.config.name): 流式首字节超时 (\(Int(firstByteTimeout))s)，自动降级非流式")
                 hardCap?.cancel()
                 streamSession.invalidateAndCancel()
+                // v7.1.281-fix：确认该中转不支持流式 → 持久化，下次请求直接非流式不再白等
+                DispatchQueue.main.async {
+                    guard let idx = ModelStore.shared.configs.firstIndex(where: { $0.id == self.config.id }) else { return }
+                    if !ModelStore.shared.configs[idx].streamUnsupported {
+                        ModelStore.shared.configs[idx].streamUnsupported = true
+                        ModelStore.shared.save()
+                    }
+                }
                 // 切回非流式 performResponses (completion 走 guardedCompletion，防双done）
                 self.performResponses(messages: messages, tools: tools, onStatus: onStatus, onThinking: onThinking, completion: guardedCompletion)
             }
         }
-        DispatchQueue.main.asyncAfter(deadline: .now() + 10, execute: firstByteTimer)
+        DispatchQueue.main.asyncAfter(deadline: .now() + firstByteTimeout, execute: firstByteTimer)
 
         // v4.5.x：流式 idle 看门狗——首字节后流中途挂起 (中转不关连接但不再推事件）时，
         // 每收到一个 SSE 事件重置；间隔 > 30s → 掐断并回落 (复用 guardedCompletion 防双 done）。

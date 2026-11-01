@@ -54,6 +54,10 @@ struct ModelConfig: Codable, Identifiable, Hashable {
     /// v7.1.280-fix：降级链上限（0-5，默认 5=全链自适应；配 0=固定 L0 完整载荷，失败直接
     /// 报错不降级——老手要可预测/可控时用，避免"不知道请求以什么载荷发出"）。
     var compatMaxLevel: Int = 5
+    /// v7.1.281-fix：该中转/模型已确认不支持流式（首字节超时切非流式时持久化 true）——
+    /// 下次请求直接非流式不再白等首字节；配置页"流式传输"开关可恢复（对齐 BackgroundLLM
+    /// allowsNonStreaming 能力缓存思路，主链路落地）。
+    var streamUnsupported: Bool = false
     /// v2.9.107：分组名 (供应商分组管理，对齐 cc-switch provider groups）
     var group: String = "default"
     /// v3.5.13：可配置的参数名别名映射（标准键 → 该供应商认的键），如
@@ -92,7 +96,8 @@ struct ModelConfig: Codable, Identifiable, Hashable {
          baseURL: String, apiKey: String, model: String, authMethod: String = "Bearer",
          isDefault: Bool = false, temperature: Double = 0.2, maxTokens: Int = 16384, compatLevel: Int = 0,
          contextTokens: Int = 128000, group: String = "default", paramAliases: [String: String] = [:],
-         fallbackIDs: [UUID] = [], protocolAutoFixEnabled: Bool = true, compatMaxLevel: Int = 5) {
+         fallbackIDs: [UUID] = [], protocolAutoFixEnabled: Bool = true, compatMaxLevel: Int = 5,
+         streamUnsupported: Bool = false) {
         self.id = id
         self.name = name
         self.provider = provider
@@ -111,6 +116,7 @@ struct ModelConfig: Codable, Identifiable, Hashable {
         self.fallbackIDs = fallbackIDs
         self.protocolAutoFixEnabled = protocolAutoFixEnabled
         self.compatMaxLevel = compatMaxLevel
+        self.streamUnsupported = streamUnsupported
     }
 
     init(from decoder: Decoder) throws {
@@ -136,6 +142,7 @@ struct ModelConfig: Codable, Identifiable, Hashable {
         fallbackIDs = (try? c.decode([UUID].self, forKey: .fallbackIDs)) ?? []   // v7.1.107：旧配置缺失时默认无备用
         protocolAutoFixEnabled = (try? c.decode(Bool.self, forKey: .protocolAutoFixEnabled)) ?? true
         compatMaxLevel = (try? c.decode(Int.self, forKey: .compatMaxLevel)) ?? 5
+        streamUnsupported = (try? c.decode(Bool.self, forKey: .streamUnsupported)) ?? false
     }
 }
 

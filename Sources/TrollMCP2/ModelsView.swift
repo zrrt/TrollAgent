@@ -470,6 +470,8 @@ struct ModelEditorView: View {
     /// v7.1.280-fix：老手固定模式——协议自动修正开关 / 降级链上限
     @State private var protocolAutoFixEnabled: Bool
     @State private var compatMaxLevel: Int
+    /// v7.1.281-fix：流式传输开关（关=直接非流式；中转首字节超时自动置关）
+    @State private var streamEnabled: Bool
 
     @State private var showKey = false
     @State private var showingQuickPicker = false
@@ -503,6 +505,7 @@ struct ModelEditorView: View {
         _fallbackIDs = State(initialValue: config?.fallbackIDs ?? [])
         _protocolAutoFixEnabled = State(initialValue: config?.protocolAutoFixEnabled ?? true)
         _compatMaxLevel = State(initialValue: config?.compatMaxLevel ?? 5)
+        _streamEnabled = State(initialValue: !(config?.streamUnsupported ?? false))
     }
 
     var body: some View {
@@ -577,6 +580,16 @@ struct ModelEditorView: View {
                         Text("L0-L3").tag(3)
                         Text("L0-L4").tag(4)
                         Text("全链自适应 L0-L5（默认）").tag(5)
+                    }
+                    // v7.1.281-fix：流式传输开关——首字节超时自动置关（持久化），可手动恢复
+                    Toggle(isOn: $streamEnabled) {
+                        VStack(alignment: .leading, spacing: 2) {
+                            Text("流式传输")
+                                .font(.subheadline)
+                            Text("开=请求走 SSE 流式（默认）；关=直接非流式。首字节超时会自动置关并记住")
+                                .font(.caption2)
+                                .foregroundColor(.secondary)
+                        }
                     }
                 }
 
@@ -792,7 +805,8 @@ struct ModelEditorView: View {
             paramAliases: ModelEditorView.parseAliases(paramAliasesText),
             fallbackIDs: fallbackIDs,
             protocolAutoFixEnabled: protocolAutoFixEnabled,
-            compatMaxLevel: compatMaxLevel
+            compatMaxLevel: compatMaxLevel,
+            streamUnsupported: !streamEnabled
         )
     }
 
