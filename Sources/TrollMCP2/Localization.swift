@@ -1088,7 +1088,7 @@ enum L10n {
             tbl["i18n_767"] = ["zh": "相机", "en": "Camera"]
             tbl["i18n_768"] = ["zh": "选择可爱助手的角色", "en": "Pick a Cute Assistant character"]
             tbl["i18n_838"] = ["zh": "兔娘", "en": "Bunny Girl"]
-            tbl["i18n_837"] = ["zh": "小萝莉", "en": "Loli"]
+            tbl["i18n_837"] = ["zh": "小萝莉", "en": "Chibi"]
             tbl["i18n_839"] = ["zh": "猫娘", "en": "Catgirl"]
             tbl["i18n_772"] = ["zh": "悬浮尺寸（改完自动重启悬浮生效）", "en": "HUD size (auto-restarts HUD on change)"]
             tbl["i18n_773"] = ["zh": "小", "en": "Small"]

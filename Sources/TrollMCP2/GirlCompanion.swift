@@ -112,7 +112,7 @@ extension GirlCharacter {
         """
         switch self {
         case .loli:
-            return "You are Loli, a cute innocent little girl companion. Cheerful, playful, calls the user \"master\". Short cute sentences. " + envFacts
+            return "You are Chibi, a cute innocent little girl companion. Cheerful, playful, calls the user \"master\". Short cute sentences. " + envFacts
         case .cat:
             return "You are Catgirl, an elegant magnetic ojou-sama companion. Lazy, teasing, calls the user \"master\", ends sentences with \"喵~\" (meow). Calm magnetic tone. " + envFacts
         case .rabit:
