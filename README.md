@@ -16,6 +16,7 @@
 ## Table of Contents
 
 - [Project Overview](#project-overview)
+- [Screenshots](#screenshots)
 - [Quick Start](#quick-start)
 - [Architecture](#architecture)
 - [Technology Stack](#technology-stack)
@@ -55,6 +56,19 @@
 - **Clean failure boundaries**: high-priority tools return unified `error_code / reason / next_step`, no misleading errors
 - **Recoverability**: failed injections auto-rollback + launch self-check (auto-restore on crash)
 - **Nativization direction**: progressively retiring iSH/Alpine emulation layers toward aarch64 Linux ELF running directly
+
+---
+
+## Screenshots
+
+| | |
+|---|---|
+| <img src="docs/screenshots/01-home.png" width="300"/> | <img src="docs/screenshots/02-tool-cards.png" width="300"/> |
+| **Home** — quick cards & one-line input | **Tool cards** — 8 domains, 45 registered tools |
+| <img src="docs/screenshots/03-chat-capabilities.png" width="300"/> | <img src="docs/screenshots/04-device-env.png" width="300"/> |
+| **AI chat** — natural language answers with 9 capability areas | **Device Environment** — all-green self-check on non-jailbroken TrollStore (iOS 16.3) |
+| <img src="docs/screenshots/05-settings.png" width="300"/> | <img src="docs/screenshots/06-hud-character.png" width="300"/> |
+| **Settings** — MCP / Models / Tools / Network & Capture / Cloud Build | **HUD character** — Bunny / Loli / Catgirl, size, bubble style & quick menu |
 
 ---
 
