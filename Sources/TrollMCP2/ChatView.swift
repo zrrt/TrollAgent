@@ -2727,39 +2727,43 @@ struct MessageBubble: View {
     /// v7.2.3-fix28/fix28b：工具卡图标按工具名映射（OpenMinis 风格，覆盖全部真实工具族）
     /// 对齐 OpenMinis sfSymbol(forTool:) 表并扩展：photo/brain/bubble/lightbulb/pencil/code 等
     /// 不再落默认灰图标。AI 只传 tool_name，图标与颜色全在客户端映射（与 OpenMinis 一致）。
+    /// v7.1.282-fix：统一平面图标（fill）+ 默认蓝——封装工具不再灰色扳手线条（用户指定）
     private func toolCardSymbol(_ toolName: String?) -> String {
-        guard let name = toolName, !name.isEmpty else { return "wrench.and.screwdriver" }
+        guard let name = toolName, !name.isEmpty else { return "wrench.and.screwdriver.fill" }
         if name == "shell.exec" || name == "shell_exec" || name == "bash" { return "terminal.fill" }
         if name.hasPrefix("web.") || name == "web_search" { return "globe" } // fix38：联网搜索用 globe（magnifyingglass 用户嫌丑）
         if name.hasPrefix("browser.") { return "safari" }
-        if name.hasPrefix("knowledge.") || name.hasPrefix("skills.") || name.hasPrefix("learn.") { return "book.closed" }
+        if name.hasPrefix("knowledge.") || name.hasPrefix("skills.") || name.hasPrefix("learn.") { return "book.closed.fill" }
         if name.hasPrefix("device.") { return "iphone" }
-        if name.hasPrefix("app.") { return "app.badge" }
+        if name.hasPrefix("app.") { return "app.badge.fill" }
         if name.hasPrefix("inject") { return "wand.and.stars" }
-        if name.hasPrefix("control.") { return "hand.tap" }
-        if name.hasPrefix("container.") || name.hasPrefix("package.") || name.hasPrefix("build.") { return "shippingbox" }
+        if name.hasPrefix("control.") { return "hand.tap.fill" }
+        if name.hasPrefix("container.") || name.hasPrefix("package.") || name.hasPrefix("build.") { return "shippingbox.fill" }
         if name.hasPrefix("artifact.read") { return "doc.text" }
         if name.hasPrefix("artifact.write") { return "doc.text.fill" }
-        if name.hasPrefix("artifact.") || name.hasPrefix("project.") { return "folder" }
+        if name.hasPrefix("artifact.") || name.hasPrefix("project.") { return "folder.fill" }
         if name.hasPrefix("vision.") || name == "read_image" || name == "image" { return "photo" }
         // OpenMinis delegate=person.2（子agent是人形）；thinking 才是 brain——不撞
         if name.hasPrefix("memory") { return "brain.head.profile" }
         if name.hasPrefix("subagent.") || name == "agent" || name.hasPrefix("delegate") { return "person.2.fill" }
-        if name == "text" || name == "plaintext" || name.hasPrefix("model.") { return "bubble.left" }
-        if name == "think" || name == "thinking" { return "lightbulb.max" }
+        if name == "text" || name == "plaintext" || name.hasPrefix("model.") { return "bubble.left.fill" }
+        if name == "think" || name == "thinking" { return "lightbulb.max.fill" }
         if name.hasPrefix("code") || name.hasPrefix("py3-native") || name.hasPrefix("node-native") { return "chevron.left.forwardslash.chevron.right" }
         if name.hasPrefix("network.") { return "network" }
-        if name.hasPrefix("system.") || name.hasPrefix("tools.") { return "gearshape" }
-        if name.hasPrefix("cron.") || name.hasPrefix("reminder") || name.hasPrefix("calendar") { return "clock" }
-        if name.hasPrefix("location.") { return "location" }
-        if name.hasPrefix("rescue.") { return "cross.case" }
-        if name.hasPrefix("automation.") { return "play.circle" }
-        return "wrench.and.screwdriver"
+        if name.hasPrefix("system.") || name.hasPrefix("tools.") { return "gearshape.fill" }
+        if name.hasPrefix("cron.") || name.hasPrefix("reminder") || name.hasPrefix("calendar") { return "clock.fill" }
+        if name.hasPrefix("location.") { return "location.fill" }
+        if name.hasPrefix("rescue.") { return "cross.case.fill" }
+        if name.hasPrefix("automation.") { return "play.circle.fill" }
+        // v7.1.282-fix：tool_ 前缀封装工具（tool_describe 等）落蓝色平面扳手，不再是灰色线条
+        if name.hasPrefix("tool_") { return "wrench.and.screwdriver.fill" }
+        return "wrench.and.screwdriver.fill"
     }
 
     /// v7.2.3-fix28/fix28b：图标配色（同工具名映射）
+    /// v7.1.282-fix：灰色兜底统一改蓝色（封装工具不再灰色；多彩语义保留给已知工具族）
     private func toolCardColor(_ toolName: String?) -> Color {
-        guard let name = toolName, !name.isEmpty else { return .gray }
+        guard let name = toolName, !name.isEmpty else { return .blue }
         if name == "shell.exec" || name == "shell_exec" || name == "bash" { return .blue }
         if name.hasPrefix("web.") || name == "web_search" { return .blue }
         if name.hasPrefix("browser.") { return .orange }
@@ -2770,13 +2774,13 @@ struct MessageBubble: View {
         if name.hasPrefix("container.") || name.hasPrefix("package.") || name.hasPrefix("build.") { return .orange }
         if name.hasPrefix("vision.") || name == "read_image" || name == "image" { return .blue }
         if name.hasPrefix("memory") { return .purple }
-        if name == "text" || name == "plaintext" || name.hasPrefix("model.") { return .gray }
+        if name == "text" || name == "plaintext" || name.hasPrefix("model.") { return .blue }
         if name == "think" || name == "thinking" { return .orange }
         if name.hasPrefix("code") || name.hasPrefix("py3-native") || name.hasPrefix("node-native") || name == "db" || name == "sqlite3" { return .blue }
         if name.hasPrefix("cron.") || name.hasPrefix("reminder") || name.hasPrefix("calendar") { return .pink }
         if name.hasPrefix("rescue.") { return .red }
         if name.hasPrefix("automation.") || name.hasPrefix("macro.") { return .green }
-        return .gray
+        return .blue
     }
 
     /// v7.2.3-fix39：副行族标签/工具名着色——shell + 所有封装工具（含 bind_app 等下划线名）
@@ -3304,7 +3308,7 @@ struct TrailRow: View {
     private var iconFor: String {
         switch step.kind {
         case .think: return "brain"
-        case .tool: return "wrench.and.screwdriver"
+        case .tool: return "wrench.and.screwdriver.fill"   // v7.1.282-fix：平面图标
         case .result: return step.status == .failed ? "xmark.circle.fill" : "checkmark.circle.fill"
         case .note: return "flag"
         }
