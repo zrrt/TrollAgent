@@ -455,6 +455,32 @@ bash scripts/build-hud.sh          # → HUD sub-package
 
 ---
 
+## Credits
+
+Built with & thanks to these open-source projects and authors (mirrors the in-app About → Open Source Credits):
+
+| Project | Author | Used for |
+|---|---|---|
+| [TrollFools](https://github.com/Lessica/TrollFools) / ElleKit | Lessica | Injection engine |
+| [Theos](https://github.com/theos/theos) | Theos team | Build toolchain |
+| [ldid](https://github.com/opa334/ldid) / insert_dylib / [optool](https://github.com/alexzielenski/optool) | opa334 / alexzielenski | Sign & inject |
+| ct_bypass / Shadow | — | iOS 17+ bypass |
+| class-dump / [Frida](https://github.com/frida/frida) | — | Reverse engineering |
+| H5GG / GameGuardian | — | Game memory |
+| [OpenSSL](https://github.com/openssl/openssl) | OpenSSL team | MITM decrypt |
+| [hev-socks5-tunnel](https://github.com/heiher/hev-socks5-tunnel) / Tun2SocksKit | heiher | VPN tunnel |
+| [cloudflare-edge-tts](https://github.com/DIYgod/cloudflare-edge-tts) | DIYgod | AI TTS relay |
+| [RSKGrowingTextView](https://github.com/ruslanskorb/RSKGrowingTextView) | Ruslan Skorb | Chat input |
+| [ZIPFoundation](https://github.com/weichsel/ZIPFoundation) | Thomas Zoechling | Zip archive |
+| TrollRuntime (ARM64) | TrollAgent | Linux emulation |
+| [GitHub Actions](https://github.com/features/actions) | GitHub | Cloud build |
+
+Mechanism inspiration: **OpenMinis** (per-stream isolated sessions), [TrollStore](https://github.com/opa334/TrollStore) (install / sign mechanics), Alpine Linux (unified userspace rootfs).
+
+And every open-source contributor — thank you.
+
+---
+
 ## Related Docs
 
 - [GOALS.md](GOALS.md) — long-term goals and architecture evolution (unification decisions, roadmap status)
