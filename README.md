@@ -4,6 +4,13 @@
 
 > Zero-learning mode: just say it in plain words ("analyze how this app works", "is this plugin safe", "capture this app's traffic") — the AI picks the tools, installs dependencies, does the job, and gives you a one-line human answer.
 
+<p align="center">
+  <a href="https://github.com/zrrt/TrollAgent/releases/download/latest/TrollAgent.tipa"><img src="https://img.shields.io/badge/%E2%AC%87%20Download%20Latest%20Build-~161%20MB-blue" alt="Download latest .tipa"></a>
+  <img src="https://img.shields.io/badge/Platform-iOS%2015%2B-000000" alt="Platform: iOS 15+">
+  <img src="https://img.shields.io/badge/TrollStore-2.x-blueviolet" alt="TrollStore 2.x">
+  <img src="https://img.shields.io/badge/License-FREE%20for%20personal%20use-success" alt="Free for personal use">
+</p>
+
 ---
 
 ## Table of Contents
@@ -50,6 +57,15 @@
 - **Nativization direction**: progressively retiring iSH/Alpine emulation layers toward aarch64 Linux ELF running directly
 
 ---
+
+## Requirements & compatibility
+
+| Requirement | Note |
+|---|---|
+| iOS 15+ | Runs under **TrollStore 2** (jailbreak-friendly) |
+| TrollStore 2.x | Install via `.tipa`; **keep TrollStore updated** — older builds re-sign with outdated ldid and can fail on large/complex bundles (e.g. `ldid returned non-zero` on install) |
+| iOS 16+ — Developer Mode | TrollAgent ships debugger entitlements (`get-task-allow` / `task_for_pid-allow`) for injection & process control — **iOS 16+ requires Developer Mode enabled** (Settings → Privacy & Security → Developer Mode → enable → **restart**). TrollStore usually arms it automatically and prompts for a restart; a missing restart is the most common cause of a launch crash |
+| iOS 17 non-jailbroken note | On iOS 17 non-jailbroken TrollStore, writing into other apps' containers and unsigned-dylib injection are **restricted by the platform** (CoreTrust trust-level change vs iOS 16). Core tools, VPN tunnel and silent install still work; for full capability on iOS 17, jailbreak (Dopamine) is required |
 
 ## Quick Start
 
