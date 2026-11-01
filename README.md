@@ -120,12 +120,14 @@
                            │
 ┌──────────────────────────▼─────────────────────────────────┐
 │               AI chat kernel (OpenAIClient)                 │
-│  Multi-upstream models · SSE streaming · reasoning control ·│
-│  skill system · batched tool selection                      │
+│  Multi-upstream models · SSE streaming · protocol auto-     │
+│  correct (L0-L5 degrade, persisted) · adaptive streaming    │
+│  fallback (streamUnsupported memory) · isolated sessions    │
+│  · reasoning control · skill system · batched tool select   │
 └──────────────────────────┬─────────────────────────────────┘
                            │ tool dispatch (ToolRegistry / MCPCore)
 ┌──────────────────────────▼─────────────────────────────────┐
-│            Tool Registry (37 tools / 100+ subcommands)      │
+│            Tool Registry (45 tools / 100+ subcommands)      │
 │  inject · app · file · db · browser · control · device ·    │
 │  web · network · vpn · github · tool.install · ...          │
 └───┬──────────┬──────────┬───────────┬──────────────────────┘
@@ -155,7 +157,7 @@
 | Layer | Components | Responsibility |
 |---|---|---|
 | UI (SwiftUI) | ChatView, SettingsView, BrowserView, GatewayView, CleanupView, FakeDeviceView, ControlCenterView, AppPickerView… | Full bilingual UI (Simplified Chinese / English) |
-| AI kernel | OpenAIClient, Models.swift (chat loop), SystemPrompts, UsageRecorder | Multi-upstream chat, SSE streaming, tool selection & **batching**, usage/token accounting, skill system |
+| AI kernel | OpenAIClient, Models.swift (chat loop), SystemPrompts, UsageRecorder | Multi-upstream chat, SSE streaming, tool selection & **batching**, usage/token accounting, skill system. **Protocol auto-correct**: on each request, mismatched upstream protocol (chat/completions vs responses) is detected and corrected, with the result persisted back to shared config (no more per-request L0 reset). **Adaptive streaming fallback**: first-byte timeout (60s main / 10s sub-agent) switches to non-stream, remembered via `streamUnsupported` so the next request skips the wait. **Per-stream isolated sessions**: each stream owns its session; fail paths (onError / onComplete) invalidate it to prevent connection leaks. **Expert fixed-mode**: `protocolAutoFixEnabled` off = respect manual protocol choice; `compatMaxLevel` 0 = fail fast at L0 instead of degrading |
 | Tool registry | MCPCore.swift | Single registration hub; default-enabled whitelist; progressive disclosure (`isCore`); per-tool enable state |
 | Domain engines | InjectionExecTool, DecryptEngine, BrowserExecTool, ControlExecTool, AppExecTool, FileExecTool/DbExecTool… | Actual iOS operations |
 | Runtime | ShellExecTool + TrollRuntimeEngine | Unified Linux userspace (Asbestos interpreter + Alpine toolchain), iOS file auto-bind |
