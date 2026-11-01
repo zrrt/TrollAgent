@@ -45,8 +45,8 @@
 |---|---|
 | Tool system | 37 native tools / 100+ subcommands, single registration hub, progressive disclosure |
 | Unified execution env | Built-in TrollRuntime (unified Linux userspace); the AI can `apk add` any Linux tool and read iOS files directly |
-| AI chat | Multiple upstream models (OpenAI-compatible / Anthropic Messages), SSE streaming, reasoning intensity control, skill system, tool batching |
-| HUD companion | Separate-process floating window (loli / bunny-girl / cat-girl), full voice loop: STT → AI → Edge TTS, 200+ bilingual bubble lines |
+| AI chat | Multiple upstream models (chat/completions, Responses, Gemini — protocol auto-corrected), SSE streaming, reasoning intensity control, skill system, tool batching |
+| HUD companion | In-app high-windowLevel floating window (chibi / bunny-girl / cat-girl), full voice loop: STT → AI → Edge TTS, 200+ bilingual bubble lines |
 | Remote ops | Gateway WebSocket pairing, SSH tunnel, built-in HTTP terminal, GitHub Actions build & artifact fetch |
 | Security | Dangerous-command interception (dual-layer), TCC entitlements passthrough, crash auto-recovery |
 
@@ -200,8 +200,8 @@
 | Platform | iOS 15+ / TrollStore (jailbreak-friendly) |
 | Dependency mgmt | SwiftPM |
 | Runtime env | TrollRuntime unified Linux userspace (Asbestos interpreter + Alpine toolchain); roadmap target: aarch64 Linux ELF running directly |
-| External integration | GitHub Actions (CI build & artifacts), Edge TTS (speech synthesis), multi-upstream LLMs (OpenAI-compatible / Anthropic Messages) |
-| Process model | Main app + HUD independent sub-process (`NSPrincipalClass=HUDMainApplication`) |
+| External integration | GitHub Actions (CI build & artifacts), Edge TTS (speech synthesis), multi-upstream LLMs (OpenAI-compatible chat/completions, Responses, Gemini — protocol auto-corrected L0-L5) |
+| Process model | Main app + **in-app** high-windowLevel floating window + background keep-alive (`UIBackgroundModes: processing` + `beginBackgroundTask`); standalone HUD sub-process route retired (needs root persona not granted on iOS 16) |
 | Injection system | TrollFools-aligned strategy (dylib inject/remove/backup-rollback with `.bak_macho`), in-memory injection (opainject), ControlAgent.dylib cross-app control |
 | Network | WebSocket (gateway pairing, Edge TTS), URLSession (downloads with progress), local HTTP terminal `127.0.0.1:8790` |
 | Storage | UserDefaults + App Group (`group.com.ai.iosxcode`), sqlite3 direct container reads, file workspace |
@@ -212,7 +212,7 @@
 
 ```
 TrollAgent/
-├── Sources/TrollMCP2/            # Main project (136 Swift files)
+├── Sources/TrollMCP2/            # Main project (145 Swift files)
 │   ├── AppMain.swift             # Entry point
 │   ├── MCPCore.swift            # Tool registry hub (single registration table, default whitelist)
 │   ├── Models.swift             # AI chat kernel (tool selection / batching / execution loop)
@@ -235,7 +235,7 @@ TrollAgent/
 │   └── ... (tools split by domain: ArchiveTools/CleanupTools/DiagnoseAndServer/...)
 ├── HUD/                         # Floating companion (Objective-C++)
 │   ├── sources/HUDRootViewController.mm  # Voice loop / character animation
-│   ├── HUD/Resources/           # Character assets (loli / bunny-girl / cat-girl:
+│   ├── HUD/Resources/           # Character assets (chibi / bunny-girl / cat-girl:
 │   │                           #  idle/blink/talk/sit/kneel/climb/jump/fall/side...
 │   │                           #  incl. bunny-girl sitting pose rabit_chin_sit.png)
 │   └── supports/entitlements.plist  # TCC + application-groups
@@ -306,7 +306,7 @@ TrollAgent/
 - `system.exec_root`: system-side Mach-O execution (jroot jailbreak tooling)
 
 ### 🤖 AI & models
-- Multiple upstream models (OpenAI-compatible / Anthropic Messages), SSE streaming word-by-word output, reasoning intensity control
+- Multiple upstream models (chat/completions, Responses, Gemini — protocol auto-corrected), SSE streaming word-by-word output, reasoning intensity control
 - Tool batching: read-only/query tools batch (up to 4, executed sequentially); state-changing/write tools run one at a time (double-layer safety)
 - Skill system: `skills.list` / `skills.read` / `skills.set_enabled` (reusable standard workflows)
 - Usage accounting: per-request token display (real `usage` preferred, estimated fallback)
@@ -330,7 +330,7 @@ TrollAgent/
 - `memory_tweak`: in-memory tweak tooling
 
 ### 🐰 Desktop companion (HUD)
-- Floating anime companion (loli / bunny-girl / cat-girl) on top of any app: idle frames, wall-climbing, bubble chat
+- Floating anime companion (chibi / bunny-girl / cat-girl) on top of any app: idle frames, wall-climbing, bubble chat
 - Full voice loop: STT → AI → Edge TTS; speech-animation reset, sitting/voice-hold pose assets (`<prefix>_chin_sit` fallback for bunny-girl)
 - 200+ bilingual bubble lines (time greetings, weather, moods, interactions) that follow the app language setting
 - Quick menu to launch WeChat / Douyin / AI chat / hide, resizable, draggable, multi-gesture interactions
@@ -427,7 +427,7 @@ bash scripts/build-hud.sh          # → HUD sub-package
 - Every push to `main` triggers **GitHub Actions**.
 - The workflow bumps `CFBundleShortVersionString` (+1, commit `[skip ci]`), so **the artifact version is always the submitted version + 1**.
 - CI accepts `RELEASE_VERSION` to auto-inject the release version (fixes version drift).
-- Artifacts: `TrollAgent` zip containing `TrollAgent.tipa` (~161 MB). The `latest` release tag is overwritten on every build.
+- Artifacts: `TrollAgent` zip containing `TrollAgent.tipa` (~163 MB). The `latest` release tag is overwritten on every build.
 - QA guards run in CI: `verify_ipa.py` (IPA structure), `check_tool_registration.py` (registry consistency), brace checks.
 
 ### Versioning convention
@@ -443,7 +443,7 @@ bash scripts/build-hud.sh          # → HUD sub-package
 
 1. Open the repo in Xcode (SwiftPM layout under `Sources/TrollMCP2/`).
 2. Signing: TrollStore signing handled by build scripts (`ldid -S` with `Support/TrollAgent.entitlements`); no developer account needed.
-3. HUD is a separate target (`HUD/`, Objective-C++, `NSPrincipalClass=HUDMainApplication`).
+3. HUD is a separate source tree (`HUD/`, Objective-C++ floating-window framework) integrated in-app (standalone process route retired).
 
 ### Code conventions
 
