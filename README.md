@@ -152,16 +152,31 @@
 └────────────────────────────────────────────────────────────┘
 ```
 
-### Layer responsibilities
+### Core subsystems
 
-| Layer | Components | Responsibility |
+| Subsystem | Key components | Responsibility |
 |---|---|---|
 | UI (SwiftUI) | ChatView, SettingsView, BrowserView, GatewayView, CleanupView, FakeDeviceView, ControlCenterView, AppPickerView… | Full bilingual UI (Simplified Chinese / English) |
-| AI kernel | OpenAIClient, Models.swift (chat loop), SystemPrompts, UsageRecorder | Multi-upstream chat, SSE streaming, tool selection & **batching**, usage/token accounting, skill system. **Protocol auto-correct**: on each request, mismatched upstream protocol (chat/completions vs responses) is detected and corrected, with the result persisted back to shared config (no more per-request L0 reset). **Adaptive streaming fallback**: first-byte timeout (60s main / 10s sub-agent) switches to non-stream, remembered via `streamUnsupported` so the next request skips the wait. **Per-stream isolated sessions**: each stream owns its session; fail paths (onError / onComplete) invalidate it to prevent connection leaks. **Expert fixed-mode**: `protocolAutoFixEnabled` off = respect manual protocol choice; `compatMaxLevel` 0 = fail fast at L0 instead of degrading |
-| Tool registry | MCPCore.swift | Single registration hub; default-enabled whitelist; progressive disclosure (`isCore`); per-tool enable state |
-| Domain engines | InjectionExecTool, DecryptEngine, BrowserExecTool, ControlExecTool, AppExecTool, FileExecTool/DbExecTool… | Actual iOS operations |
-| Runtime | ShellExecTool + TrollRuntimeEngine | Unified Linux userspace (Asbestos interpreter + Alpine toolchain), iOS file auto-bind |
-| System base | Build scripts, ldid/optool/insert_dylib/ct_bypass, trollstorehelper | JIT double-ensure, TCC entitlements, setuid root toolchain |
+| AI chat kernel | OpenAIClient, Models.swift (chat loop), SystemPrompts, UsageRecorder | Multi-upstream chat (chat/completions, Responses, Gemini), SSE streaming, tool selection & **batching**, usage/token accounting, skill system. **Protocol auto-correct**: mismatched upstream protocol detected & corrected per request, result persisted back to shared config (no more per-request L0 reset). **Adaptive streaming fallback**: first-byte timeout (60s main / 10s sub-agent) → non-stream, remembered via `streamUnsupported`. **Per-stream isolated sessions**: fail paths (onError / onComplete) invalidate the session to prevent connection leaks. **Expert fixed-mode**: `protocolAutoFixEnabled` off = respect manual protocol choice; `compatMaxLevel` 0 = fail fast at L0 instead of degrading |
+| Tool registry | MCPCore.swift | Single registration hub — **45 registered tools**; default-enabled whitelist (new users productive immediately); progressive disclosure (`isCore`); per-tool enable state; external tool registration (`registerExternalTool`) |
+| Sub-agent orchestration | SubAgentManager, `subagent.*` tools (run / status / wait_all / stop / steer) | Independent agent runs with own queue & UI (A/B/C/D aliases); per-call `requestTimeoutOverride` (fast-fail budget); each sub-agent owns an independent session; fail-path invalidation prevents cross-contamination |
+| Session store | SessionStore, `conversations.*` tools (list / status / history) | Conversation index & per-session status; per-stream isolated sessions; background handoff (`handoffActiveRequestToBackground`) when the app goes to background |
+| HUD companion | HUDManager, GirlCompanion, TTSService, GirlCharacterPickerView | Floating desktop character (Bunny / Chibi / Catgirl), bubble style, quick menu, size control; TTS voice loop (萝莉音 / 猫娘音·御姐 / 兔娘音) shares model config via App Group |
+| Domain engines | InjectionExecTool, DecryptEngine, BrowserExecTool, ControlExecTool, AppExecTool, FileExecTool/DbExecTool, network.capture, vpn… | Actual iOS operations: injection (TrollFools), decryption, WKWebView + JS inject, ControlAgent.dylib, silent install, packet capture with TLSHook-decrypted request list |
+| Runtime | ShellExecTool + TrollRuntimeEngine | Unified Linux userspace (Asbestos interpreter + full Alpine rootfs + apk ecosystem), iOS file auto-bind, aarch64 binaries via 3 channels |
+| System base | Build scripts, ldid/optool/insert_dylib/ct_bypass, trollstorehelper | JIT double-ensure, TCC entitlements, setuid root toolchain, silent install |
+
+### Request lifecycle — one sentence to final answer
+
+| # | Stage | What happens |
+|---|---|---|
+| 1 | **Input** | User says "Run a few commands." in plain language (zero-learning mode) |
+| 2 | **Protocol check** | OpenAIClient verifies the upstream protocol; auto-correct fixes any mismatch along the L0-L5 chain and persists the result; `streamUnsupported` memory skips wasted streaming attempts |
+| 3 | **Stream** | SSE request starts (60s first-byte budget for main chat); each request owns an isolated session |
+| 4 | **Tool selection** | Model returns tool calls; kernel batches & dispatches through the registry |
+| 5 | **Execution** | Domain engine runs the job (Alpine shell, injection, capture…); failures return unified `error_code / reason / next_step` |
+| 6 | **Feedback** | Tool result fed back to the model as context; rounds 3-6 repeat until the model emits a final answer |
+| 7 | **Render** | Final answer + tool cards rendered; completion sound; session invalidated on close / failure |
 
 ### Key design decisions
 
