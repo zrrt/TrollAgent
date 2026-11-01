@@ -5,7 +5,7 @@
 > Zero-learning mode: just say it in plain words ("analyze how this app works", "is this plugin safe", "capture this app's traffic") — the AI picks the tools, installs dependencies, does the job, and gives you a one-line human answer.
 
 <p align="center">
-  <a href="https://github.com/zrrt/TrollAgent/releases/download/latest/TrollAgent.tipa"><img src="https://img.shields.io/badge/%E2%AC%87%20Download%20Latest%20Build-~161%20MB-blue" alt="Download latest .tipa"></a>
+  <a href="https://github.com/zrrt/TrollAgent/releases/download/latest/TrollAgent.tipa"><img src="https://img.shields.io/badge/%E2%AC%87%20Download%20Latest%20Build-~163%20MB-blue" alt="Download latest .tipa"></a>
   <img src="https://img.shields.io/badge/Platform-iOS%2015%2B-000000" alt="Platform: iOS 15+">
   <img src="https://img.shields.io/badge/TrollStore-2.x-blueviolet" alt="TrollStore 2.x">
   <img src="https://img.shields.io/badge/License-FREE%20for%20personal%20use-success" alt="Free for personal use">
@@ -43,7 +43,7 @@
 
 | Area | Description |
 |---|---|
-| Tool system | 37 native tools / 100+ subcommands, single registration hub, progressive disclosure |
+| Tool system | 45 native tools / 100+ subcommands, single registration hub, progressive disclosure |
 | Unified execution env | Built-in TrollRuntime (unified Linux userspace); the AI can `apk add` any Linux tool and read iOS files directly |
 | AI chat | Multiple upstream models (chat/completions, Responses, Gemini — protocol auto-corrected), SSE streaming, reasoning intensity control, skill system, tool batching |
 | HUD companion | In-app high-windowLevel floating window (chibi / bunny-girl / cat-girl), full voice loop: STT → AI → Edge TTS, 200+ bilingual bubble lines |
