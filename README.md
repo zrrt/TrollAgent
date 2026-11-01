@@ -468,14 +468,15 @@ Built with & thanks to these open-source projects and authors (mirrors the in-ap
 | class-dump / [Frida](https://github.com/frida/frida) | — | Reverse engineering |
 | H5GG / GameGuardian | — | Game memory |
 | [OpenSSL](https://github.com/openssl/openssl) | OpenSSL team | MITM decrypt |
-| [hev-socks5-tunnel](https://github.com/heiher/hev-socks5-tunnel) / Tun2SocksKit | heiher | VPN tunnel |
+| [hev-socks5-tunnel](https://github.com/heiher/hev-socks5-tunnel) / [Tun2SocksKit](https://github.com/EbrahimTahernejad/Tun2SocksKit) | heiher / EbrahimTahernejad | VPN tunnel |
 | [cloudflare-edge-tts](https://github.com/DIYgod/cloudflare-edge-tts) | DIYgod | AI TTS relay |
 | [RSKGrowingTextView](https://github.com/ruslanskorb/RSKGrowingTextView) | Ruslan Skorb | Chat input |
 | [ZIPFoundation](https://github.com/weichsel/ZIPFoundation) | Thomas Zoechling | Zip archive |
-| TrollRuntime (ARM64) | TrollAgent | Linux emulation |
+| [Alpine Linux](https://alpinelinux.org) | Alpine team | TrollRuntime rootfs (aarch64 Linux userspace) |
+| [iSH](https://github.com/ish-app/ish) | iSH team | Earlier emulation engine (retired since v6.6.0) |
 | [GitHub Actions](https://github.com/features/actions) | GitHub | Cloud build |
 
-Mechanism inspiration: **OpenMinis** (per-stream isolated sessions), [TrollStore](https://github.com/opa334/TrollStore) (install / sign mechanics), Alpine Linux (unified userspace rootfs).
+Agent-loop design reference: [Open Minis](https://openminis.app/) — per-stream isolated sessions, sub-agent delegation & progress tracking. Also [TrollStore](https://github.com/opa334/TrollStore) for install / sign mechanics.
 
 And every open-source contributor — thank you.
 
