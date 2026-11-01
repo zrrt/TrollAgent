@@ -1,6 +1,6 @@
 # TrollAgent
 
-**AI-driven iOS experimentation & QA workbench for TrollStore** — Swift + SwiftUI + SwiftPM, runs on iOS 15+ under TrollStore, ships **37 native tools, 100+ subcommands**, all callable by AI through natural language.
+**AI-driven iOS experimentation & QA workbench for TrollStore** — Swift + SwiftUI + SwiftPM, runs on iOS 15+ under TrollStore, ships **45 registered tools, 100+ subcommands**, all callable by AI through natural language.
 
 > Zero-learning mode: just say it in plain words ("analyze how this app works", "is this plugin safe", "capture this app's traffic") — the AI picks the tools, installs dependencies, does the job, and gives you a one-line human answer.
 
@@ -304,7 +304,7 @@ TrollAgent/
 
 ## Tool Registry (full list)
 
-37 tools exposed to the AI (43 registered tool objects), all default-enabled for new users:
+45 registered tool objects, all default-enabled for new users (a subset shown below, grouped by domain):
 
 | Tool | Purpose | Key subcommands |
 |---|---|---|
@@ -336,6 +336,9 @@ TrollAgent/
 | `location` | Location | get / fake / status / clear |
 | `reminder` | Reminders | create / schedule / recurring |
 | `skills.*` | Skill system | list / read / set_enabled |
+| `subagent.*` | Sub-agent orchestration | run / status / wait_all / stop / steer |
+| `audit` | Code audit (Swift/SwiftUI signal scan) | run / status |
+| `conversations` | Session index | list / status / history |
 | `shell.stop` | Kill runaway shell | — |
 
 ---
