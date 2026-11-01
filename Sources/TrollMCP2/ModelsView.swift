@@ -467,6 +467,9 @@ struct ModelEditorView: View {
     @State private var paramAliasesText: String
     /// v7.1.107：备用模型组（失败自动切换）——主模型请求失败时按序切换，见 OpenAIClient fallback
     @State private var fallbackIDs: [UUID]
+    /// v7.1.280-fix：老手固定模式——协议自动修正开关 / 降级链上限
+    @State private var protocolAutoFixEnabled: Bool
+    @State private var compatMaxLevel: Int
 
     @State private var showKey = false
     @State private var showingQuickPicker = false
@@ -498,6 +501,8 @@ struct ModelEditorView: View {
         _group = State(initialValue: config?.group ?? L10n.t("ui_144"))
         _paramAliasesText = State(initialValue: ModelEditorView.aliasesString(config?.paramAliases))
         _fallbackIDs = State(initialValue: config?.fallbackIDs ?? [])
+        _protocolAutoFixEnabled = State(initialValue: config?.protocolAutoFixEnabled ?? true)
+        _compatMaxLevel = State(initialValue: config?.compatMaxLevel ?? 5)
     }
 
     var body: some View {
@@ -551,6 +556,27 @@ struct ModelEditorView: View {
                                     .foregroundColor(.secondary)
                             }
                         }
+                    }
+                }
+
+                // v7.1.280-fix：老手固定模式——默认自适应（新手），可关自动修正/限降级链（老手要可预测）
+                Section(header: sectionHeader("固定模式（老手可选）")) {
+                    Toggle(isOn: $protocolAutoFixEnabled) {
+                        VStack(alignment: .leading, spacing: 2) {
+                            Text("协议自动修正")
+                                .font(.subheadline)
+                            Text("开=按模型自动纠偏并记住（默认）；关=尊重手动选择，失败按所选协议报错")
+                                .font(.caption2)
+                                .foregroundColor(.secondary)
+                        }
+                    }
+                    Picker("降级链上限", selection: $compatMaxLevel) {
+                        Text("固定 L0（失败即报错）").tag(0)
+                        Text("L0-L1").tag(1)
+                        Text("L0-L2").tag(2)
+                        Text("L0-L3").tag(3)
+                        Text("L0-L4").tag(4)
+                        Text("全链自适应 L0-L5（默认）").tag(5)
                     }
                 }
 
@@ -764,7 +790,9 @@ struct ModelEditorView: View {
             contextTokens: contextTokens,
             group: group,
             paramAliases: ModelEditorView.parseAliases(paramAliasesText),
-            fallbackIDs: fallbackIDs
+            fallbackIDs: fallbackIDs,
+            protocolAutoFixEnabled: protocolAutoFixEnabled,
+            compatMaxLevel: compatMaxLevel
         )
     }
 

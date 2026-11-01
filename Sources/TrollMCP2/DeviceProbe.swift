@@ -181,7 +181,7 @@ final class DeviceProbe: ObservableObject {
         let modelName = Self.deviceModelName(identifier: modelIdentifier)
         let storage = Self.storageInfo()
         let memoryTotal = Self.memoryTotal()
-        let screenSize = "\(Int(UIScreen.main.bounds.width))×\(Int(UIScreen.main.bounds.height))"
+        let screenSize = "\(Int(UIScreen.main.bounds.width * UIScreen.main.scale))×\(Int(UIScreen.main.bounds.height * UIScreen.main.scale)) (物理像素 @\(Int(UIScreen.main.scale))x)"
         // v4.3.59：只读缓存计数（-1=未枚举）——启动不再全量枚举 App 列表，
         // 避免污染进程 LS 状态导致分享面板崩溃；报告 appCount 为 -1 时显示"未知"
         let appCount = AppCatalog.cachedCount()
@@ -423,6 +423,17 @@ final class DeviceProbe: ObservableObject {
     }
 
     static func storageInfo() -> (total: String, free: String) {
+        // v7.1.280-fix：改用 volumeAvailableCapacityForImportantUsage 口径——更接近 iOS 设置页
+        // "可用"（含可清除缓存/其他可释放空间），此前 attributesOfFileSystem 的 systemFreeSize
+        // 只报实时空闲，用户对比设置页觉得"不准"。total 用 volumeTotalCapacity（标称格式化值）。
+        let url = URL(fileURLWithPath: NSHomeDirectory())
+        if let vals = try? url.resourceValues(forKeys: [.volumeTotalCapacityKey, .volumeAvailableCapacityForImportantUsageKey]) {
+            let total = vals.volumeTotalCapacity ?? 0
+            let free = vals.volumeAvailableCapacityForImportantUsage ?? 0
+            if total > 0 {
+                return (formatBytes(Int64(total)), formatBytes(Int64(free)))
+            }
+        }
         do {
             let attrs = try FileManager.default.attributesOfFileSystem(forPath: NSHomeDirectory())
             if let total = attrs[.systemSize] as? Int64,
@@ -434,8 +445,10 @@ final class DeviceProbe: ObservableObject {
     }
 
     static func memoryTotal() -> String {
+        // v7.1.280-fix：标注口径——physicalMemory 返回系统可寻址物理内存（6GB 标称机器常报
+        // 5.5GiB，含固件保留），避免用户误以为"标称 6GB 显示 5.5GB 是 bug"
         let total = ProcessInfo.processInfo.physicalMemory
-        return formatBytes(Int64(total))
+        return formatBytes(Int64(total)) + "（系统报告可寻址）"
     }
 
     static func workspaceSize() -> String {

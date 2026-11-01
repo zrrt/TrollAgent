@@ -50,7 +50,9 @@ final class NetworkLog: ObservableObject {
 final class OpenAIClient {
     let config: ModelConfig
     /// v2.9.0：级别 5 = Responses API + 工具
-    private let maxLevel = 5
+    /// v7.1.280-fix：降级链上限配置化——老手可固定：compatMaxLevel=0 固定 L0 完整载荷失败即报错
+    /// （不自动降级）；默认 5 全链自适应（与旧硬编码行为完全一致）。nextLevel 哨兵(>maxLevel)判穷尽。
+    private var maxLevel: Int { max(0, min(config.compatMaxLevel, 5)) }
     /// v2.9.10：自定义 session——waitsForConnectivity 让切后台/网络抖动时不立即failed，
     /// 资源超时放宽到 5 分钟 (配合后台恢复后继续请求）。
     private lazy var session: URLSession = {
@@ -293,22 +295,25 @@ final class OpenAIClient {
         currentCompatLevel = config.compatLevel  // v6.0.30: 初始化内存里的兼容级别
         // v4.4.16：API 协议自动纠偏——用户配错协议(如 deepseek 配 Responses)时，请求前自动纠正
         // (deepseek→Chat Completions, gpt-5/o系列→Responses, claude→Anthropic)，无需用户手动改
+        // v7.1.280-fix：老手固定模式——protocolAutoFixEnabled=false 时尊重手动选择，不自动改协议
         var c = config
-        let corrected = ModelConfig.autoCorrectProtocol(model: c.model, provider: c.provider, current: c.apiProtocol)
-        if corrected != c.apiProtocol {
-            // 协议变了, 旧的 compatLevel 记忆(尤其 L5=Responses)基于旧协议不再适用 → 重置到 L0 重新试探
-            c.compatLevel = 0
-            NetworkLog.shared.log("\(c.name): protocol auto-corrected \(c.apiProtocol)→\(corrected) (model=\(c.model)), compat level reset")
-            c.apiProtocol = corrected
-            // v7.1.279-fix：修正结果持久化写回共享配置——否则每次 init 都重复修正+reset（死循环：
-            // 级别页显示 L5 但每次请求从 L0 试探；L0 完整载荷套 Responses 协议字段不匹配→"无法解析响应"
-            // →降级重试每次多耗 10s+）。写回后下次 init 直接读到正确协议，不再修正、不再 reset，
-            // compatLevel 记忆（L5=Responses+工具）真正生效，直接从可用级别发起。
-            DispatchQueue.main.async {
-                guard let idx = ModelStore.shared.configs.firstIndex(where: { $0.id == config.id }) else { return }
-                if ModelStore.shared.configs[idx].apiProtocol != corrected {
-                    ModelStore.shared.configs[idx].apiProtocol = corrected
-                    ModelStore.shared.save()
+        if c.protocolAutoFixEnabled {
+            let corrected = ModelConfig.autoCorrectProtocol(model: c.model, provider: c.provider, current: c.apiProtocol)
+            if corrected != c.apiProtocol {
+                // 协议变了, 旧的 compatLevel 记忆(尤其 L5=Responses)基于旧协议不再适用 → 重置到 L0 重新试探
+                c.compatLevel = 0
+                NetworkLog.shared.log("\(c.name): protocol auto-corrected \(c.apiProtocol)→\(corrected) (model=\(c.model)), compat level reset")
+                c.apiProtocol = corrected
+                // v7.1.279-fix：修正结果持久化写回共享配置——否则每次 init 都重复修正+reset（死循环：
+                // 级别页显示 L5 但每次请求从 L0 试探；L0 完整载荷套 Responses 协议字段不匹配→"无法解析响应"
+                // →降级重试每次多耗 10s+）。写回后下次 init 直接读到正确协议，不再修正、不再 reset，
+                // compatLevel 记忆（L5=Responses+工具）真正生效，直接从可用级别发起。
+                DispatchQueue.main.async {
+                    guard let idx = ModelStore.shared.configs.firstIndex(where: { $0.id == config.id }) else { return }
+                    if ModelStore.shared.configs[idx].apiProtocol != corrected {
+                        ModelStore.shared.configs[idx].apiProtocol = corrected
+                        ModelStore.shared.save()
+                    }
                 }
             }
         }

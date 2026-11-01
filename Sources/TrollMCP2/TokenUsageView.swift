@@ -134,6 +134,10 @@ struct TokenUsageDetailView: View {
             Text("压力分级：<60% 正常 · ≥60% 压缩输出 · ≥75% 激进摘要 · ≥90% 自动 compact")
                 .font(.caption2)
                 .foregroundColor(.secondary)
+            // v7.1.280-fix：标注估算口径——CJK×2/ASCII÷3/图×600 为粗估且保守偏高（防超预算）
+            Text("Token 为估算值（中文≈2/字·英文≈3字符/token·图片≈600/张），仅供压力参考，非模型精确计数")
+                .font(.caption2)
+                .foregroundColor(.secondary)
         }
         .padding(14)
         .background(Color(.secondarySystemGroupedBackground))

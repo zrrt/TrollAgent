@@ -48,6 +48,12 @@ struct ModelConfig: Codable, Identifiable, Hashable {
     /// v2.8.4：中转站兼容级别 (由 OpenAIClient 自适应降级时写入并持久化）
     /// 0=完整载荷 1=互换token参数名 2=去掉tool_choice 3=去掉tools纯对话 4=最小载荷
     var compatLevel: Int = 0
+    /// v7.1.280-fix：老手固定模式——协议自动修正开关（false=尊重手动选择的协议，失败按所选
+    /// 协议报错不再自动改；true=按模型自动纠偏+持久化）。默认 true（新手自适应）。
+    var protocolAutoFixEnabled: Bool = true
+    /// v7.1.280-fix：降级链上限（0-5，默认 5=全链自适应；配 0=固定 L0 完整载荷，失败直接
+    /// 报错不降级——老手要可预测/可控时用，避免"不知道请求以什么载荷发出"）。
+    var compatMaxLevel: Int = 5
     /// v2.9.107：分组名 (供应商分组管理，对齐 cc-switch provider groups）
     var group: String = "default"
     /// v3.5.13：可配置的参数名别名映射（标准键 → 该供应商认的键），如
@@ -86,7 +92,7 @@ struct ModelConfig: Codable, Identifiable, Hashable {
          baseURL: String, apiKey: String, model: String, authMethod: String = "Bearer",
          isDefault: Bool = false, temperature: Double = 0.2, maxTokens: Int = 16384, compatLevel: Int = 0,
          contextTokens: Int = 128000, group: String = "default", paramAliases: [String: String] = [:],
-         fallbackIDs: [UUID] = []) {
+         fallbackIDs: [UUID] = [], protocolAutoFixEnabled: Bool = true, compatMaxLevel: Int = 5) {
         self.id = id
         self.name = name
         self.provider = provider
@@ -103,6 +109,8 @@ struct ModelConfig: Codable, Identifiable, Hashable {
         self.group = group
         self.paramAliases = paramAliases
         self.fallbackIDs = fallbackIDs
+        self.protocolAutoFixEnabled = protocolAutoFixEnabled
+        self.compatMaxLevel = compatMaxLevel
     }
 
     init(from decoder: Decoder) throws {
@@ -126,6 +134,8 @@ struct ModelConfig: Codable, Identifiable, Hashable {
         group = (try? c.decode(String.self, forKey: .group)) ?? "default"
         paramAliases = (try? c.decode([String: String].self, forKey: .paramAliases)) ?? [:]
         fallbackIDs = (try? c.decode([UUID].self, forKey: .fallbackIDs)) ?? []   // v7.1.107：旧配置缺失时默认无备用
+        protocolAutoFixEnabled = (try? c.decode(Bool.self, forKey: .protocolAutoFixEnabled)) ?? true
+        compatMaxLevel = (try? c.decode(Int.self, forKey: .compatMaxLevel)) ?? 5
     }
 }
 
