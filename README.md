@@ -472,6 +472,7 @@ Built with & thanks to these open-source projects and authors (mirrors the in-ap
 | [cloudflare-edge-tts](https://github.com/DIYgod/cloudflare-edge-tts) | DIYgod | AI TTS relay |
 | [RSKGrowingTextView](https://github.com/ruslanskorb/RSKGrowingTextView) | Ruslan Skorb | Chat input |
 | [ZIPFoundation](https://github.com/weichsel/ZIPFoundation) | Thomas Zoechling | Zip archive |
+| [ios-linuxkit Asbestos](https://github.com/rcarmo/ios-linuxkit) | Rui Carmo (rcarmo) | TrollRuntime ARM64 interpreter (unified env core since v6.5.0) |
 | [Alpine Linux](https://alpinelinux.org) | Alpine team | TrollRuntime rootfs (aarch64 Linux userspace) |
 | [iSH](https://github.com/ish-app/ish) | iSH team | Earlier emulation engine (retired since v6.6.0) |
 | [GitHub Actions](https://github.com/features/actions) | GitHub | Cloud build |
