@@ -461,11 +461,11 @@ Built with & thanks to these open-source projects and authors (mirrors the in-ap
 
 | Project | Author | Used for |
 |---|---|---|
-| [TrollFools](https://github.com/Lessica/TrollFools) / ElleKit | Lessica | Injection engine |
+| [TrollFools](https://github.com/Lessica/TrollFools) / [ElleKit](https://github.com/tealbathingsuit/ellekit) | Lessica / Evelyn | Injection engine |
 | [Theos](https://github.com/theos/theos) | Theos team | Build toolchain |
-| [ldid](https://github.com/opa334/ldid) / insert_dylib / [optool](https://github.com/alexzielenski/optool) | opa334 / alexzielenski | Sign & inject |
+| [ldid](https://github.com/opa334/ldid) / [insert_dylib](https://github.com/Tyilo/insert_dylib) / [optool](https://github.com/alexzielenski/optool) | opa334 / Tyilo / alexzielenski | Sign & inject |
 | ct_bypass / Shadow | — | iOS 17+ bypass |
-| class-dump / [Frida](https://github.com/frida/frida) | — | Reverse engineering |
+| [class-dump](https://github.com/nygard/class-dump) / [Frida](https://github.com/frida/frida) | Steve Nygard / Frida team | Reverse engineering |
 | H5GG / GameGuardian | — | Game memory |
 | [OpenSSL](https://github.com/openssl/openssl) | OpenSSL team | MITM decrypt |
 | [hev-socks5-tunnel](https://github.com/heiher/hev-socks5-tunnel) / [Tun2SocksKit](https://github.com/EbrahimTahernejad/Tun2SocksKit) | heiher / EbrahimTahernejad | VPN tunnel |
@@ -477,7 +477,7 @@ Built with & thanks to these open-source projects and authors (mirrors the in-ap
 | [iSH](https://github.com/ish-app/ish) | iSH team | Earlier emulation engine (retired since v6.6.0) |
 | [GitHub Actions](https://github.com/features/actions) | GitHub | Cloud build |
 
-Agent-loop design reference: [Open Minis](https://openminis.app/) — per-stream isolated sessions, sub-agent delegation & progress tracking. Also [TrollStore](https://github.com/opa334/TrollStore) for install / sign mechanics.
+Agent-loop design reference: [Open Minis](https://openminis.app/) — per-stream isolated sessions, sub-agent delegation & progress tracking. Pluggable tool/registry architecture reference: [DeepSeek Harness (dsh)](https://github.com/deepseek-ai/deepseek-harness). Also [TrollStore](https://github.com/opa334/TrollStore) for install / sign mechanics.
 
 And every open-source contributor — thank you.
 
