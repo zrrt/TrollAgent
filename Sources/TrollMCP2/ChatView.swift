@@ -670,17 +670,18 @@ struct ChatView: View {
     }
 
     // v7.4.0-fix73d：悬浮按钮（独立函数——减主表达式 type-check 负担）
+    // v7.1.281-fix：箭头 ↑↓ 改 ︿﹀（chevron 风格，用户指定）
     private func floatingButtons(_ proxy: ScrollViewProxy) -> some View {
         VStack(spacing: 10) {
             if chatCanScrollUp && chatCanScrollDown {
-                chatFloatingButton("arrow.up") {
+                chatFloatingButton("chevron.up") {
                     if let first = store.currentMessages.first {
                         withAnimation { proxy.scrollTo(first.id, anchor: .top) }
                     }
                 }
             }
             if chatCanScrollDown {
-                chatFloatingButton("arrow.down") { scrollToBottom(proxy) }
+                chatFloatingButton("chevron.down") { scrollToBottom(proxy) }
             }
         }
         .padding(.trailing, 12)
