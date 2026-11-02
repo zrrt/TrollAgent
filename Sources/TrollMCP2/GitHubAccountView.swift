@@ -59,6 +59,41 @@ struct GitHubAccountView: View {
                     }
                 }
                 .padding(.vertical, 4)
+
+                // v7.1.292：编译就绪度自动诊断（登录成功后程序自动跑，UI 自动展示）
+                if store.activeAccount != nil {
+                    if store.checksReady {
+                        VStack(alignment: .leading, spacing: 5) {
+                            Text(store.allReady ? "✅ 编译就绪，可直接触发线上编译"
+                                                : "⚠️ 编译未就绪，还需处理 \(store.checks.filter { !$0.ok }.count) 项：")
+                                .font(.footnote.weight(.semibold))
+                            ForEach(store.checks) { c in
+                                HStack(alignment: .top, spacing: 6) {
+                                    Image(systemName: c.ok ? "checkmark.circle.fill" : "xmark.circle.fill")
+                                        .foregroundColor(c.ok ? .green : .orange)
+                                        .font(.caption)
+                                    VStack(alignment: .leading, spacing: 1) {
+                                        Text(c.label).font(.caption)
+                                        if !c.detail.isEmpty {
+                                            Text(c.detail).font(.caption2).foregroundColor(.secondary)
+                                        }
+                                        if !c.ok && !c.hint.isEmpty {
+                                            Text(c.hint).font(.caption2).foregroundColor(.orange)
+                                        }
+                                    }
+                                    Spacer(minLength: 4)
+                                }
+                            }
+                        }
+                        .padding(.vertical, 4)
+                    } else {
+                        HStack(spacing: 8) {
+                            ProgressView().scaleEffect(0.7)
+                            Text("检测编译就绪度…").font(.caption).foregroundColor(.secondary)
+                        }
+                        .padding(.vertical, 4)
+                    }
+                }
             } else {
                 HStack {
                     Image(systemName: "person.crop.circle.badge.exclamationmark")
