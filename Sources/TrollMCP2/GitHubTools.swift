@@ -19,7 +19,10 @@ private enum GHStoreKeys {
 /// v4.3.66：由 private 改为 internal（InstallTools.swift 跨文件引用）
 struct GHConfig {
     static var repoOwner: String { UserDefaults.standard.string(forKey: GHStoreKeys.owner) ?? "zrrt" }
-    static var repoName: String { UserDefaults.standard.string(forKey: GHStoreKeys.repo) ?? "trollmcp2" }
+    static var repoName: String {
+        let n = UserDefaults.standard.string(forKey: GHStoreKeys.repo) ?? "TrollAgent"
+        return n == "trollmcp2" ? "TrollAgent" : n  // v7.1.285：旧仓库名迁移（trollmcp2 → TrollAgent）
+    }
     static var workflowId: String { UserDefaults.standard.string(forKey: GHStoreKeys.workflow) ?? "build-trollmcp2.yml" }
     static var branch: String { UserDefaults.standard.string(forKey: GHStoreKeys.branch) ?? "main" }
     static var clientID: String { UserDefaults.standard.string(forKey: GHStoreKeys.clientID) ?? "Ov23li890n3hM15edlcw" }

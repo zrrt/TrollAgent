@@ -32,9 +32,11 @@ final class UpdateManager: ObservableObject {
     private var progressObserver: NSKeyValueObservation?
 
     // v2.9.108：仓库与工作流改为动态读取（对齐 GitHub 账号页配置）
+    // v7.1.285：默认仓库名 trollmcp2 → TrollAgent（旧名 API 301 / CDN 404），并迁移已存的旧值
     private var repo: String {
         let owner = UserDefaults.standard.string(forKey: "trollmcp2.github_repo_owner") ?? "zrrt"
-        let name = UserDefaults.standard.string(forKey: "trollmcp2.github_repo_name") ?? "trollmcp2"
+        var name = UserDefaults.standard.string(forKey: "trollmcp2.github_repo_name") ?? "TrollAgent"
+        if name == "trollmcp2" { name = "TrollAgent" }
         return "\(owner)/\(name)"
     }
     private var workflow: String {

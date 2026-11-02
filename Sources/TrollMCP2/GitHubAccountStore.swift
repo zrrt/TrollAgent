@@ -78,7 +78,7 @@ final class GitHubAccountStore: ObservableObject {
     init() {
         let def = UserDefaults.standard
         repoOwner = def.string(forKey: ownerKey) ?? "zrrt"
-        repoName = def.string(forKey: repoKey) ?? "trollmcp2"
+        repoName = def.string(forKey: repoKey) ?? "TrollAgent"
         workflowId = def.string(forKey: workflowKey) ?? "build-trollmcp2.yml"
         branch = def.string(forKey: branchKey) ?? "main"
         // v2.9.117：空字符串也回退内置默认 (旧版删空保存会覆盖默认值，导致"未设置 Client ID"）
@@ -112,6 +112,10 @@ final class GitHubAccountStore: ObservableObject {
         }
         if def.string(forKey: workflowKey) == "build-tweak" {
             workflowId = "build-trollmcp2.yml"
+        }
+        // v7.1.285：仓库 trollmcp2 → TrollAgent 迁移（旧名 API 301 / jsDelivr CDN 404，检测更新收不到新版）
+        if def.string(forKey: repoKey) == "trollmcp2" {
+            repoName = "TrollAgent"
         }
         if let data = UserDefaults.standard.data(forKey: accountsKey),
            let saved = try? JSONDecoder().decode([GitHubAccount].self, from: data) {

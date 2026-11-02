@@ -611,6 +611,17 @@ struct UpdateView: View {
                         Text(L10n.t("i18n_241"))
                     }
                 }
+                // v7.1.285：仓库链接——检测更新源指向 GitHub 仓库，可直接打开查看
+                if let repoURL = URL(string: "https://github.com/\(GHConfig.repoOwner)/\(GHConfig.repoName)") {
+                    Link(destination: repoURL) {
+                        HStack {
+                            Image(systemName: "link")
+                            Text("github.com/\(GHConfig.repoOwner)/\(GHConfig.repoName)")
+                                .font(.footnote)
+                                .foregroundColor(.secondary)
+                        }
+                    }
+                }
             }
             
             Section(header: Text(L10n.t("i18n_242"))) {
