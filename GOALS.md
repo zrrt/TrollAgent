@@ -1,7 +1,7 @@
 # TrollAgent — Project Goals & Roadmap (2026-10)
 
 > This file is the project's single authoritative goal record. If context is compressed/lost, read this file first to recover direction.
-> Last updated: 2026-10-23 (v6.6.0 — unified environment landed; CELF/elf-runner/iSH routing all retired)
+> Last updated: 2026-11-03 (v7.1.293+ — JIT enabled v7.0.3+ & ptrace self-enabled v7.0.4+; Device Flow login; unified environment since v6.6.0)
 
 ## End Goal (one line)
 
@@ -48,10 +48,12 @@ Unified environment (AI sees one entry point = TrollRuntime)
 
 **Key decision (2026-10-17→10-23)**: the busybox static-ELF route (emu.c/CELF) **retired (v6.6.0)** — replaced by rcarmo Asbestos (ARM64 kernel of iSH; JIT enabled v7.0.3+, ptrace self-enabled v7.0.4+): full Alpine rootfs + apk ecosystem + full dynamic ELF support, device-verified.
 
-## Current State (2026-10-23, v6.6.0 pushed)
+## Current State (2026-11-03, v7.1.293+)
 
-- **v6.6.0 series pushed (fix1-9)**: CELF/elf-runner/static busybox/iSH routing all retired; unified environment landed (shell.exec has no runtime param — all commands default to TrollRuntime = Asbestos + full Alpine toolchain; iOS-specific commands auto-handled natively); rootfs completed; native-chip tools cleared (lua/node/r2/cstool/llvm family — Alpine replaces them) + CI 25-45min faster
-- **Next**: v6.6.0 device verification (overwrite install) → broad regression → vendored (Asbestos source into the repo) + CISH target rename wrap-up
+- **Engine**: rcarmo/ios-linuxkit **Asbestos**（ARM64 内核，v6.5.0 切换）。**JIT 已启用**：v7.0.3 `-Djit=true` + jit-fallback.patch（map_dual 失败运行时回退纯解释器）；v7.0.4 `ptrace(PT_ATTACHEXC)` 自开 JIT 授权并保持 attach（免 TrollStore URL 闪切）；v7.0.4.3 `troll_jit_probe` 实测授权（probe=1 免 URL）。
+- **Unified env** (v6.6.0): CELF/elf-runner/static busybox/iSH routing all retired; TrollRuntime（CISH 包装层）= Asbestos + Alpine rootfs + apk 生态；`shell.exec` 无 runtime 参数——全部命令默认走 TrollRuntime；iOS 专属命令原生处理。
+- **v7.1.29x**: Device Flow 登录（PAT/邮箱码/2FA 路径）+ GitHub 编译就绪度自动诊断 + 系统 HID 独立工具（sys.launch/tap/swipe/paste）+ 双引擎路由；workflow 只保留 workflow_dispatch（防重复编译）；build job 换 macos-13 池（免费号 macos-latest 高峰排队 15 分钟被砍，macos-13 容忍更久）。
+- **AOT (评估中)**: rcarmo 录制式 AOT 工具链已移植（tools/jit_aot/ + tests/arm64/native-aot），内核支持完整（aot.h/cli_aot），未接入 CI 构建（录制链路 + 双阶段构建未落地）。
 - Recorded fact: python3 subprocess/os.system hangs on native iOS (fork restriction re-confirmed) → composed commands merged into P5, no self-written Swift shell
 
 ## Repo & Release Info
