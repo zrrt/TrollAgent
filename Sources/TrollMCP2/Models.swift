@@ -395,19 +395,36 @@ extension ModelConfig {
     /// 中转站会返回 "Invalid request parameter"。
     var sendsTemperature: Bool { !isReasoningModel && !model.lowercased().contains("reasoning") }
 
-    /// v2.8.5：是否推理系列模型 (GPT-5.x / o1 / o3 / o4）。
+    /// v7.1.290-fix：GPT 推理系统一识别——gpt-N (N≥5) 及其全部命名变体走 Responses + 推理。
+    /// 兼容 gpt-5 / gpt-5-pro / gpt-5.6-terra / gpt-6 / gpt-6-sol / gpt-6.1-terra / openai/gpt-5-pro。
+    /// 修复：硬编码前缀 "gpt-6."(带点) vs "gpt-6"(不带点) 不一致——gpt-6-sol 等连字符命名被误判为
+    /// Chat Completions；且前缀表每次出新模型(gpt-7...)都要加、易漏。改为按版本号 ≥5 判定，一次覆盖全部。
+    static func isGPTReasoning(_ model: String) -> Bool {
+        let m = model.lowercased()
+        guard let r = m.range(of: "gpt-") else { return false }
+        var numStr = ""
+        for ch in m[r.upperBound...] {
+            if ch.isNumber { numStr.append(ch) } else { break }
+        }
+        guard let ver = Int(numStr) else { return false }
+        return ver >= 5
+    }
+
+    /// v2.8.5：是否推理系列模型 (GPT-5.x / GPT-6.x / o1 / o3 / o4）。
     /// 这类模型默认 reasoning_effort=medium，回复前会长时间思考 (聊天转圈半天的主因），
     /// 请求时显式携带 reasoning_effort=none 提速。
     var isReasoningModel: Bool {
         let m = model.lowercased()
-        let prefixes = ["gpt-5.", "o1", "o3", "o4", "o1-", "o3-", "o4-"]
+        if Self.isGPTReasoning(m) { return true }
+        let prefixes = ["o1", "o3", "o4", "o1-", "o3-", "o4-"]
         return prefixes.contains(where: { m.hasPrefix($0) }) || m.contains("reasoning")
     }
 
     /// 推理系列模型使用 max_completion_tokens 而非 max_tokens
     var maxTokensKey: String {
         let m = model.lowercased()
-        let reasoningPrefixes = ["gpt-5.", "o1", "o3", "o4", "o1-", "o3-", "o4-"]
+        if Self.isGPTReasoning(m) { return "max_completion_tokens" }
+        let reasoningPrefixes = ["o1", "o3", "o4", "o1-", "o3-", "o4-"]
         if reasoningPrefixes.contains(where: { m.hasPrefix($0) }) { return "max_completion_tokens" }
         return "max_tokens"
     }
@@ -432,15 +449,16 @@ extension ModelConfig {
         // 普通中转站的 vendor/model 命名模型
         if p.contains("openrouter") { return "OpenRouter" }
         // 推理系列 (Codex 同款 responses 端点)
-        let reasoningPrefixes = ["gpt-5.", "gpt-6.", "o1", "o3", "o4", "o1-", "o3-", "o4-"]
-        if reasoningPrefixes.contains(where: { m.hasPrefix($0) }) || m.contains("reasoning") { return "OpenAI Responses" }
+        // v7.1.290-fix：GPT 推理系用版本号统一识别 (gpt-N, N≥5)——覆盖 gpt-5-pro / gpt-6-sol 等连字符命名
+        let oPrefixes = ["o1", "o3", "o4", "o1-", "o3-", "o4-"]
+        if Self.isGPTReasoning(m) || oPrefixes.contains(where: { m.hasPrefix($0) }) || m.contains("reasoning") { return "OpenAI Responses" }
         // v7.1.109-peers：智能匹配全覆盖——以下 OpenAI 兼容系一律 Chat Completions
         let chatPrefixes = [
             "deepseek", "grok-", "llama", "mixtral", "mistral", "codestral",
             "qwen", "glm", "chatglm", "kimi", "moonshot", "minimax",
             "step-", "doubao", "ernie", "hunyuan", "spark", "baichuan",
             "yi-", "internlm", "command", "phi-", "nemotron", "sensechat",
-            "gpt-4", "gpt-4o", "gpt-4.1", "gpt-5", "gpt-6", "o3-mini", "o4-mini"
+            "gpt-4", "gpt-4o", "gpt-4.1"
         ]
         if chatPrefixes.contains(where: { m.hasPrefix($0) }) { return "OpenAI Chat Completions" }
         let chatProviders = ["deepseek", "xai", "groq", "mistral", "ollama", "azure",
