@@ -197,7 +197,7 @@ jobs:
         with:
           path: ish-stage
           # v6.6.0-fix38: bump v7——真机 shell.exec 闪退（echo/uname 都崩）——强制重建内核拉最新 rcarmo master（abe4135 10-05）
-          key: ish-stage-${{ hashFiles('scripts/ish-build/*.sh') }}-v8
+          key: ish-stage-${{ hashFiles('scripts/ish-build/build_ish.sh','scripts/ish-build/prepare_alpine_rootfs.sh','scripts/ish-build/jit-fallback.patch') }}-v8
 
       - name: Build iSH engine (libish.a + alpine rootfs)
         # v3.0.37：编译 iSH-ARM64 静态库与 Alpine rootfs，供 shell.exec 新引擎使用。
