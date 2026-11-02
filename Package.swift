@@ -106,6 +106,11 @@ let package = Package(
                 .linkedFramework("NetworkExtension"),
                 // v6.6.0: CoreServices 保留（LSApplicationWorkspace 等 LaunchServices 调用——HUD/App 管理用）
                 .linkedFramework("CoreServices"),
+                // AOT（rcarmo 录制式）：强制引用 _ish_aot_register（libish.a 内核 jit.c 导出，
+                // -Djit=true 默认带上），防止 aot_*.S constructor 引用的符号在链接时被解析失败/裁剪。
+                // 对照 rcarmo AppARM64AOTBootstrap.xcconfig 的 -Wl,-u,_ish_aot_register（-u 无引用时即报错，
+                // 链接不依赖任何 aot_*.S——镜像未录制前此参数纯保险，镜像录制后由 constructor 天然引用）。
+                "-Xlinker", "-u", "-Xlinker", "_ish_aot_register",
                 // v4.5.2：桌面悬浮 HUD 单可执行双模式（TrollSpeed 正解）——链接 libHUD.a
                 //（HUD/sources 编出的 ObjC++ 悬浮核心）+ 私有 framework tbd（HUD/libraries）。
                 // build-ipa.sh 在 swift build 前先编 libHUD.a → hud-stage/lib/libHUD.a。
