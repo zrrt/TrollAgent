@@ -1,5 +1,6 @@
 import Foundation
 import UserNotifications
+import UIKit
 
 // v2.9.75：ControlAgent 通用 UI 控制工具
 // injected ControlAgent.dylib 到任意 App 后，通过 localhost HTTP 控制目标 App UI
@@ -193,13 +194,32 @@ final class ControlAgentTools {
                 }
             }
             // v3.0.65：同时返回 base64 (AI 直接看图，不用读文件）
-            let base64 = data.base64EncodedString()
+            // v7.1.284：base64 给压缩 JPEG（最长边 640px、质量 0.6）——全分辨率 PNG 只存文件；
+            //   AI 读图 token 成本从 ~600 降到 ~80-120，传输也更快；path 仍指向原始全分辨率 PNG
+            var aiBase64 = ""
+            var aiSmall = false
+            if let img = UIImage(data: data) {
+                let maxSide: CGFloat = 640
+                let w = img.size.width, h = img.size.height
+                let scale = min(1.0, maxSide / max(w, h))
+                UIGraphicsBeginImageContextWithOptions(CGSize(width: w * scale, height: h * scale), false, 1.0)
+                img.draw(in: CGRect(x: 0, y: 0, width: w * scale, height: h * scale))
+                let small = UIGraphicsGetImageFromCurrentImageContext()
+                UIGraphicsEndImageContext()
+                if let jpeg = small?.jpegData(compressionQuality: 0.6) {
+                    aiBase64 = jpeg.base64EncodedString()
+                    aiSmall = true
+                }
+            }
+            let base64 = aiSmall ? aiBase64 : data.base64EncodedString()
             return [
                 "screenshot": true,
                 "path": path.path,
                 "size": data.count,
                 "base64": base64,
-                "hint": "base64 field is the image; path is the file path fallback"
+                "small": aiSmall,
+                "full_size": data.count,
+                "hint": "base64 is a compressed JPEG (max edge 640px) for AI reading; path is the original full-res PNG file; full_size = original bytes"
             ]
         }
         return ["error": error ?? "HTTP \(code)"]
