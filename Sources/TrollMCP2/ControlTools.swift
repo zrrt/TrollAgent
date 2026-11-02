@@ -324,9 +324,11 @@ enum ControlSemantics {
     }
 
     /// 节点自身文本（text / label / accessibilityLabel / accessibility_label）
+    /// 借鉴 Appium：accessibilityIdentifier 是最稳定位锚（与 UI 文本解耦），纳入定位
     static func nodeText(_ node: [String: Any]) -> String {
         (node["text"] as? String) ?? (node["label"] as? String)
-            ?? (node["accessibilityLabel"] as? String) ?? (node["accessibility_label"] as? String) ?? ""
+            ?? (node["accessibilityLabel"] as? String) ?? (node["accessibility_label"] as? String)
+            ?? (node["accessibilityIdentifier"] as? String) ?? (node["identifier"] as? String) ?? ""
     }
 
     /// 聚合子树全部文本（自身+后代，去空去重保序）——让"书城/书名"落到可点父
@@ -349,8 +351,11 @@ enum ControlSemantics {
         }
     }
 
-    /// 是否可点击：优先 isHittable / is_accessibility_element；其次可点角色；缺省（leaf+有 frame）保守视为可点
+    /// 是否可点击：enabled 显式 false 先拦截（借鉴 WebDriverAgent predicate enabled==true）；
+    /// 其次 isHittable / is_accessibility_element；再可点角色；缺省（leaf+有 frame）保守视为可点
     static func isActionable(_ node: [String: Any]) -> Bool {
+        if let en = node["enabled"] as? Bool, !en { return false }
+        if let en = node["isEnabled"] as? Bool, !en { return false }
         if let h = node["isHittable"] as? Bool { return h }
         if let h = node["hittable"] as? Bool { return h }
         if let a = node["is_accessibility_element"] as? Bool { return a }
@@ -434,15 +439,28 @@ final class ControlTapTextTool: MCPTool {
             throw MCPError.invalidParams("text required")
         }
         let partial = (params["partial"] as? Bool) ?? false
-
-        // 拿 UI 树
         let role = params["role"] as? String
-        let tree = ControlAgentTools.shared.uiTree()
-        let nodes = ControlSemantics.nodeList(tree)
-        guard !nodes.isEmpty else {
-            throw MCPError.failed("cannot parse UI tree")
+
+        // 借鉴 Maestro/Appium：找不到时短暂重试（加载/动画场景），最多 3 次
+        var lastError: Error = MCPError.failed("no element matching \"\(text)\" found in UI tree")
+        for attempt in 0..<3 {
+            do {
+                let tree = ControlAgentTools.shared.uiTree()
+                let nodes = ControlSemantics.nodeList(tree)
+                guard !nodes.isEmpty else { throw MCPError.failed("cannot parse UI tree") }
+                return try findAndTap(nodes: nodes, text: text, partial: partial, role: role)
+            } catch {
+                lastError = error
+                let m = "\(error)"
+                let retryable = m.contains("no element") || m.contains("cannot parse") || m.contains("not found")
+                if retryable && attempt < 2 {
+                    Thread.sleep(forTimeInterval: 0.4)
+                    continue
+                }
+                throw error
+            }
         }
-        return try findAndTap(nodes: nodes, text: text, partial: partial, role: role)
+        throw lastError
     }
 
     private struct Candidate {
@@ -651,29 +669,35 @@ final class ControlTapSelectorTool: MCPTool {
         let role = params["role"] as? String
         let partial = (params["partial"] as? Bool) ?? false
 
-        let tree = ControlAgentTools.shared.uiTree()
-        let nodes = ControlSemantics.nodeList(tree)
-        guard !nodes.isEmpty else {
-            throw MCPError.failed("cannot parse UI tree")
-        }
-
         var frames: [[Double]] = []
-        func walk(_ node: [String: Any]) {
-            if ControlSemantics.isActionable(node) {
-                let agg = ControlSemantics.subtreeText(node)
-                var ok = partial ? agg.localizedCaseInsensitiveContains(name) : (agg == name)
-                if let r = role, ok {
-                    ok = (ControlSemantics.role(of: node) == r.lowercased())
+        // 借鉴 Maestro/Appium：找不到时短暂重试（加载/动画），最多 3 次
+        for attempt in 0..<3 {
+            let tree = ControlAgentTools.shared.uiTree()
+            let nodes = ControlSemantics.nodeList(tree)
+            guard !nodes.isEmpty else {
+                if attempt < 2 { Thread.sleep(forTimeInterval: 0.4); continue }
+                throw MCPError.failed("cannot parse UI tree")
+            }
+            frames = []
+            func walk(_ node: [String: Any]) {
+                if ControlSemantics.isActionable(node) {
+                    let agg = ControlSemantics.subtreeText(node)
+                    var ok = partial ? agg.localizedCaseInsensitiveContains(name) : (agg == name)
+                    if let r = role, ok {
+                        ok = (ControlSemantics.role(of: node) == r.lowercased())
+                    }
+                    if ok {
+                        frames.append(ControlSemantics.frame(node))
+                    }
                 }
-                if ok {
-                    frames.append(ControlSemantics.frame(node))
+                if let ch = node["children"] as? [[String: Any]] {
+                    for c in ch { walk(c) }
                 }
             }
-            if let ch = node["children"] as? [[String: Any]] {
-                for c in ch { walk(c) }
-            }
+            for n in nodes { walk(n) }
+            if !frames.isEmpty { break }
+            if attempt < 2 { Thread.sleep(forTimeInterval: 0.4) }
         }
-        for n in nodes { walk(n) }
 
         guard !frames.isEmpty else {
             throw MCPError.failed("no actionable element matching role:\(role ?? "any") name:\"\(name)\" found")
@@ -712,25 +736,32 @@ final class ControlTapNodeTool: MCPTool {
         guard let fp = params["fingerprint"] as? String, !fp.isEmpty else {
             throw MCPError.invalidParams("fingerprint required. Get it from control.find / ui_tree results.")
         }
-        let tree = ControlAgentTools.shared.uiTree()
-        let nodes = ControlSemantics.nodeList(tree)
-        guard !nodes.isEmpty else {
-            throw MCPError.failed("cannot parse UI tree")
-        }
 
         var frames: [[Double]] = []
-        func walk(_ node: [String: Any], _ ancestors: [[String: Any]]) {
-            if ControlSemantics.isActionable(node),
-               ControlSemantics.semanticFingerprint(node, ancestors: ancestors) == fp {
-                frames.append(ControlSemantics.frame(node))
+        // 借鉴 Maestro/Appium：页面加载/滚动中短暂重试，最多 3 次
+        for attempt in 0..<3 {
+            let tree = ControlAgentTools.shared.uiTree()
+            let nodes = ControlSemantics.nodeList(tree)
+            guard !nodes.isEmpty else {
+                if attempt < 2 { Thread.sleep(forTimeInterval: 0.4); continue }
+                throw MCPError.failed("cannot parse UI tree")
             }
-            if let ch = node["children"] as? [[String: Any]] {
-                var newAnc = ancestors
-                newAnc.insert(node, at: 0)
-                for c in ch { walk(c, newAnc) }
+            frames = []
+            func walk(_ node: [String: Any], _ ancestors: [[String: Any]]) {
+                if ControlSemantics.isActionable(node),
+                   ControlSemantics.semanticFingerprint(node, ancestors: ancestors) == fp {
+                    frames.append(ControlSemantics.frame(node))
+                }
+                if let ch = node["children"] as? [[String: Any]] {
+                    var newAnc = ancestors
+                    newAnc.insert(node, at: 0)
+                    for c in ch { walk(c, newAnc) }
+                }
             }
+            for n in nodes { walk(n, []) }
+            if !frames.isEmpty { break }
+            if attempt < 2 { Thread.sleep(forTimeInterval: 0.4) }
         }
-        for n in nodes { walk(n, []) }
 
         guard !frames.isEmpty else {
             throw MCPError.failed("fingerprint \(fp) not found — the UI tree changed (scrolled/navigated). Re-run control.find and take a fresh fingerprint.")
