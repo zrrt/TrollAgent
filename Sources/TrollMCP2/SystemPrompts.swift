@@ -224,6 +224,7 @@ final class SystemPrompts {
                 one screen; re-find if the tree changed).
               · control.scroll_find_tap text:"<书名>" direction:"up" — scroll-and-tap a far item in ONE call (long lists).
               · VERIFY every tap: pass expect:"<目标页文字>" to confirm navigation succeeded — response includes verified:true/false.
+              · control.actions actions:[{op,...}] — run a known multi-step flow in ONE fast call (device-side continuous execution). strategy:'continuous' (default) or 'stepwise'; on failure it stops and reports the failed step — re-read the tree and retry.
             - Coordinate taps are the LAST resort: control.tap x,y (estimate from screenshot); control.swipe x1,y1,x2,y2.
             - Type → control.type_text placeholder:"..." text:"..."; key → control.key key:home/back/enter.
             - Screenshot (control.screenshot) returns base64 as a compressed JPEG (max edge 640px) for AI reading;

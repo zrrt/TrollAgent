@@ -920,6 +920,104 @@ final class ControlScrollFindTapTool: MCPTool {
     }
 }
 
+// MARK: - v7.1.287：control.actions — 多步动作批处理
+// 一次决策、设备端连续执行（借鉴 Apelin agent 会话连续 uiAction，砍掉中间重读树/回传往返）。
+// AI 输出动作串 + 策略；默认连续执行，某步失败即停并报告失败点；失败可回退逐步。
+
+final class ControlActionsTool: MCPTool {
+    let definition = ToolDefinition(
+        name: "control.actions",
+        summary: "PREREQUISITE: control.inject first. Execute a sequence of control actions on the device in ONE call — the AI decides the action chain, the device runs it back-to-back (fast, like Apelin's agent session). Use for: a known multi-step flow (e.g. open 抖音 then swipe up 5 times) without re-reading the tree between steps. Don't use for: first-time discovery of what's on screen (use control.find / control.ui_tree).",
+        parameters: [
+            "actions": "Array of action dicts, each {op, ...}. op: tap_text(text,partial?,role?,expect?) / tap_selector(name,role?,partial?,expect?) / tap_node(fingerprint,expect?) / swipe(direction,count?,expect?) / scroll_find_tap(text,role?,partial?,direction?,max_swipes?,expect?) / wait(seconds). (REQUIRED)",
+            "strategy": "'continuous' (default) runs all actions back-to-back without re-reading the tree; stops and reports the failed step if one fails. 'stepwise' keeps per-step expect/verification (slower, safer). Optional",
+            "expect": "Optional final text to verify after the whole sequence (optional)"
+        ],
+        verified: false, category: "ui_control")
+
+    func invoke(_ params: [String: Any]) throws -> [String: Any] {
+        guard let actions = params["actions"] as? [[String: Any]], !actions.isEmpty else {
+            throw MCPError.invalidParams("actions: non-empty array of {op,...} required")
+        }
+        let strategy = (params["strategy"] as? String) ?? "continuous"
+        var results: [[String: Any]] = []
+
+        for (i, action) in actions.enumerated() {
+            guard let op = action["op"] as? String, !op.isEmpty else {
+                throw MCPError.invalidParams("actions[\(i)].op required: tap_text/tap_selector/tap_node/swipe/scroll_find_tap/wait")
+            }
+            var inner = action
+            inner.removeValue(forKey: "op")
+            do {
+                results.append(try Self.run(op: op, params: inner))
+            } catch {
+                results.append(["ok": false, "op": op, "error": "\(error)"])
+                return [
+                    "ok": false,
+                    "strategy": strategy,
+                    "step_failed": i,
+                    "failed_op": op,
+                    "done": results,
+                    "hint": "Sequence stopped at step \(i) (\(op)). Re-read the tree (control.ui_tree / control.find) and retry, or set strategy:'stepwise' for per-step verified execution."
+                ]
+            }
+        }
+
+        var out: [String: Any] = ["ok": true, "strategy": strategy, "results": results, "steps": results.count]
+        if let exp = params["expect"] as? String, !exp.isEmpty {
+            out = ControlSemantics.attachExpect(out, expect: exp, partial: false)
+        }
+        return out
+    }
+
+    private static func run(op: String, params: [String: Any]) throws -> [String: Any] {
+        switch op {
+        case "tap_text":
+            return try ControlTapTextTool().invoke(params)
+        case "tap_selector":
+            return try ControlTapSelectorTool().invoke(params)
+        case "tap_node":
+            return try ControlTapNodeTool().invoke(params)
+        case "scroll_find_tap":
+            return try ControlScrollFindTapTool().invoke(params)
+        case "swipe":
+            // 屏幕级滑动：方向 + 可选次数（连续 N 次上划/下划），设备端本地连续注入
+            let direction = (params["direction"] as? String) ?? "up"
+            let count = max(1, (params["count"] as? Int) ?? 1)
+            let tree = ControlAgentTools.shared.uiTree()
+            let nodes = ControlSemantics.nodeList(tree)
+            let screen = ControlSemantics.screenSize(of: nodes)
+            let midX = screen[0] / 2
+            let upper = screen[1] * 0.8
+            let lower = screen[1] * 0.2
+            var last: [String: Any] = [:]
+            for _ in 0..<count {
+                if direction == "down" {
+                    last = ControlAgentTools.shared.swipe(x1: midX, y1: upper, x2: midX, y2: lower, duration: 0.3)
+                } else {
+                    last = ControlAgentTools.shared.swipe(x1: midX, y1: lower, x2: midX, y2: upper, duration: 0.3)
+                }
+                if last["error"] != nil { break }
+                Thread.sleep(forTimeInterval: 0.25)
+            }
+            var r = last
+            r["direction"] = direction
+            r["count"] = count
+            if r["error"] == nil { r["ok"] = true }
+            if let exp = params["expect"] as? String, !exp.isEmpty {
+                r = ControlSemantics.attachExpect(r, expect: exp, partial: (params["partial"] as? Bool) ?? false)
+            }
+            return r
+        case "wait":
+            let secs = (params["seconds"] as? Double) ?? 0.5
+            Thread.sleep(forTimeInterval: max(0, secs))
+            return ["ok": true, "waited_seconds": secs]
+        default:
+            throw MCPError.invalidParams("unknown op: \(op)")
+        }
+    }
+}
+
 // MARK: - v7.1.283: control 进度通知
 // AI 控制目标 App 时，把每步结果镜像为系统通知——用户在前台 App 也能看到控制进度
 enum ControlNotifier {
@@ -964,9 +1062,11 @@ enum ControlNotifier {
 final class ControlExecTool: MCPTool {
     let definition = ToolDefinition(
         name: "control",
-        summary: "Control target app UI. Subcommands: inject / status / ui_tree / find / screenshot / tap / swipe / type / key / tap_text / tap_selector / tap_node / scroll_find_tap / type_text. Params per subcommand: tap→x,y(Number); swipe→x1,y1,x2,y2(Number); type→text; tap_text→text,partial?,role?; tap_selector→name,role?,partial?; tap_node→fingerprint; scroll_find_tap→text,role?,partial?,direction?,max_swipes?; find→text?,role?,partial?,visible_only?,actionable_only?,limit?; type_text→placeholder+text; key→key(home/back/enter); inject→bundle_id; others none. Use for: UI automation / app screen control. Semantic UI tree (v7.1.281+): ui_tree nodes carry accessibility_role (button/link/text_field/switch/image/...), accessibility_label (human name), accessibility_value, is_accessibility_element and frame — locate an element by role+label, then tap its frame center; do NOT hardcode coordinates when labels are available. PREFER semantic taps: tap_selector(role,name), tap_text(text), or tap_node(fingerprint) — no coordinates; use find to list matches cheaply; use scroll_find_tap(text) to scroll-and-tap a long list in one call. First `inject` to install ControlAgent, then call other subcommands.",
+        summary: "Control target app UI. Subcommands: inject / status / ui_tree / find / screenshot / tap / swipe / type / key / tap_text / tap_selector / tap_node / scroll_find_tap / actions / type_text. Params per subcommand: tap→x,y(Number); swipe→x1,y1,x2,y2(Number); type→text; tap_text→text,partial?,role?; tap_selector→name,role?,partial?; tap_node→fingerprint; scroll_find_tap→text,role?,partial?,direction?,max_swipes?; actions→actions(array of {op,...}),strategy?; find→text?,role?,partial?,visible_only?,actionable_only?,limit?; type_text→placeholder+text; key→key(home/back/enter); inject→bundle_id; others none. Use for: UI automation / app screen control. Semantic UI tree (v7.1.281+): ui_tree nodes carry accessibility_role (button/link/text_field/switch/image/...), accessibility_label (human name), accessibility_value, is_accessibility_element and frame — locate an element by role+label, then tap its frame center; do NOT hardcode coordinates when labels are available. PREFER semantic taps: tap_selector(role,name), tap_text(text), or tap_node(fingerprint) — no coordinates; use find to list matches cheaply; use scroll_find_tap(text) to scroll-and-tap a long list in one call; use actions([...]) to run a known multi-step flow in one fast call. First `inject` to install ControlAgent, then call other subcommands.",
         parameters: [
-            "command": "Subcommand (required): inject / status / ui_tree / find / screenshot / tap / swipe / type / key / tap_text / tap_selector / tap_node / scroll_find_tap / type_text",
+            "command": "Subcommand (required): inject / status / ui_tree / find / screenshot / tap / swipe / type / key / tap_text / tap_selector / tap_node / scroll_find_tap / actions / type_text",
+            "actions": "Action array — REQUIRED for actions. Each {op,...}: tap_text/tap_selector/tap_node/swipe(direction,count?)/scroll_find_tap/wait(seconds)",
+            "strategy": "'continuous' or 'stepwise' — for actions",
             "bundle_id": "App bundle ID — REQUIRED for inject only",
             "x": "X coordinate Number — REQUIRED for tap",
             "y": "Y coordinate Number — REQUIRED for tap",
@@ -1104,6 +1204,12 @@ final class ControlExecTool: MCPTool {
             ControlNotifier.post(command: "scroll_find_tap", ok: sd2.ok, detail: sd2.detail)
             return scrollRes
 
+        case "actions":
+            let actionsRes = try ControlActionsTool().invoke(params)
+            let ad = ControlNotifier.describe(command: "actions", result: actionsRes, extra: "批量动作执行完成")
+            ControlNotifier.post(command: "actions", ok: ad.ok, detail: ad.detail)
+            return actionsRes
+
         case "type_text":
             guard let placeholder = params["placeholder"] as? String,
                   let text = params["text"] as? String else {
@@ -1115,7 +1221,7 @@ final class ControlExecTool: MCPTool {
             return result
 
         default:
-            throw MCPError.invalidParams("Unknown command: \(command). Available: inject/status/ui_tree/find/screenshot/tap/swipe/type/key/tap_text/tap_selector/tap_node/scroll_find_tap/type_text")
+            throw MCPError.invalidParams("Unknown command: \(command). Available: inject/status/ui_tree/find/screenshot/tap/swipe/type/key/tap_text/tap_selector/tap_node/scroll_find_tap/actions/type_text")
         }
     }
 }
