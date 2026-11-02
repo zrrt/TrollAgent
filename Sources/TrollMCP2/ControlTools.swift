@@ -424,7 +424,7 @@ final class ControlTypeTextTool: MCPTool {
 final class ControlExecTool: MCPTool {
     let definition = ToolDefinition(
         name: "control",
-        summary: "Control target app UI. Subcommands: inject / status / ui_tree / screenshot / tap / swipe / type / key / tap_text / type_text. Params per subcommand: tap→x,y(Number); swipe→x1,y1,x2,y2(Number); type→text; tap_text→text; type_text→placeholder+text; key→key(home/back/enter); inject→bundle_id; others none. Use for: UI automation / app screen control. First `inject` to install ControlAgent, then call other subcommands.",
+        summary: "Control target app UI. Subcommands: inject / status / ui_tree / screenshot / tap / swipe / type / key / tap_text / type_text. Params per subcommand: tap→x,y(Number); swipe→x1,y1,x2,y2(Number); type→text; tap_text→text; type_text→placeholder+text; key→key(home/back/enter); inject→bundle_id; others none. Use for: UI automation / app screen control. Semantic UI tree (v7.1.281+): ui_tree nodes carry accessibility_role (button/link/text_field/switch/image/...), accessibility_label (human name), accessibility_value, is_accessibility_element and frame — locate an element by role+label, then tap its frame center; do NOT hardcode coordinates when labels are available. First `inject` to install ControlAgent, then call other subcommands.",
         parameters: [
             "command": "Subcommand (required): inject / status / ui_tree / screenshot / tap / swipe / type / key / tap_text / type_text",
             "bundle_id": "App bundle ID — REQUIRED for inject only",
@@ -439,7 +439,7 @@ final class ControlExecTool: MCPTool {
             "placeholder": "Field placeholder (for type_text)"
         ],
         verified: true, category: "ui_control",
-        prerequisites: ["inject ControlAgent into target App and launch it (control inject) before UI control", "take control screenshot to confirm coordinates before tap/swipe"])
+        prerequisites: ["inject ControlAgent into target App and launch it (control inject) before UI control", "read control.ui_tree first to locate elements by accessibility_role+label, then tap their frame centers; take a screenshot only when coordinates are ambiguous"])
     
     func invoke(_ params: [String: Any]) throws -> [String: Any] {
         guard let command = params["command"] as? String else {

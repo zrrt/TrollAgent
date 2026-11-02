@@ -742,7 +742,7 @@ enum L10n {
             tbl["i18n_449"] = ["zh": "其他模式（逆向、渗透、游戏修改等）也都有各自的专业提示词，直接选对应模式即可。", "en": "Other modes (reverse engineering, pentest, game modding…) each ship with their own specialized prompts — just pick the mode."]
             tbl["i18n_450"] = ["zh": "目标 App 切后台不挂起，4789 持续在线", "en": "Target app stays alive in background, port 4789 keeps online"]
             tbl["i18n_451"] = ["zh": "远程控制时建议开启，防止目标 App 被系统挂起", "en": "Recommended during remote control, keeps the target app from being suspended"]
-            tbl["i18n_452"] = ["zh": "读取完整 UI 树（frame / 文字 / 类型 / 无障碍信息）", "en": "Read full UI tree (frame / text / type / accessibility info)"]
+            tbl["i18n_452"] = ["zh": "读取完整 UI 树（frame / 文字 / 类型 / 无障碍语义：角色 / 标签 / 值）", "en": "Read full UI tree (frame / text / type / accessibility semantics: role / label / value)"]
             tbl["i18n_453"] = ["zh": "实时截图", "en": "Live screenshot"]
             tbl["i18n_454"] = ["zh": "模拟点击 / 滑动 / 输入文字", "en": "Simulate tap / swipe / text input"]
             tbl["i18n_455"] = ["zh": "模拟按键（Home / 返回 / 回车）", "en": "Simulate keys (Home / Back / Enter)"]
