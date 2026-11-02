@@ -219,7 +219,10 @@ final class SystemPrompts {
                 aggregated from child text up to the actionable parent, so "书城" points at the tab button (not the label).
               · control.tap_text text:"..." partial:false — tap by text; auto-finds the nearest clickable parent.
               · control.find text:"..." role:"..." visible_only:true actionable_only:true — return only matching nodes
-                (role/name/frame), NOT the whole tree; use it to locate a book/tab cheaply before tapping.
+                (role/name/frame/fingerprint), NOT the whole tree; use it to locate a book/tab cheaply before tapping.
+              · control.tap_node fingerprint:"fp_..." — tap a found node by its stable semantic fingerprint (reusable within
+                one screen; re-find if the tree changed).
+              · control.scroll_find_tap text:"<书名>" direction:"up" — scroll-and-tap a far item in ONE call (long lists).
             - Coordinate taps are the LAST resort: control.tap x,y (estimate from screenshot); control.swipe x1,y1,x2,y2.
             - Type → control.type_text placeholder:"..." text:"..."; key → control.key key:home/back/enter.
             - Screenshot (control.screenshot) returns base64 as a compressed JPEG (max edge 640px) for AI reading;

@@ -1317,6 +1317,8 @@ public final class ToolRegistry: ObservableObject {
         case "control.screenshot": return ("control", "screenshot")
         case "control.tap_text": return ("control", "tap_text")
         case "control.tap_selector": return ("control", "tap_selector")
+        case "control.tap_node": return ("control", "tap_node")
+        case "control.scroll_find_tap": return ("control", "scroll_find_tap")
         case "control.type_text": return ("control", "type_text")
         case "calendar.list": return ("calendar", "list")
         case "device.fake": return ("device", "fake")
