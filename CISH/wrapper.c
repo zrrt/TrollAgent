@@ -1,7 +1,8 @@
 // CISH — TrollRuntime 统一环境 C 包装层（TrollAgent 专用，串行执行语义）
-// v6.6.0: 核心切换 rcarmo/ios-linuxkit Asbestos（ARM64 内核）；
-// v7.0.3 起 -Djit=true 恢复 JIT（+jit-fallback.patch 运行时回退纯解释器）；
-// v7.0.4 起 ptrace(PT_ATTACHEXC) 自开 JIT 授权并保持 attach（免 TrollStore URL 闪切），troll_jit_probe() 实测授权。
+// v6.6.0: 核心切换 rcarmo/ios-linuxkit Asbestos（ARM64 内核）；v7.0.3 起 -Djit=true 恢复 JIT（+jit-fallback.patch 运行时回退纯解释器）。
+// JIT 授权（当前生效方案，v7.0.4.7）：AppMain 启动时跑 tools/jit_helper.c（独立 root 进程外部 attach 主进程，
+//   PT_ATTACHEXC）→ 无论成功与否都无条件调 TrollStore URL 兜底（v7.0.4.5 实测 helper rc=0 仍可能 SIGBUS，URL 是 v7.0.3 验证的可靠路径）。
+//   下方 troll_self_enable_jit / troll_jit_probe 为 v7.0.4-v7.0.4.3 早期 self-attach 方案，已无调用（死代码保留）。
 //         参考其 App 集成（app/ISHKernel.m/ISHShellExecutor.m 同源设计，本文件独立重写）。
 // 编译宏（由 meson/SPM 提供）：-DGUEST_ARM64=1 -DISH_INTERNAL
 
@@ -41,11 +42,10 @@ extern void (*exit_hook)(struct task *task, int code);
 
 static atomic_int g_booted = 0;
 
-// v7.0.4: ptrace 自开 JIT——TrollStore 的 JIT 开关本质是 ptrace(PT_ATTACHEXC) 让内核
-// 放行可执行映射（持续进程生命周期）。App 内直接对主进程 attach，等同手动开 JIT 且免闪切。
-// fix7.0.4.1: **不 detach**——实证 detach 后 JIT 授权失效：cpu_run_to_interrupt 执行 JIT 块
-// 触发 SIGBUS(10)。TrollStore 手动开 JIT（v7.0.3 真机 29/29 全通）即保持 attach 状态。
-// 注意：iOS ptrace 无权限时返回 EPERM——Swift 侧检测负值后 fallback apple-magnifier URL。
+// 【已弃用-死代码】v7.0.4 早期 self-attach 方案：TrollStore 的 JIT 开关本质是 ptrace(PT_ATTACHEXC) 让内核
+// 放行可执行映射。App 内直接对主进程 attach（保持 attach 不 detach，实证 detach 后授权失效 SIGBUS）。
+// v7.0.4.5 起被 jit_helper（独立 root 进程外部 attach）替代——self-attach 无效（进程不能同步调试自己），
+// 本函数当前无调用（AppMain 走 jit_helper + TrollStore URL）。保留仅作历史参考。
 extern int ptrace(int request, pid_t pid, void *addr, int data);
 int troll_self_enable_jit(void) {
 #ifdef __APPLE__
@@ -60,10 +60,9 @@ int troll_self_enable_jit(void) {
 #endif
 }
 
-// v7.0.4.3: JIT 有效性探测——mmap(MAP_JIT) 实测内核是否已放行可执行内存。
-// self-attach 可能返回 0 但内核未放行（Husk 文档：进程不能同步调试自己）。
-// 探测准确反映真实授权：无授权时 MAP_JIT mmap 返回 EINVAL/EPERM → probe=0 → Swift 调 TrollStore URL。
-// 探测成功（probe=1）→ 无需 URL，免每次启动闪切。
+// 【已废弃-死代码】v7.0.4.3 的 JIT 有效性探测——mmap(MAP_JIT) 实测内核是否放行可执行内存。
+// v7.0.4.5 实测不可靠（mmap 成功≠执行放行）：self-attach 返回 0 但内核未放行（Husk 文档：进程不能同步调试自己）。
+// 已废弃——AppMain 当前无条件走 TrollStore URL 兜底（v7.0.4.7）。本函数无调用，保留仅作历史参考。
 int troll_jit_probe(void) {
 #ifdef __APPLE__
     void *p = mmap(NULL, 4096, PROT_READ | PROT_WRITE | PROT_EXEC,

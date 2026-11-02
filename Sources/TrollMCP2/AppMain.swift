@@ -10,7 +10,8 @@ import SwiftUI
 // v7.0.4: 自动启用 JIT——wrapper.c 的 ptrace 自开（免闪切）；失败时 fallback apple-magnifier URL
 @_silgen_name("troll_self_enable_jit") func troll_self_enable_jit() -> Int32
 @_silgen_name("troll_jit_probe") func troll_jit_probe() -> Int32
-// v6.6.0: troll_request_jit/have_jit 已删；v7.0.4 起 JIT 由 wrapper.c ptrace 自开（troll_self_enable_jit）
+// v6.6.0: troll_request_jit/have_jit 已删；v7.0.4.7 起 JIT = jit_helper（root 外部 attach）+ 无条件 TrollStore URL 兜底
+// （wrapper.c 的 troll_self_enable_jit/troll_jit_probe 为早期 self-attach 方案，已无调用）
 
 @main
 struct TrollAgentApp {

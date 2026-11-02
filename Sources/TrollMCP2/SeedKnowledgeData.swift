@@ -204,7 +204,7 @@ enum SeedKnowledgeData {
 ## 三条抓包路径
 1. 应用内 network.capture（NetworkTweak + TLSHook）：对目标 App 注入网络 Hook，
    直接拦截 NSURLSession/原生 socket，能看到明文请求/响应，适合 pinned 连接。
-2. vpn.capture：VPN 层 + 本地 mitm 代理（仍在开发/半成品，部分 App/QUIC 可能不全）。
+2. vpn.capture：VPN 层 + 本地 mitm 代理（已实装——VpnTunnel.appex 随包构建，packet-tunnel-provider 签名；QUIC/个别 App 可能不全）。
 3. WiFi 代理（电脑 Charles/mitmproxy）：同网段设代理 + 装证书；系统级但会被 pinning 挡。
 
 ## 证书绑定（SSL Pinning）与绕过
@@ -224,7 +224,7 @@ enum SeedKnowledgeData {
 """),
 
     ("内置-逆向-环境工具选择.md", """
-# 工具选择与环境边界（统一环境——无路由）
+# 工具选择与环境边界（统一环境——shell.exec 无 runtime 参数；control 系有双引擎路由）
 
 ## 先判断设备/环境能做什么
 - 手机端（本 App / TrollStore）：侦察、静态提取、砸壳、注入、运行时 Hook、抓包、归档。
