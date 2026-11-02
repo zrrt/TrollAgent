@@ -337,6 +337,15 @@ jobs:
           # ldid-procursus 签名 + entitlements 校验后进包）。C 空壳诊断(MINIMAL_C)已结束，
           # 不再强制覆盖；本轮验证点 = NE 能否拉起 Xcode 标准扩展形态的 appex。
           export XCODE_APPEX=1
+          # AOT 镜像集成（录制成功时）：aot_*.S 拷进 CISH/（TrollRuntime target path 无 sources 参数
+          # → 目录内 .S 自动编译链接；constructor 注册进内核，未命中代码走 JIT/解释器 = JIT+AOT 混合）。
+          # 录制跳过/失败时无镜像 → 回退纯 JIT 模式，不阻断构建。
+          if ls ish-stage/recordings/aot_*.S >/dev/null 2>&1; then
+            cp ish-stage/recordings/aot_*.S CISH/
+            echo ">>> AOT images integrated: $(ls CISH/aot_*.S | wc -l | tr -d ' ') files"
+          else
+            echo "::warning::no AOT images — JIT-only build this round"
+          fi
           bash scripts/build-ipa.sh
 
       # v7.2.3-fix9：回归测试编译验证——纯逻辑单测（Markdown 解析/引用提取/
