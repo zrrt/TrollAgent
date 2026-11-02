@@ -20,7 +20,9 @@ jobs:
     # v4.4.6-fix3u: needs native-nmap（continue-on-error job，失败不阻塞出包）
     # v4.4.8-fix3w: needs native-llvm（LLVM 单工具 + jtool2；下载 continue-on-error，失败不出这些工具但出包）
     needs: [native-python, native-wheels, native-nmap, native-llvm, native-node]
-    runs-on: macos-latest
+    # v7.1.293-fix: 免费账号 macos-latest 高峰排队 15 分钟被 GitHub 强制取消（连续两次 build 被砍），
+    # 换 macos-13 runner 池（相对空），避开 macos-latest 共享池高峰。
+    runs-on: macos-13
     steps:
       - uses: actions/checkout@v4
 
