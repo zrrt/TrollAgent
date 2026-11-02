@@ -74,8 +74,9 @@ final class AppDelegate: UIResponder, UIApplicationDelegate {
 
         // v7.0.4.5: 自举 root helper 开 JIT（照抄 TrollStore RootHelper/jit.m——PT_ATTACHEXC+100ms+PT_DETACH）。
         // jit_helper 是独立 root 进程（spawnRoot persona uid 0），外部 attach 主进程 = 有效（区别于 self-attach）。
-        // 成功（rc=0，等价 TrollStore 手动开 JIT）→ 不调 URL（零闪切）；失败 → TrollStore URL 兜底。
-        // probe（mmap MAP_JIT）实测不可靠（mmap 成功≠执行放行）已废弃。
+        // v7.0.4.7 起：无论 helper rc 都无条件调 TrollStore URL 兜底（v7.0.4.5 实测 rc=0 但 JIT 未生效→SIGBUS；
+        //   URL 是 v7.0.3 验证的可靠路径）。注意：v7.0.4.5 及更早版本是"rc=0 免 URL 零闪切"——
+        //   老 tipa 在可靠设备（如 kfd 可用的 iOS 16.x）上不闪切即由此而来。
         let pidStr = String(ProcessInfo.processInfo.processIdentifier)
         if let helperPath = Bundle.main.url(forResource: "jit_helper", withExtension: nil, subdirectory: "bin")?.path {
             logJIT("[JIT] helperPath=\(helperPath) pid=\(pidStr)\n")
