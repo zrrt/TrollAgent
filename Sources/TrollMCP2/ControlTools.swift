@@ -419,6 +419,36 @@ enum ControlSemantics {
         let sig = role + "|" + subtree + "|" + own + "|" + parents.joined(separator: ">")
         return String(format: "fp_%016llx", fnv1a(sig))
     }
+
+    /// 验证闭环（借鉴 Maestro assertVisible）：整树是否包含期望文本
+    static func treeContainsText(_ text: String, partial: Bool = false) -> Bool {
+        let tree = ControlAgentTools.shared.uiTree()
+        let nodes = nodeList(tree)
+        var found = false
+        func walk(_ n: [String: Any]) {
+            if found { return }
+            if partial ? subtreeText(n).localizedCaseInsensitiveContains(text) : (subtreeText(n) == text) {
+                found = true; return
+            }
+            if let ch = n["children"] as? [[String: Any]] { for c in ch { walk(c) } }
+        }
+        for n in nodes { walk(n) }
+        return found
+    }
+
+    /// 点击后验证期望元素是否出现；未出现给明确提示（点击可能未生效）
+    static func attachExpect(_ result: [String: Any], expect: String?, partial: Bool) -> [String: Any] {
+        var out = result
+        if let e = expect, !e.isEmpty {
+            Thread.sleep(forTimeInterval: 0.4)   // 等页面跳转/渲染
+            out["verified"] = treeContainsText(e, partial: partial)
+            out["expect"] = e
+            if out["verified"] as? Bool != true {
+                out["expect_hint"] = "期待元素\"\(e)\"未出现——点击可能未生效，请重读 control.ui_tree / control.find"
+            }
+        }
+        return out
+    }
 }
 
 // MARK: - v3.0.72：control.tap_text — 语义化点击 (传文字，自动找元素点）
@@ -430,7 +460,8 @@ final class ControlTapTextTool: MCPTool {
         parameters: [
             "text": "Visible text label of the element to tap (REQUIRED)",
             "partial": "If true, match partial text (default false; exact match by default) (optional)",
-            "role": "Optional accessibility role filter to disambiguate, e.g. button/cell/tab/link (optional)"
+            "role": "Optional accessibility role filter to disambiguate, e.g. button/cell/tab/link (optional)",
+            "expect": "After tapping, verify this text appears on screen (e.g. target page title). Optional."
         ],
         verified: true, category: "ui_control")
 
@@ -448,7 +479,8 @@ final class ControlTapTextTool: MCPTool {
                 let tree = ControlAgentTools.shared.uiTree()
                 let nodes = ControlSemantics.nodeList(tree)
                 guard !nodes.isEmpty else { throw MCPError.failed("cannot parse UI tree") }
-                return try findAndTap(nodes: nodes, text: text, partial: partial, role: role)
+                return ControlSemantics.attachExpect(try findAndTap(nodes: nodes, text: text, partial: partial, role: role),
+                                                     expect: params["expect"] as? String, partial: partial)
             } catch {
                 lastError = error
                 let m = "\(error)"
@@ -658,7 +690,8 @@ final class ControlTapSelectorTool: MCPTool {
         parameters: [
             "name": "Subtree text (name) of the element to tap — REQUIRED. Use aggregated text, e.g. '书城' for the tab button",
             "role": "Optional role to filter, e.g. button/cell/tab/link (optional)",
-            "partial": "If true match partial name (default false) (optional)"
+            "partial": "If true match partial name (default false) (optional)",
+            "expect": "After tapping, verify this text appears on screen (e.g. target page title). Optional."
         ],
         verified: false, category: "ui_control")
 
@@ -716,7 +749,7 @@ final class ControlTapSelectorTool: MCPTool {
         if frames.count > 1 {
             result["hint"] = "\(frames.count) actionable nodes matched; tapped the largest. Add exact role or use control.find to inspect."
         }
-        return result
+        return ControlSemantics.attachExpect(result, expect: params["expect"] as? String, partial: partial)
     }
 }
 
@@ -728,7 +761,8 @@ final class ControlTapNodeTool: MCPTool {
         summary: "PREREQUISITE: control.inject first. Tap the single actionable element by its semantic fingerprint (returned by control.find). Reuse the same fingerprint within one screen — it is stable across reads. If the tree changed (scrolled/navigated) the fingerprint won't be found and this reports it. Use for: tap an already-located node fast without re-searching. Don't use for: first-time locate (use control.find then tap_node, or tap_selector/tap_text directly).",
         parameters: [
             "fingerprint": "Semantic fingerprint from control.find results — REQUIRED (e.g. fp_...)",
-            "name": "Optional human-readable name for logging (optional)"
+            "name": "Optional human-readable name for logging (optional)",
+            "expect": "After tapping, verify this text appears on screen (e.g. target page title). Optional."
         ],
         verified: false, category: "ui_control")
 
@@ -774,7 +808,7 @@ final class ControlTapNodeTool: MCPTool {
         result["fingerprint"] = fp
         result["tap_x"] = cx
         result["tap_y"] = cy
-        return result
+        return ControlSemantics.attachExpect(result, expect: params["expect"] as? String, partial: false)
     }
 }
 
@@ -789,7 +823,8 @@ final class ControlScrollFindTapTool: MCPTool {
             "role": "Optional role filter, e.g. cell/button/link (optional)",
             "partial": "If true match partial text (default false) (optional)",
             "direction": "Scroll direction: 'up' = swipe up to reveal later content (default, finds items further down), 'down' = swipe down toward the top (optional)",
-            "max_swipes": "Max scroll swipes before giving up (default 6) (optional)"
+            "max_swipes": "Max scroll swipes before giving up (default 6) (optional)",
+            "expect": "After tapping, verify this text appears on screen (e.g. target page title). Optional."
         ],
         verified: false, category: "ui_control")
 
@@ -809,7 +844,8 @@ final class ControlScrollFindTapTool: MCPTool {
             throw MCPError.failed("cannot parse UI tree")
         }
         if let hit = findMatch(nodes: nodes, text: text, partial: partial, role: role) {
-            return tapHit(hit, text: text, swipes: 0)
+            return ControlSemantics.attachExpect(tapHit(hit, text: text, swipes: 0),
+                                                 expect: params["expect"] as? String, partial: partial)
         }
 
         let screen = ControlSemantics.screenSize(of: nodes)
@@ -832,7 +868,8 @@ final class ControlScrollFindTapTool: MCPTool {
             nodes = ControlSemantics.nodeList(tree)
             guard !nodes.isEmpty else { throw MCPError.failed("ui_tree empty after swipe") }
             if let hit = findMatch(nodes: nodes, text: text, partial: partial, role: role) {
-                return tapHit(hit, text: text, swipes: s)
+                return ControlSemantics.attachExpect(tapHit(hit, text: text, swipes: s),
+                                                     expect: params["expect"] as? String, partial: partial)
             }
         }
         throw MCPError.failed("\(text) not found after scrolling \(maxSwipes) times \(direction). It may be off-list or the list ended.")
