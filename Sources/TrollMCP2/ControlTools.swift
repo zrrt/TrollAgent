@@ -407,7 +407,7 @@ enum ControlSemantics {
     /// 语义指纹：role + 子树文本 + 自身文本 + 最近 2 层父语义。
     /// 同一控件（同 role/文本/父链）每次读树得到相同指纹 → 可安全"锁"复用；树变后查不到 → 安全失效。
     static func semanticFingerprint(_ node: [String: Any], ancestors: [[String: Any]]) -> String {
-        let role = role(of: node) ?? ""
+        let nodeRole = role(of: node) ?? ""
         let subtree = subtreeText(node)
         let own = nodeText(node)
         var parents: [String] = []
@@ -416,7 +416,7 @@ enum ControlSemantics {
             let pt = nodeText(p)
             parents.append("\(pr):\(pt.prefix(12))")
         }
-        let sig = role + "|" + subtree + "|" + own + "|" + parents.joined(separator: ">")
+        let sig = nodeRole + "|" + subtree + "|" + own + "|" + parents.joined(separator: ">")
         return String(format: "fp_%016llx", fnv1a(sig))
     }
 
