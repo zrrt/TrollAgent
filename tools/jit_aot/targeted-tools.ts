@@ -17,7 +17,7 @@ if (!ishArg || !rootArg || !outArg || !['elf', 'macho'].includes(format))
 const ish = resolve(ishArg), root = resolve(rootArg), out = resolve(outArg);
 if (existsSync(out)) throw new Error(`refusing existing output: ${out}`);
 mkdirSync(out, { recursive: true });
-const timeout = Number(process.env.AOT_TIMEOUT_S || 180);
+const timeout = Number(process.env.AOT_TIMEOUT_S || 300);
 if (!Number.isFinite(timeout) || timeout <= 0) throw new Error('invalid AOT_TIMEOUT_S');
 // Do not inherit tuning/image/recording knobs into the recorder.
 const env = Object.fromEntries(Object.entries(process.env).filter(([k, v]) =>
@@ -45,21 +45,56 @@ const modules = { musl: paths[0], busybox: paths[1] };
 for (const module of Object.values(modules)) {
     if (!await Bun.file(join(root, 'data', module)).exists()) throw new Error(`missing module: ${module}`);
 }
-// busybox 常用命令热路径 + shell 循环（录制一次覆盖所有 applet 的常见路径）
+// busybox 常用命令全覆盖热路径：文件操作/文本处理/系统查询/shell 特性（管道重定向通配符函数）。
+// 全部在 fakefs /tmp 临时目录操作，结束 rm -rf 清理——不污染 App 打包用的 fakefs（模块 sha256 不变）。
 const workload = `set -eu
-ls -la / 2>/dev/null || true
-ls /bin /usr/bin 2>/dev/null || true
-echo hello world
-printf '%s-%s\\n' a b
-cat /etc/alpine-release
-pwd
-cd /tmp && pwd && cd /
-expr 1 + 2
+T=$(mktemp -d /tmp/aot.XXXXXX)
+cd "$T"
+touch f1 f2 f3
+mkdir d1 d2/d3 2>/dev/null || true
+cp f1 f2.bak
+mv f2.bak f2.new
+ln -s f1 link1
+printf 'alpha beta gamma\\n' > text.txt
+printf 'line1\\nline2\\nline3\\n' >> text.txt
+cat text.txt
+head -2 text.txt
+tail -1 text.txt
+wc -l text.txt
+grep beta text.txt
+sed 's/beta/delta/' text.txt
+awk '{print $1}' text.txt
+tr 'a-z' 'A-Z' < text.txt | head -1
+sort -r text.txt
+uniq text.txt
+cut -d' ' -f2 text.txt
+wc -c text.txt
+md5sum text.txt
+sha256sum text.txt
+base64 text.txt
+stat text.txt
+du -sh .
+df -h / 2>/dev/null || true
+ls -la / /bin /usr/bin 2>/dev/null || true
+uname -a
+arch
+date +%s 2>/dev/null || true
+uptime 2>/dev/null || true
+which ls
+id
 dirname /a/b/c
 basename /a/b/c
-test -f /bin/busybox
+realpath /bin/busybox 2>/dev/null || true
+readlink -f /bin/busybox
+ps 2>/dev/null || true
+pidof sh 2>/dev/null || true
 i=0; while [ "$i" -lt 1000 ]; do i=$((i+1)); done
 test "$i" = 1000
+for f in f1 f2 f3; do test -f "$f"; done
+case "$(uname -s)" in Linux) : ;; *) exit 1;; esac
+f() { echo "$# args"; }; f a b c
+[ -f f1 ] && echo yes || echo no
+cd / && rm -rf "$T"
 printf 'AOT_TRAIN_OK\\n'
 `;
 await Bun.write(join(out, 'workload.sh'), workload);
