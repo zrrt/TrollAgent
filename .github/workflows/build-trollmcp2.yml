@@ -241,6 +241,38 @@ jobs:
           du -sh libs include resources
           cd ..
 
+      - name: Record AOT images (musl+busybox, rcarmo recording AOT)
+        # AOT 拼装第二步：录制器 = ish/build-ios 目录 ninja ish（meson 已 -Djit=true，jit_emit 默认 true），
+        # 对 App 内同源 fakefs（prepare_alpine_rootfs.sh 产物，缓存命中时也在 ish-stage 里）录制 musl/busybox
+        # → recordings/aot_*.S（busybox 短命令热路径，AOT 覆盖 80%+；不录 python——实测 AOT 反而慢）。
+        # 录制器是 macOS ARM64 原生二进制（同 rcarmo M 系 Mac 流程），targeted-tools.ts 需 bun 编排。
+        # 产物 aot_*.S 后续集成：挂进 CISH target sources + constructor 注册（ish_aot_register 在 libish.a）。
+        run: |
+          if [ ! -f ish-stage/ish/build-ios/build.ninja ]; then
+            echo "::warning::meson build dir missing (engine cache not restored) — AOT recording skipped"
+            exit 0
+          fi
+          if [ ! -d ish-stage/resources/alpine-rootfs ]; then
+            echo "::warning::fakefs missing — AOT recording skipped"
+            exit 0
+          fi
+          export PATH="$HOME/.bun/bin:$PATH"
+          if ! command -v bun >/dev/null 2>&1; then
+            echo "installing bun (targeted-tools.ts runtime)"
+            curl -fsSL https://bun.sh/install | bash
+            export PATH="$HOME/.bun/bin:$PATH"
+          fi
+          cd ish-stage
+          echo ">>> building recorder CLI (ninja ish)"
+          ninja -C ish/build-ios ish 2>&1 | tail -5
+          ls -la ish/build-ios/ish
+          echo ">>> recording musl+busybox (targeted-tools.ts)"
+          rm -rf recordings
+          bun ../tools/jit_aot/targeted-tools.ts ish/build-ios/ish resources/alpine-rootfs recordings macho
+          echo ">>> AOT recordings:"
+          ls -lh recordings/
+          cat recordings/manifest.json 2>/dev/null | head -20 || true
+
       - name: Copy iSH headers to CISH
         # 头文件供 SwiftPM CISH target 使用（headerSearchPath 相对 target 目录解析）；只覆盖 ish 子目录，保留 wrapper.h/module.modulemap
         run: |
