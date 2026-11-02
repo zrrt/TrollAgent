@@ -268,6 +268,49 @@ final class ControlAgentTools {
     }
 }
 
+// MARK: - v7.1.287：系统级引擎A（免注入）——与注入式 ControlAgent 结合成统一 control 接口
+// 复用已有：HIDTouchInjector(IOHID 系统级触摸) + LSApplicationWorkspace(系统启动) + UIThreadBridge(剪贴板)。
+// 目标 app 未注入时，control.tap/swipe 自动回退到本引擎；sys_launch 免注入启动任意 app。
+// verified:false——需真机验证 entitlement 生效（TrollStore 无沙箱 + com.apple.private.hid.client.event-dispatch）。
+
+final class SystemUIEngine {
+    static let shared = SystemUIEngine()
+
+    /// 系统级启动 app（TrollStore 可用：LSApplicationWorkspace 私有 API，不依赖 shell/注入）
+    func launch(bundleId: String) -> [String: Any] {
+        if let wsClass = NSClassFromString("LSApplicationWorkspace") as? NSObject.Type,
+           let ws = wsClass.perform(NSSelectorFromString("defaultWorkspace"))?.takeUnretainedValue() as? NSObject,
+           ws.responds(to: NSSelectorFromString("openApplicationWithBundleID:")) {
+            _ = ws.perform(NSSelectorFromString("openApplicationWithBundleID:"), with: bundleId)
+            return ["ok": true, "engine": "system", "method": "LSApplicationWorkspace", "bundle_id": bundleId,
+                    "hint": "launched via system (no injection). Then use control.sys_tap / sys_swipe to control it, or control.screenshot / control.ui_tree (if injected) to read screen."]
+        }
+        return ["ok": false, "engine": "system", "error": "LSApplicationWorkspace unavailable",
+                "hint": "fallback: control.inject the target app then use injected control"]
+    }
+
+    /// 系统级 HID 点击当前前台 app（无需注入目标 app）
+    func tap(x: Double, y: Double) -> [String: Any] {
+        let ok = HIDTouchInjector.shared.tap(x: Float(x), y: Float(y))
+        return ["ok": ok, "engine": "system_hid", "tap_x": x, "tap_y": y,
+                "hint": ok ? "system HID tap (no injection)" : "HID unavailable: needs com.apple.private.hid.client.event-dispatch entitlement (TrollStore ok)"]
+    }
+
+    /// 系统级 HID 滑动当前前台 app
+    func swipe(x1: Double, y1: Double, x2: Double, y2: Double, durationMs: Int = 300) -> [String: Any] {
+        let ok = HIDTouchInjector.shared.swipe(x1: Float(x1), y1: Float(y1), x2: Float(x2), y2: Float(y2), durationMs: durationMs)
+        return ["ok": ok, "engine": "system_hid",
+                "hint": ok ? "system HID swipe" : "HID unavailable (entitlement?)"]
+    }
+
+    /// 剪贴板写入（输入文字兜底：未注入时把搜索词 paste 到搜索框）
+    func paste(_ text: String) -> [String: Any] {
+        UIThreadBridge.paste(text)
+        return ["ok": true, "engine": "system", "clipboard": text,
+                "hint": "text copied to clipboard. In the target app long-press the input field and choose Paste."]
+    }
+}
+
 // MARK: - MCP 工具注册
 
 final class ControlInjectTool: MCPTool {
@@ -944,7 +987,7 @@ final class ControlActionsTool: MCPTool {
 
         for (i, action) in actions.enumerated() {
             guard let op = action["op"] as? String, !op.isEmpty else {
-                throw MCPError.invalidParams("actions[\(i)].op required: tap_text/tap_selector/tap_node/swipe/scroll_find_tap/wait")
+                throw MCPError.invalidParams("actions[\(i)].op required: tap_text/tap_selector/tap_node/swipe/scroll_find_tap/wait/sys_launch/sys_tap/sys_swipe/sys_paste")
             }
             var inner = action
             inner.removeValue(forKey: "op")
@@ -982,20 +1025,24 @@ final class ControlActionsTool: MCPTool {
             return try ControlScrollFindTapTool().invoke(params)
         case "swipe":
             // 屏幕级滑动：方向 + 可选次数（连续 N 次上划/下划），设备端本地连续注入
+            // v7.1.287：注入式优先，未注入自动回退系统级 HID（引擎A）
             let direction = (params["direction"] as? String) ?? "up"
             let count = max(1, (params["count"] as? Int) ?? 1)
             let tree = ControlAgentTools.shared.uiTree()
             let nodes = ControlSemantics.nodeList(tree)
             let screen = ControlSemantics.screenSize(of: nodes)
-            let midX = screen[0] / 2
-            let upper = screen[1] * 0.8
-            let lower = screen[1] * 0.2
+            let midX = screen[0] > 0 ? screen[0] / 2 : Double(UIScreen.main.bounds.width) / 2
+            let upper = screen[1] > 0 ? screen[1] * 0.8 : Double(UIScreen.main.bounds.height) * 0.8
+            let lower = screen[1] > 0 ? screen[1] * 0.2 : Double(UIScreen.main.bounds.height) * 0.2
             var last: [String: Any] = [:]
+            var usedSystem = false
             for _ in 0..<count {
                 if direction == "down" {
                     last = ControlAgentTools.shared.swipe(x1: midX, y1: upper, x2: midX, y2: lower, duration: 0.3)
+                    if last["error"] != nil { usedSystem = true; last = SystemUIEngine.shared.swipe(x1: midX, y1: upper, x2: midX, y2: lower) }
                 } else {
                     last = ControlAgentTools.shared.swipe(x1: midX, y1: lower, x2: midX, y2: upper, duration: 0.3)
+                    if last["error"] != nil { usedSystem = true; last = SystemUIEngine.shared.swipe(x1: midX, y1: lower, x2: midX, y2: upper) }
                 }
                 if last["error"] != nil { break }
                 Thread.sleep(forTimeInterval: 0.25)
@@ -1003,6 +1050,7 @@ final class ControlActionsTool: MCPTool {
             var r = last
             r["direction"] = direction
             r["count"] = count
+            r["engine"] = usedSystem ? "system_hid" : "injected"
             if r["error"] == nil { r["ok"] = true }
             if let exp = params["expect"] as? String, !exp.isEmpty {
                 r = ControlSemantics.attachExpect(r, expect: exp, partial: (params["partial"] as? Bool) ?? false)
@@ -1012,6 +1060,20 @@ final class ControlActionsTool: MCPTool {
             let secs = (params["seconds"] as? Double) ?? 0.5
             Thread.sleep(forTimeInterval: max(0, secs))
             return ["ok": true, "waited_seconds": secs]
+        // v7.1.287：引擎A（系统级免注入）动作，可在 actions 批处理内混合使用
+        case "sys_launch":
+            guard let bundleId = params["bundle_id"] as? String else { throw MCPError.invalidParams("bundle_id required for sys_launch") }
+            return SystemUIEngine.shared.launch(bundleId: bundleId)
+        case "sys_tap":
+            guard let x = params["x"] as? Double, let y = params["y"] as? Double else { throw MCPError.invalidParams("x,y required for sys_tap") }
+            return SystemUIEngine.shared.tap(x: x, y: y)
+        case "sys_swipe":
+            guard let x1 = params["x1"] as? Double, let y1 = params["y1"] as? Double,
+                  let x2 = params["x2"] as? Double, let y2 = params["y2"] as? Double else { throw MCPError.invalidParams("x1,y1,x2,y2 required for sys_swipe") }
+            return SystemUIEngine.shared.swipe(x1: x1, y1: y1, x2: x2, y2: y2, durationMs: (params["duration_ms"] as? Int) ?? 300)
+        case "sys_paste":
+            guard let text = params["text"] as? String else { throw MCPError.invalidParams("text required for sys_paste") }
+            return SystemUIEngine.shared.paste(text)
         default:
             throw MCPError.invalidParams("unknown op: \(op)")
         }
@@ -1062,9 +1124,10 @@ enum ControlNotifier {
 final class ControlExecTool: MCPTool {
     let definition = ToolDefinition(
         name: "control",
-        summary: "Control target app UI. Subcommands: inject / status / ui_tree / find / screenshot / tap / swipe / type / key / tap_text / tap_selector / tap_node / scroll_find_tap / actions / type_text. Params per subcommand: tap→x,y(Number); swipe→x1,y1,x2,y2(Number); type→text; tap_text→text,partial?,role?; tap_selector→name,role?,partial?; tap_node→fingerprint; scroll_find_tap→text,role?,partial?,direction?,max_swipes?; actions→actions(array of {op,...}),strategy?; find→text?,role?,partial?,visible_only?,actionable_only?,limit?; type_text→placeholder+text; key→key(home/back/enter); inject→bundle_id; others none. Use for: UI automation / app screen control. Semantic UI tree (v7.1.281+): ui_tree nodes carry accessibility_role (button/link/text_field/switch/image/...), accessibility_label (human name), accessibility_value, is_accessibility_element and frame — locate an element by role+label, then tap its frame center; do NOT hardcode coordinates when labels are available. PREFER semantic taps: tap_selector(role,name), tap_text(text), or tap_node(fingerprint) — no coordinates; use find to list matches cheaply; use scroll_find_tap(text) to scroll-and-tap a long list in one call; use actions([...]) to run a known multi-step flow in one fast call. First `inject` to install ControlAgent, then call other subcommands.",
+        summary: "Control target app UI. Subcommands: inject / status / ui_tree / find / screenshot / tap / swipe / type / key / tap_text / tap_selector / tap_node / scroll_find_tap / actions / sys_launch / sys_tap / sys_swipe / sys_paste / type_text. Params per subcommand: tap→x,y(Number); swipe→x1,y1,x2,y2(Number); type→text; tap_text→text,partial?,role?; tap_selector→name,role?,partial?; tap_node→fingerprint; scroll_find_tap→text,role?,partial?,direction?,max_swipes?; actions→actions(array of {op,...}),strategy?; find→text?,role?,partial?,visible_only?,actionable_only?,limit?; type_text→placeholder+text; key→key(home/back/enter); inject→bundle_id; sys_launch→bundle_id; sys_tap→x,y; sys_swipe→x1,y1,x2,y2,duration_ms?; sys_paste→text; others none. Use for: UI automation / app screen control. DUAL ENGINE (v7.1.287): tap/swipe auto-route — if the target app is injected (ControlAgent 4789 online) they run in-process; if not, they automatically fall back to SYSTEM HID (no injection, works on the current foreground app). Use sys_launch to launch any app without injecting; use sys_tap/sys_swipe for no-injection HID touch; use sys_paste to put text into the clipboard (for search boxes when not injected). Semantic UI tree (v7.1.281+): ui_tree nodes carry accessibility_role (button/link/text_field/switch/image/...), accessibility_label (human name), accessibility_value, is_accessibility_element and frame — locate an element by role+label, then tap its frame center; do NOT hardcode coordinates when labels are available. PREFER semantic taps: tap_selector(role,name), tap_text(text), or tap_node(fingerprint) — no coordinates; use find to list matches cheaply; use scroll_find_tap(text) to scroll-and-tap a long list in one call; use actions([...]) to run a known multi-step flow in one fast call. First `inject` to install ControlAgent, then call other subcommands.",
         parameters: [
-            "command": "Subcommand (required): inject / status / ui_tree / find / screenshot / tap / swipe / type / key / tap_text / tap_selector / tap_node / scroll_find_tap / actions / type_text",
+            "command": "Subcommand (required): inject / status / ui_tree / find / screenshot / tap / swipe / type / key / tap_text / tap_selector / tap_node / scroll_find_tap / actions / sys_launch / sys_tap / sys_swipe / sys_paste / type_text",
+            "duration_ms": "Swipe duration ms — for sys_swipe (optional)",
             "actions": "Action array — REQUIRED for actions. Each {op,...}: tap_text/tap_selector/tap_node/swipe(direction,count?)/scroll_find_tap/wait(seconds)",
             "strategy": "'continuous' or 'stepwise' — for actions",
             "bundle_id": "App bundle ID — REQUIRED for inject only",
@@ -1129,20 +1192,38 @@ final class ControlExecTool: MCPTool {
             guard let x = params["x"] as? Double, let y = params["y"] as? Double else {
                 throw MCPError.invalidParams("x and y required. Usage: control tap x:100 y:200 (both Numbers)")
             }
-            let result = ControlAgentTools.shared.tap(x: x, y: y)
-            let d = ControlNotifier.describe(command: "tap", result: result, extra: "已点击 (\(Int(x)), \(Int(y)))")
-            ControlNotifier.post(command: "tap", ok: d.ok, detail: d.detail)
-            return result
+            let injected = ControlAgentTools.shared.tap(x: x, y: y)
+            if injected["error"] == nil {
+                injected["engine"] = "injected"
+                let d = ControlNotifier.describe(command: "tap", result: injected, extra: "已点击 (\(Int(x)), \(Int(y))) [注入式]")
+                ControlNotifier.post(command: "tap", ok: d.ok, detail: d.detail)
+                return injected
+            }
+            // 未注入 → 自动回退系统级 HID（引擎A，免注入）
+            var sys = SystemUIEngine.shared.tap(x: x, y: y)
+            sys["fallback_reason"] = injected["error"] ?? "injected unreachable"
+            let sd = ControlNotifier.describe(command: "tap", result: sys, extra: "已点击 (\(Int(x)), \(Int(y))) [系统HID]")
+            ControlNotifier.post(command: "tap", ok: sd.ok, detail: sd.detail)
+            return sys
 
         case "swipe":
             guard let x1 = params["x1"] as? Double, let y1 = params["y1"] as? Double,
                   let x2 = params["x2"] as? Double, let y2 = params["y2"] as? Double else {
                 throw MCPError.invalidParams("x1,y1,x2,y2 required. Usage: control swipe x1:100 y1:200 x2:300 y2:400 (all Numbers)")
             }
-            let result = ControlAgentTools.shared.swipe(x1: x1, y1: y1, x2: x2, y2: y2, duration: 0.3)
-            let d = ControlNotifier.describe(command: "swipe", result: result, extra: "已滑动 (\(Int(x1)),\(Int(y1))) → (\(Int(x2)),\(Int(y2)))")
-            ControlNotifier.post(command: "swipe", ok: d.ok, detail: d.detail)
-            return result
+            let injected = ControlAgentTools.shared.swipe(x1: x1, y1: y1, x2: x2, y2: y2, duration: 0.3)
+            if injected["error"] == nil {
+                injected["engine"] = "injected"
+                let d = ControlNotifier.describe(command: "swipe", result: injected, extra: "已滑动 (\(Int(x1)),\(Int(y1))) → (\(Int(x2)),\(Int(y2))) [注入式]")
+                ControlNotifier.post(command: "swipe", ok: d.ok, detail: d.detail)
+                return injected
+            }
+            // 未注入 → 自动回退系统级 HID（引擎A，免注入）
+            var sys = SystemUIEngine.shared.swipe(x1: x1, y1: y1, x2: x2, y2: y2)
+            sys["fallback_reason"] = injected["error"] ?? "injected unreachable"
+            let sd = ControlNotifier.describe(command: "swipe", result: sys, extra: "已滑动 [系统HID]")
+            ControlNotifier.post(command: "swipe", ok: sd.ok, detail: sd.detail)
+            return sys
 
         case "type":
             guard let text = params["text"] as? String else {
@@ -1161,6 +1242,33 @@ final class ControlExecTool: MCPTool {
             let d = ControlNotifier.describe(command: "key", result: result, extra: "已按键 \(key)")
             ControlNotifier.post(command: "key", ok: d.ok, detail: d.detail)
             return result
+
+        // v7.1.287：系统级引擎A子命令（免注入）——启动任意 app / HID 触摸 / 剪贴板
+        case "sys_launch":
+            guard let bundleId = params["bundle_id"] as? String else {
+                throw MCPError.invalidParams("bundle_id required. Usage: control sys_launch bundle_id:'com.ss.iphone.ugc.Aweme'")
+            }
+            return SystemUIEngine.shared.launch(bundleId: bundleId)
+
+        case "sys_tap":
+            guard let x = params["x"] as? Double, let y = params["y"] as? Double else {
+                throw MCPError.invalidParams("x and y required. Usage: control sys_tap x:100 y:200")
+            }
+            return SystemUIEngine.shared.tap(x: x, y: y)
+
+        case "sys_swipe":
+            guard let x1 = params["x1"] as? Double, let y1 = params["y1"] as? Double,
+                  let x2 = params["x2"] as? Double, let y2 = params["y2"] as? Double else {
+                throw MCPError.invalidParams("x1,y1,x2,y2 required. Usage: control sys_swipe x1:100 y1:200 x2:300 y2:400")
+            }
+            return SystemUIEngine.shared.swipe(x1: x1, y1: y1, x2: x2, y2: y2,
+                                               durationMs: (params["duration_ms"] as? Int) ?? 300)
+
+        case "sys_paste":
+            guard let text = params["text"] as? String else {
+                throw MCPError.invalidParams("text required. Usage: control sys_paste text:'iphone4'")
+            }
+            return SystemUIEngine.shared.paste(text)
 
         case "tap_text":
             guard let text = params["text"] as? String else {

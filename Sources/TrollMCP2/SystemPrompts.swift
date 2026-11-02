@@ -225,6 +225,12 @@ final class SystemPrompts {
               · control.scroll_find_tap text:"<书名>" direction:"up" — scroll-and-tap a far item in ONE call (long lists).
               · VERIFY every tap: pass expect:"<目标页文字>" to confirm navigation succeeded — response includes verified:true/false.
               · control.actions actions:[{op,...}] — run a known multi-step flow in ONE fast call (device-side continuous execution). strategy:'continuous' (default) or 'stepwise'; on failure it stops and reports the failed step — re-read the tree and retry.
+            - DUAL ENGINE (v7.1.287) — no-injection system control available for ANY app:
+              · control.sys_launch bundle_id:"..." — launch any app WITHOUT injecting (system LaunchServices). Prefer this over control.inject when you only need to operate an app.
+              · control.sys_tap x,y / control.sys_swipe x1,y1,x2,y2 — system HID touch on the current foreground app (no injection, true-finger equivalent).
+              · control.sys_paste text:"..." — copy text to the clipboard (for typing into a search box when the app is NOT injected).
+              · control.tap / control.swipe auto-route: injected target → in-process engine; not injected → automatic system-HID fallback (engine:'injected' vs 'system_hid').
+              · Fast no-injection flow: control.actions actions:[{op:'sys_launch',bundle_id:'...'},{op:'sys_tap',...},{op:'sys_swipe',...},{op:'sys_paste',text:'...'}] — launch, tap, scroll, paste search term, all on the device without injection.
             - Coordinate taps are the LAST resort: control.tap x,y (estimate from screenshot); control.swipe x1,y1,x2,y2.
             - Type → control.type_text placeholder:"..." text:"..."; key → control.key key:home/back/enter.
             - Screenshot (control.screenshot) returns base64 as a compressed JPEG (max edge 640px) for AI reading;
