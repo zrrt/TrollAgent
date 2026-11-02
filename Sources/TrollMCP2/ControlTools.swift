@@ -311,6 +311,82 @@ final class SystemUIEngine {
     }
 }
 
+// MARK: - v7.1.290：系统 HID 独立工具（免注入，AI 枚举顶层工具即见）
+// 与 control 大工具的 sys_* 子命令等价，但注册为独立顶层工具 (sys.launch/sys.tap/sys.swipe/sys.paste)，
+// 解决"AI 枚举顶层工具看不到系统 HID 接口"的可见性问题（真机可直接 sys.tap / sys.swipe 测）。
+// verified:false——HID 依赖 com.apple.private.hid.client.event-dispatch entitlement，TrollStore 可行待真机验证。
+
+final class SysLaunchTool: MCPTool {
+    let definition = ToolDefinition(
+        name: "sys.launch",
+        summary: "Launch any app via the system (LSApplicationWorkspace private API, NO injection needed). Use for: opening an app without injecting ControlAgent, then drive it with sys.tap / sys.swipe (system HID). Don't use for: launching when you need to read the app's semantic tree (inject first, use control.inject).",
+        parameters: ["bundle_id": "Target app bundle ID (required), e.g. com.ss.iphone.ugc.Aweme (抖音)"],
+        verified: false, category: "ui_control")
+    func invoke(_ params: [String: Any]) throws -> [String: Any] {
+        guard let bid = params["bundle_id"] as? String, !bid.isEmpty else {
+            throw MCPError.invalidParams("bundle_id required. Usage: sys.launch bundle_id:'com.ss.iphone.ugc.Aweme'")
+        }
+        AuditLog.shared.log("sys.launch", detail: bid)
+        return SystemUIEngine.shared.launch(bundleId: bid)
+    }
+}
+
+final class SysTapTool: MCPTool {
+    let definition = ToolDefinition(
+        name: "sys.tap",
+        summary: "System-level HID tap at (x,y) on the current foreground app — REAL screen touch via IOHID digitizer, NO injection needed (works on any app). Coordinates are screen POINTS (logical points, not ratio): get them from control.find / control.ui_tree frame and tap the center (x+w/2, y+h/2). Don't use for: semantic taps by role/label (use control.tap_selector / control.tap_text).",
+        parameters: [
+            "x": "X in screen points (required, Number)",
+            "y": "Y in screen points (required, Number)"
+        ],
+        verified: false, category: "ui_control")
+    func invoke(_ params: [String: Any]) throws -> [String: Any] {
+        guard let x = params["x"] as? Double, let y = params["y"] as? Double else {
+            throw MCPError.invalidParams("x,y required. Usage: sys.tap x:200 y:400 (screen points)")
+        }
+        AuditLog.shared.log("sys.tap", detail: "\(x),\(y)")
+        return SystemUIEngine.shared.tap(x: x, y: y)
+    }
+}
+
+final class SysSwipeTool: MCPTool {
+    let definition = ToolDefinition(
+        name: "sys.swipe",
+        summary: "System-level HID swipe from (x1,y1) to (x2,y2) on the current foreground app — REAL screen gesture via IOHID digitizer, NO injection needed. Use for: swiping an app that is not injected, e.g. swipe up on 抖音 (x1:mid y1:high, x2:mid y2:low). Coordinates are screen POINTS (not ratio). Don't use for: injected apps (use control.swipe).",
+        parameters: [
+            "x1": "Start X in screen points (required)",
+            "y1": "Start Y in screen points (required)",
+            "x2": "End X in screen points (required)",
+            "y2": "End Y in screen points (required)",
+            "duration_ms": "Swipe duration in ms (optional, default 300)"
+        ],
+        verified: false, category: "ui_control")
+    func invoke(_ params: [String: Any]) throws -> [String: Any] {
+        guard let x1 = params["x1"] as? Double, let y1 = params["y1"] as? Double,
+              let x2 = params["x2"] as? Double, let y2 = params["y2"] as? Double else {
+            throw MCPError.invalidParams("x1,y1,x2,y2 required. Usage: sys.swipe x1:200 y1:700 x2:200 y2:200 (screen points)")
+        }
+        AuditLog.shared.log("sys.swipe", detail: "\(x1),\(y1)->\(x2),\(y2)")
+        return SystemUIEngine.shared.swipe(x1: x1, y1: y1, x2: x2, y2: y2,
+                                           durationMs: (params["duration_ms"] as? Int) ?? 300)
+    }
+}
+
+final class SysPasteTool: MCPTool {
+    let definition = ToolDefinition(
+        name: "sys.paste",
+        summary: "Put text into the system clipboard (UIThreadBridge). Use for: typing into a search box when the target app is NOT injected — copy the search text, then in the app long-press the input field and choose Paste. Don't use for: typing into an injected app (use control.type).",
+        parameters: ["text": "Text to copy to clipboard (required)"],
+        verified: false, category: "ui_control")
+    func invoke(_ params: [String: Any]) throws -> [String: Any] {
+        guard let text = params["text"] as? String, !text.isEmpty else {
+            throw MCPError.invalidParams("text required. Usage: sys.paste text:'iphone4'")
+        }
+        AuditLog.shared.log("sys.paste", detail: "\(text.count) chars")
+        return SystemUIEngine.shared.paste(text)
+    }
+}
+
 // MARK: - MCP 工具注册
 
 final class ControlInjectTool: MCPTool {

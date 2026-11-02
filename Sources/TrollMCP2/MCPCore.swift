@@ -1373,6 +1373,11 @@ public final class ToolRegistry: ObservableObject {
         register(MemoryTweakTool())   // v2.9.60：H5GG式内存修改 (需先注入MemoryTweak.dylib）
         // v3.1.34: control 大工具 + 子命令 (合并 10 个 control.* 工具）
         register(ControlExecTool())
+        // v7.1.290: sys.* 系统 HID 独立工具（免注入，AI 枚举顶层工具即见）——launch/tap/swipe/paste
+        register(SysLaunchTool())
+        register(SysTapTool())
+        register(SysSwipeTool())
+        register(SysPasteTool())
         // v3.1.34: 删旧的 10 个 control.* 工具 (已合并到 control 大工具）
         // v3.1.46: 删 WorkspaceInfoTool (shell.exec 可以实现：shell.exec("pwd")）
         // v3.1.33: 清理工具已删 (用 shell 代替）
