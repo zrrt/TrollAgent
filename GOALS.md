@@ -46,7 +46,7 @@ Unified environment (AI sees one entry point = TrollRuntime)
 | P5 | aarch64 ELF runtime → **taken over by rcarmo/ios-linuxkit Asbestos (core switch v6.5.0, unified env v6.6.0)** — emu.c/CELF retired | ✅ v6.5.0–v6.6.0 (device-verified: apk installs/dynamic lib chains/git/ps/df/numpy all pass) |
 | ~~P2~~ | ~~native restricted shell (composed commands)~~ **merged into P5** | user decision 2026-10-17: composed commands' final form = P5 ELF runtime (Linux shell semantics for free); self-written Swift shell unnecessary; fork verified to hang on native iOS (python3 subprocess NO JSON) |
 
-**Key decision (2026-10-17→10-23)**: the busybox static-ELF route (emu.c/CELF) **retired (v6.6.0)** — replaced by rcarmo Asbestos (the ARM64 interpreter branch of iSH, no JIT, iOS W^X compliant): full Alpine rootfs + apk ecosystem + full dynamic ELF support, device-verified.
+**Key decision (2026-10-17→10-23)**: the busybox static-ELF route (emu.c/CELF) **retired (v6.6.0)** — replaced by rcarmo Asbestos (ARM64 kernel of iSH; JIT enabled v7.0.3+, ptrace self-enabled v7.0.4+): full Alpine rootfs + apk ecosystem + full dynamic ELF support, device-verified.
 
 ## Current State (2026-10-23, v6.6.0 pushed)
 

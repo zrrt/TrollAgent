@@ -1,5 +1,7 @@
 // CISH — TrollRuntime 统一环境 C 包装层（TrollAgent 专用，串行执行语义）
-// v6.6.0: 核心已切换 rcarmo/ios-linuxkit Asbestos（ARM64 解释器，无 JIT）；
+// v6.6.0: 核心切换 rcarmo/ios-linuxkit Asbestos（ARM64 内核）；
+// v7.0.3 起 -Djit=true 恢复 JIT（+jit-fallback.patch 运行时回退纯解释器）；
+// v7.0.4 起 ptrace(PT_ATTACHEXC) 自开 JIT 授权并保持 attach（免 TrollStore URL 闪切），troll_jit_probe() 实测授权。
 //         参考其 App 集成（app/ISHKernel.m/ISHShellExecutor.m 同源设计，本文件独立重写）。
 // 编译宏（由 meson/SPM 提供）：-DGUEST_ARM64=1 -DISH_INTERNAL
 

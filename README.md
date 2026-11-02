@@ -394,7 +394,7 @@ TrollAgent/
 
 ### Historical timeline (unification, v6.5.0 → v6.6.0)
 
-- **v6.5.0** — core switch to rcarmo/ios-linuxkit **Asbestos** (ARM64 interpreter branch of iSH, no JIT, iOS W^X compliant): full Alpine rootfs + apk ecosystem + full dynamic ELF support, device-verified.
+- **v6.5.0** — core switch to rcarmo/ios-linuxkit **Asbestos** (ARM64 kernel of iSH); **v7.0.3+ JIT enabled** (`-Djit=true` + jit-fallback patch), **v7.0.4+ ptrace self-enabled JIT** (PT_ATTACHEXC keep-attach, TrollStore-style, no URL flash): full Alpine rootfs + apk ecosystem + full dynamic ELF support, device-verified.
 - **v6.6.0 (fix1-9)** — unified environment landed: CELF / elf-runner / static busybox / iSH routing **all retired**; `shell.exec` has no runtime param — all commands default to TrollRuntime; iOS-specific commands auto-handled natively; rootfs completed; native-chip tools cleared (lua/node/r2/cstool/llvm family — Alpine replaces them); CI 25-45 min faster.
 - **Key decision (2026-10-17→10-23)**: the busybox static-ELF route (emu.c/CELF) retired — composed commands' final form = P5 ELF runtime (Linux shell semantics for free); self-written Swift shell unnecessary; fork verified to hang on native iOS (python3 subprocess NO JSON).
 

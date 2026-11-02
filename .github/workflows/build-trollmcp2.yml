@@ -201,7 +201,7 @@ jobs:
 
       - name: Build iSH engine (libish.a + alpine rootfs)
         # v3.0.37：编译 iSH-ARM64 静态库与 Alpine rootfs，供 shell.exec 新引擎使用。
-        # 脚本来自 OpenMinis（build_ish.sh / prepare_alpine_rootfs.sh），产出 ish-stage/{libs,include,resources}。
+        # 脚本自 rcarmo/ios-linuxkit 生态（build_ish.sh / prepare_alpine_rootfs.sh；OpenMinis 已停更退役），产出 ish-stage/{libs,include,resources}。
         # 缓存命中时跳过（构建产物一致；改 scripts/ish-build/*.sh 需 bump key）。
         if: steps.cache-ish.outputs.cache-hit != 'true'
         run: |
@@ -229,7 +229,7 @@ jobs:
           cd ish-stage
           cp ../scripts/ish-build/build_ish.sh .
           cp ../scripts/ish-build/prepare_alpine_rootfs.sh .
-          git clone --depth 1 -q https://github.com/rcarmo/ios-linuxkit.git ish  # v6.5.0: 切 rcarmo/ios-linuxkit（Asbestos 解释器，比 OpenMinis 新 5 个月，修 cpu_run_to_interrupt 闪退）
+          git clone --depth 1 -q https://github.com/rcarmo/ios-linuxkit.git ish  # v6.5.0: 切 rcarmo/ios-linuxkit（Asbestos ARM64 内核）；v7.0.3 起 JIT 恢复（-Djit=true）
           cd ish && git submodule update --init --recursive --depth 1 -q
           # v7.0.3: JIT 回退补丁（jit_on 运行时化——map 失败时纯解释器，防 iOS 闪退）
           git apply ../../scripts/ish-build/jit-fallback.patch && cd ..

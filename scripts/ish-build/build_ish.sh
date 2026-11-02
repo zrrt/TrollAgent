@@ -8,7 +8,7 @@ set -e
 # for iOS (arm64) integration, using the ish-arm64 fork which emulates an
 # ARM64 Linux guest on iOS.
 #
-# Repository: https://github.com/rcarmo/ios-linuxkit（v6.5.0 起——Asbestos ARM64 解释器，OpenMinis 已停更退役）
+# Repository: https://github.com/rcarmo/ios-linuxkit（v6.5.0 起——Asbestos ARM64 内核，OpenMinis 已停更退役；v7.0.3 起 JIT 恢复 -Djit=true + jit-fallback.patch）
 #
 # Prerequisites:
 #   - Xcode with iOS SDK
