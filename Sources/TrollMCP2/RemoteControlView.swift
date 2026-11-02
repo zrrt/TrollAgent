@@ -156,6 +156,8 @@ struct RemoteControlView: View {
                     noteRow(L10n.t("i18n_466"))
                     noteRow(L10n.t("i18n_1090"))
                     noteRow(L10n.t("i18n_1118"))
+                    // v7.1.286：控制进度实时推送系统通知（前台可见）
+                    noteRow(L10n.t("i18n_1261"))
                 }
             }
         }
