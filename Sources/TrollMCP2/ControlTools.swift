@@ -1192,7 +1192,7 @@ final class ControlExecTool: MCPTool {
             guard let x = params["x"] as? Double, let y = params["y"] as? Double else {
                 throw MCPError.invalidParams("x and y required. Usage: control tap x:100 y:200 (both Numbers)")
             }
-            let injected = ControlAgentTools.shared.tap(x: x, y: y)
+            var injected = ControlAgentTools.shared.tap(x: x, y: y)
             if injected["error"] == nil {
                 injected["engine"] = "injected"
                 let d = ControlNotifier.describe(command: "tap", result: injected, extra: "已点击 (\(Int(x)), \(Int(y))) [注入式]")
@@ -1211,7 +1211,7 @@ final class ControlExecTool: MCPTool {
                   let x2 = params["x2"] as? Double, let y2 = params["y2"] as? Double else {
                 throw MCPError.invalidParams("x1,y1,x2,y2 required. Usage: control swipe x1:100 y1:200 x2:300 y2:400 (all Numbers)")
             }
-            let injected = ControlAgentTools.shared.swipe(x1: x1, y1: y1, x2: x2, y2: y2, duration: 0.3)
+            var injected = ControlAgentTools.shared.swipe(x1: x1, y1: y1, x2: x2, y2: y2, duration: 0.3)
             if injected["error"] == nil {
                 injected["engine"] = "injected"
                 let d = ControlNotifier.describe(command: "swipe", result: injected, extra: "已滑动 (\(Int(x1)),\(Int(y1))) → (\(Int(x2)),\(Int(y2))) [注入式]")
