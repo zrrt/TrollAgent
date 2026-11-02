@@ -6,10 +6,11 @@ name: build-trollmcp2
 permissions:
   contents: write
 
+# v7.1.292：去掉 push 自动触发——原 push+workflow_dispatch 双触发导致每次提交自动编译一次 +
+# App 手动触发又一次，产生"两个一模一样"的 build run，浪费 Actions 配额（新号尤其明显）。
+# 现只保留显式 workflow_dispatch（App 一键触发 / github.trigger_build 才编译），杜绝重复。
 on:
   workflow_dispatch:
-  push:
-    branches: [main]
 
 jobs:
   # v4.4.5: 原生工具链（lua arm64 iOS 交叉编译，产物缓存秒级）。
