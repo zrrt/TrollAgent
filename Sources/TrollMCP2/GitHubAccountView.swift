@@ -393,6 +393,16 @@ struct AddGitHubAccountView: View {
             SecureField("ghp_…", text: $token)
                 .autocapitalization(.none)
                 .disableAutocorrection(true)
+                .onSubmit { login() }
+            Button {
+                login()
+            } label: {
+                Text("登录")
+                    .fontWeight(.semibold)
+                    .frame(maxWidth: .infinity)
+            }
+            .buttonStyle(BorderlessButtonStyle())
+            .disabled(token.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty || loading)
             if let err = errorMsg {
                 Text(err).font(.caption).foregroundColor(.red)
             }
