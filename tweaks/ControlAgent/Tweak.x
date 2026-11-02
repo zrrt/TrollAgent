@@ -131,6 +131,75 @@ static NSData *textResponse(NSString *text) {
 
 #pragma mark - UI 树遍历
 
+// v2.9.291 混合 AX：traits → 语义角色（主要类型优先，状态位不参与 role）
+static NSString *caTraitsToString(UIAccessibilityTraits traits) {
+    if (traits & UIAccessibilityTraitButton) return @"button";
+    if (traits & UIAccessibilityTraitLink) return @"link";
+    if (traits & UIAccessibilityTraitSearchField) return @"search_field";
+    if (traits & UIAccessibilityTraitKeyboardKey) return @"keyboard_key";
+    if (traits & UIAccessibilityTraitImage) return @"image";
+    if (traits & UIAccessibilityTraitStaticText) return @"static_text";
+    if (traits & UIAccessibilityTraitAdjustable) return @"adjustable";
+    if (traits & UIAccessibilityTraitHeader) return @"header";
+    if (traits & UIAccessibilityTraitTabBar) return @"tab_bar";
+    return nil;
+}
+
+// 类兜底 role（traits 为空时按 UIKit 类型补语义）
+static NSString *caClassRole(UIView *view) {
+    if ([view isKindOfClass:[UIButton class]]) return @"button";
+    if ([view isKindOfClass:[UISwitch class]]) return @"switch";
+    if ([view isKindOfClass:[UISlider class]]) return @"slider";
+    if ([view isKindOfClass:[UISegmentedControl class]]) return @"segmented_control";
+    if ([view isKindOfClass:[UITextField class]]) return @"text_field";
+    if ([view isKindOfClass:[UITextView class]]) return @"text_view";
+    if ([view isKindOfClass:[UILabel class]]) return @"static_text";
+    if ([view isKindOfClass:[UIImageView class]]) return @"image";
+    if ([view isKindOfClass:[UIScrollView class]]) return @"scroll";
+    if ([view isKindOfClass:[UITableView class]]) return @"table";
+    if ([view isKindOfClass:[UICollectionView class]]) return @"collection";
+    return nil;
+}
+
+// v2.9.291 混合 AX：描述聚合无障碍元素（accessibilityElements 数组元素：UIView 或 UIAccessibilityElement）
+static NSDictionary *describeAXElement(id element) {
+    if (g_nodeCounter >= kMaxUITreeNodes) return nil;
+    if ([element isKindOfClass:[UIView class]]) {
+        UIView *v = (UIView *)element;
+        if (v.hidden || v.alpha < 0.01) return nil;
+        g_nodeCounter++;
+        NSMutableDictionary *node = [NSMutableDictionary dictionary];
+        node[@"id"] = @(g_nodeCounter);
+        node[@"ax_element"] = @YES;
+        node[@"class"] = NSStringFromClass([v class]);
+        node[@"frame"] = @{@"x": @(v.frame.origin.x), @"y": @(v.frame.origin.y), @"w": @(v.frame.size.width), @"h": @(v.frame.size.height)};
+        if (v.accessibilityLabel) node[@"accessibility_label"] = v.accessibilityLabel;
+        if (v.accessibilityValue) node[@"accessibility_value"] = v.accessibilityValue;
+        if (v.accessibilityHint) node[@"accessibility_hint"] = v.accessibilityHint;
+        NSString *role = caTraitsToString(v.accessibilityTraits);
+        if (!role) role = caClassRole(v);
+        if (role) node[@"accessibility_role"] = role;
+        return node;
+    }
+    if ([element isKindOfClass:[UIAccessibilityElement class]]) {
+        UIAccessibilityElement *ax = (UIAccessibilityElement *)element;
+        g_nodeCounter++;
+        NSMutableDictionary *node = [NSMutableDictionary dictionary];
+        node[@"id"] = @(g_nodeCounter);
+        node[@"ax_element"] = @YES;
+        node[@"class"] = @"UIAccessibilityElement";
+        CGRect f = ax.accessibilityFrame;
+        node[@"frame"] = @{@"x": @(f.origin.x), @"y": @(f.origin.y), @"w": @(f.size.width), @"h": @(f.size.height)};
+        if (ax.accessibilityLabel) node[@"accessibility_label"] = ax.accessibilityLabel;
+        if (ax.accessibilityValue) node[@"accessibility_value"] = ax.accessibilityValue;
+        if (ax.accessibilityHint) node[@"accessibility_hint"] = ax.accessibilityHint;
+        NSString *role = caTraitsToString(ax.accessibilityTraits);
+        if (role) node[@"accessibility_role"] = role;
+        return node;
+    }
+    return nil;
+}
+
 static NSDictionary *describeView(UIView *view, NSInteger depth) {
     if (g_nodeCounter >= kMaxUITreeNodes) return nil;
     if (view.hidden || view.alpha < 0.01) return nil;
@@ -170,6 +239,12 @@ static NSDictionary *describeView(UIView *view, NSInteger depth) {
     if (view.accessibilityLabel) node[@"accessibility_label"] = view.accessibilityLabel;
     if (view.accessibilityIdentifier) node[@"accessibility_id"] = view.accessibilityIdentifier;
     if (view.accessibilityHint) node[@"accessibility_hint"] = view.accessibilityHint;
+    // v2.9.291 混合 AX：语义角色 / 值 / 元素标记
+    if (view.isAccessibilityElement) node[@"is_accessibility_element"] = @YES;
+    if (view.accessibilityValue) node[@"accessibility_value"] = view.accessibilityValue;
+    NSString *role = caTraitsToString(view.accessibilityTraits);
+    if (!role) role = caClassRole(view);
+    if (role) node[@"accessibility_role"] = role;
 
     // 可交互性
     if ([view isKindOfClass:[UIControl class]]) {
@@ -181,12 +256,20 @@ static NSDictionary *describeView(UIView *view, NSInteger depth) {
         node[@"is_scroll"] = @YES;
     }
 
-    // 子视图
-    if (depth < 12 && view.subviews.count > 0) {
+    // 子视图 + 混合 AX 聚合元素
+    if (depth < 12) {
         NSMutableArray *children = [NSMutableArray array];
         for (UIView *sub in view.subviews) {
             NSDictionary *child = describeView(sub, depth + 1);
             if (child) [children addObject:child];
+        }
+        // v2.9.291 混合 AX：聚合无障碍元素（语义节点，可能覆盖多个子视图）
+        NSArray *axElements = view.accessibilityElements;
+        if (axElements.count > 0) {
+            for (id el in axElements) {
+                NSDictionary *axNode = describeAXElement(el);
+                if (axNode) [children addObject:axNode];
+            }
         }
         if (children.count > 0) node[@"children"] = children;
     }
