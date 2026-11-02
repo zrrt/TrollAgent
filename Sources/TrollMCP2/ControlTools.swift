@@ -1,4 +1,5 @@
 import Foundation
+import UserNotifications
 
 // v2.9.75：ControlAgent 通用 UI 控制工具
 // injected ControlAgent.dylib 到任意 App 后，通过 localhost HTTP 控制目标 App UI
@@ -419,6 +420,45 @@ final class ControlTypeTextTool: MCPTool {
     }
 }
 
+// MARK: - v7.1.283: control 进度通知
+// AI 控制目标 App 时，把每步结果镜像为系统通知——用户在前台 App 也能看到控制进度
+enum ControlNotifier {
+    private static var permissionChecked = false
+
+    static func ensurePermission() {
+        guard !permissionChecked else { return }
+        permissionChecked = true
+        UNUserNotificationCenter.current().requestAuthorization(options: [.alert, .sound]) { _, _ in }
+    }
+
+    static func post(command: String, ok: Bool, detail: String) {
+        ensurePermission()
+        let content = UNMutableNotificationContent()
+        content.title = (ok ? "✓ " : "✗ ") + "control " + command
+        content.body = detail
+        content.sound = ok ? nil : .default
+        let req = UNNotificationRequest(identifier: "control-" + UUID().uuidString, content: content, trigger: nil)
+        UNUserNotificationCenter.current().add(req, withCompletionHandler: nil)
+    }
+
+    /// 从子命令结果提取通知文案：error 字段 → 失败；否则按命令给成功摘要
+    static func describe(command: String, result: [String: Any], extra: String? = nil) -> (ok: Bool, detail: String) {
+        if let err = result["error"] as? String {
+            return (false, "失败: \(err)")
+        }
+        if let extra = extra {
+            return (true, extra)
+        }
+        switch command {
+        case "ui_tree":   return (true, "已读取 UI 树（可按语义定位元素）")
+        case "screenshot": return (true, "已截图并保存")
+        case "inject":    return (true, "注入完成")
+        case "status":    return (true, "ControlAgent 状态正常")
+        default:          return (true, "执行完成")
+        }
+    }
+}
+
 // MARK: - v3.1.34: control 大工具 + 子命令 (合并 10 个 control.* 工具）
 
 final class ControlExecTool: MCPTool {
@@ -453,55 +493,85 @@ final class ControlExecTool: MCPTool {
             guard let bundleId = params["bundle_id"] as? String else {
                 throw MCPError.invalidParams("bundle_id required")
             }
-            return try ControlInjectTool().invoke(["bundle_id": bundleId])
-            
+            let result = try ControlInjectTool().invoke(["bundle_id": bundleId])
+            let d = ControlNotifier.describe(command: "inject", result: result, extra: "已注入 \(bundleId)")
+            ControlNotifier.post(command: "inject", ok: d.ok, detail: d.detail)
+            return result
+
         case "status":
-            return ControlAgentTools.shared.status()
-            
+            let result = ControlAgentTools.shared.status()
+            let d = ControlNotifier.describe(command: "status", result: result)
+            ControlNotifier.post(command: "status", ok: d.ok, detail: d.detail)
+            return result
+
         case "ui_tree":
-            return ControlAgentTools.shared.uiTree()
-            
+            let result = ControlAgentTools.shared.uiTree()
+            let d = ControlNotifier.describe(command: "ui_tree", result: result)
+            ControlNotifier.post(command: "ui_tree", ok: d.ok, detail: d.detail)
+            return result
+
         case "screenshot":
-            return ControlAgentTools.shared.screenshot()
-            
+            let result = ControlAgentTools.shared.screenshot()
+            let d = ControlNotifier.describe(command: "screenshot", result: result)
+            ControlNotifier.post(command: "screenshot", ok: d.ok, detail: d.detail)
+            return result
+
         case "tap":
             guard let x = params["x"] as? Double, let y = params["y"] as? Double else {
                 throw MCPError.invalidParams("x and y required. Usage: control tap x:100 y:200 (both Numbers)")
             }
-            return ControlAgentTools.shared.tap(x: x, y: y)
-            
+            let result = ControlAgentTools.shared.tap(x: x, y: y)
+            let d = ControlNotifier.describe(command: "tap", result: result, extra: "已点击 (\(Int(x)), \(Int(y)))")
+            ControlNotifier.post(command: "tap", ok: d.ok, detail: d.detail)
+            return result
+
         case "swipe":
             guard let x1 = params["x1"] as? Double, let y1 = params["y1"] as? Double,
                   let x2 = params["x2"] as? Double, let y2 = params["y2"] as? Double else {
                 throw MCPError.invalidParams("x1,y1,x2,y2 required. Usage: control swipe x1:100 y1:200 x2:300 y2:400 (all Numbers)")
             }
-            return ControlAgentTools.shared.swipe(x1: x1, y1: y1, x2: x2, y2: y2, duration: 0.3)
-            
+            let result = ControlAgentTools.shared.swipe(x1: x1, y1: y1, x2: x2, y2: y2, duration: 0.3)
+            let d = ControlNotifier.describe(command: "swipe", result: result, extra: "已滑动 (\(Int(x1)),\(Int(y1))) → (\(Int(x2)),\(Int(y2)))")
+            ControlNotifier.post(command: "swipe", ok: d.ok, detail: d.detail)
+            return result
+
         case "type":
             guard let text = params["text"] as? String else {
                 throw MCPError.invalidParams("text required. Usage: control type text:'hello'")
             }
-            return ControlAgentTools.shared.type(text: text)
-            
+            let result = ControlAgentTools.shared.type(text: text)
+            let d = ControlNotifier.describe(command: "type", result: result, extra: "已输入 \(text.count) 字符")
+            ControlNotifier.post(command: "type", ok: d.ok, detail: d.detail)
+            return result
+
         case "key":
             guard let key = params["key"] as? String else {
                 throw MCPError.invalidParams("key required. Usage: control key key:home (home/back/enter)")
             }
-            return ControlAgentTools.shared.key(key)
-            
+            let result = ControlAgentTools.shared.key(key)
+            let d = ControlNotifier.describe(command: "key", result: result, extra: "已按键 \(key)")
+            ControlNotifier.post(command: "key", ok: d.ok, detail: d.detail)
+            return result
+
         case "tap_text":
             guard let text = params["text"] as? String else {
                 throw MCPError.invalidParams("text required. Usage: control tap_text text:'login'")
             }
-            return try ControlTapTextTool().invoke(["text": text])
-            
+            let result = try ControlTapTextTool().invoke(["text": text])
+            let d = ControlNotifier.describe(command: "tap_text", result: result, extra: "已点击文本：\(text.prefix(20))")
+            ControlNotifier.post(command: "tap_text", ok: d.ok, detail: d.detail)
+            return result
+
         case "type_text":
             guard let placeholder = params["placeholder"] as? String,
                   let text = params["text"] as? String else {
                 throw MCPError.invalidParams("placeholder and text required")
             }
-            return try ControlTypeTextTool().invoke(["placeholder": placeholder, "text": text])
-            
+            let result = try ControlTypeTextTool().invoke(["placeholder": placeholder, "text": text])
+            let d = ControlNotifier.describe(command: "type_text", result: result, extra: "已在「\(placeholder)」输入 \(text.count) 字符")
+            ControlNotifier.post(command: "type_text", ok: d.ok, detail: d.detail)
+            return result
+
         default:
             throw MCPError.invalidParams("Unknown command: \(command). Available: inject/status/ui_tree/screenshot/tap/swipe/type/key/tap_text/type_text")
         }
