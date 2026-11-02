@@ -297,6 +297,7 @@ TrollAgent/
 ### 🔌 Cross-app UI control
 - `control` (inject / status / ui_tree / screenshot / tap / swipe / type / key / tap_text / type_text)
 - Injects ControlAgent.dylib → localhost:4789 HTTP API (/status /ui_tree /tap /swipe /type)
+- **UI tree model**: UIView subviews recursion (frame / class / text); **roadmap: mixed mode** — add in-process AX reads (`view.accessibilityElements` / `UIAccessibilityCopyElementAtPoint`) for semantic roles, so the tree "understands" the screen like a human (Android-accessibility / Mika-style)
 
 ### 🏗️ Build & engineering
 - `tool.install`: unified tool install loop — one-click in the unified environment (apk→pip→CI; CI cross-compiles native iOS binaries best-effort)
@@ -389,6 +390,7 @@ TrollAgent/
 | P2 Dual-track routing convergence | ✅ done (v6.6.0) | Routing abolished + unified env layer landed: runtime param removed, ISHEngine → TrollRuntimeEngine, iSH copy cleared; CELF/elf-runner/static busybox retired |
 | P3 Full nativization | 🎯 target | aarch64 Linux ELF running directly; the AI perceives a single environment (N1 gateway LAN tunneling for debugging) |
 | Supporting | ongoing | Tool batching, adaptive streaming fallback (`streamUnsupported`), protocol auto-correct (L0-L5, persisted), per-stream isolated sessions, sub-agent orchestration, HUD voice loop, versioned build & release (7.1.x auto-bump) |
+| ControlAgent mixed UI tree | roadmap | UIView subviews recursion (full frame/class) + **in-process AX reads** (`view.accessibilityElements` / `UIAccessibilityCopyElementAtPoint`) for semantic roles — the tree "understands" the screen like a human, Android-accessibility / Mika-style |
 
 ### Historical timeline (unification, v6.5.0 → v6.6.0)
 
