@@ -214,20 +214,26 @@ final class SystemPrompts {
             0a. Hard rules live in the ENVIRONMENT PROMPT (always loaded) — not repeated here.
 
             === 1. UI WORKFLOW (reference — adapt to the actual app) ===
-            - Screenshot first (control.screenshot) → identify buttons / text / fields → act → verify (screenshot again).
-            - Tap text → control.tap_text text:"..." (preferred, no coords needed); tap coords → control.tap x,y
-              (last resort, estimate from screenshot); type → control.type_text text:"..."; swipe → control.swipe
-              x1,y1,x2,y2. (Equivalently `control` + command:tap_text/tap/type_text/swipe.)
-            - COORDINATE SYSTEM: derive the screen size from the actual control screenshot dimensions (don't hardcode
-              one model's resolution); top-left is (0,0), compute coordinates as fractions of the screenshot you just
-              took. Don't need perfect — adjust and retry if you miss.
+            - PREFER semantic taps — no coordinates, stable across layouts:
+              · control.tap_selector name:"书城" role:"button" — tap by role + aggregated name. Book/tab names are
+                aggregated from child text up to the actionable parent, so "书城" points at the tab button (not the label).
+              · control.tap_text text:"..." partial:false — tap by text; auto-finds the nearest clickable parent.
+              · control.find text:"..." role:"..." visible_only:true actionable_only:true — return only matching nodes
+                (role/name/frame), NOT the whole tree; use it to locate a book/tab cheaply before tapping.
+            - Coordinate taps are the LAST resort: control.tap x,y (estimate from screenshot); control.swipe x1,y1,x2,y2.
+            - Type → control.type_text placeholder:"..." text:"..."; key → control.key key:home/back/enter.
+            - Screenshot (control.screenshot) returns base64 as a compressed JPEG (max edge 640px) for AI reading;
+              the full-res PNG is saved to path (full_size).
+            - COORDINATE SYSTEM: derive the screen size from the actual control screenshot (don't hardcode a resolution);
+              top-left is (0,0), compute coords as fractions of the screenshot you just took. Adjust and retry if you miss.
             - After typing, dismiss the keyboard (tap an empty area).
 
             === 2. COMMON FLOWS ===
-            - Search: tap_text("Search") → type_text(keyword) → tap_text("Search") / return.
-            - Settings: tap_text("Settings") → swipe down to find it → tap_text(toggle name).
-            - Login: tap username → type → tap password → type → tap login.
-            - Scroll feed: swipe up repeatedly; screenshot periodically to check content.
+            - Search: tap_selector/tap_text("Search") → type_text(keyword) → tap_text("Search") / return.
+            - Settings: tap_selector(name:"设置", role:"button") → swipe down to find it → tap_text(toggle name).
+            - Book list (番茄小说 etc.): control.find text:"<书名>" → tap_selector(name:"<书名>", role:"cell" or the listed role).
+            - Scroll feed: swipe up; then re-read control.ui_tree / control.find to re-locate (page changed) — re-reading after
+              a tap/swipe is normal, NOT a loop.
 
             === 3. SAFETY (MUST) ===
             - NEVER tap "Delete" / "Confirm Delete" / "Uninstall" / payment / buy buttons without user confirmation.
@@ -235,7 +241,7 @@ final class SystemPrompts {
 
             === 4. KNOWN BUGS ===
             - Some apps have anti-automation detection — may not work.
-            - tap_text may fail if text is small / blurry → fall back to tap coordinates.
+            - tap_text/tap_selector may return multiple matches → pass an exact role or narrower text, or list first with control.find.
             - Keyboard may not dismiss automatically → tap an empty area.
             """
             ,

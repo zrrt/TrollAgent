@@ -996,6 +996,15 @@ final class SubAgentRunner {
 
     /// 执行工具（fix73j：单轮并发 ≤3 + 结果按 calls 原序回填）。
     /// v7.4.1 前为纯串行；现对齐主会话 processToolCallsParallel 的波次并发思想：
+    /// 只读查询工具不参与熔断：页面变化后应允许重新读取界面
+    /// （点击/滑动后重读 ui_tree / find / screenshot / status / ocr 不得被判死循环）
+    static func isReadOnlyQueryTool(_ name: String) -> Bool {
+        let n = name.lowercased()
+        return n.contains("ui_tree") || n.contains(".find") || n.contains("screenshot")
+            || n.contains("status") || n.hasPrefix("ocr") || n.contains("llm_query")
+            || n.contains("list_") || n.contains("_list")
+    }
+
     /// DispatchSemaphore(3) 限制在途，DispatchGroup 等待全部完成，结果按 index 原序合并
     /// （Anthropic/OpenAI API 要求 tool 结果顺序镜像 tool_calls 顺序——乱序会 400）。
     private func execute(calls: [ToolCall], narration: String? = nil) {
@@ -1014,7 +1023,10 @@ final class SubAgentRunner {
         // 1) 熔断检查（顺序执行——lastTool/sameToolRepeat 状态是顺序语义）+ 收集待执行 index
         var loopBlocked: [Int] = []
         for (i, call) in calls.enumerated() {
-            if call.name == lastTool {
+            // v7.1.287：只读查询工具豁免——页面变化后重读界面是正常操作，不累计熔断；
+            // 副作用工具（tap/swipe/tap_text 等）保持按名连续 3 次熔断。
+            let isReadOnlyQuery = Self.isReadOnlyQueryTool(call.name)
+            if call.name == lastTool && !isReadOnlyQuery {
                 sameToolRepeat += 1
                 if sameToolRepeat >= 3 {
                     loopBlocked.append(i)
@@ -1022,7 +1034,7 @@ final class SubAgentRunner {
                 }
             } else {
                 lastTool = call.name
-                sameToolRepeat = 1
+                sameToolRepeat = isReadOnlyQuery ? 0 : 1
             }
         }
         // 2) 并发执行（fix73j-p5e：每个子代理独立并发槽，一次最多 4 个命令在途），结果按 index 收集

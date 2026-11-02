@@ -303,6 +303,84 @@ final class ControlScreenshotTool: MCPTool {
     }
 }
 
+// MARK: - v7.1.287：语义控制辅助（番茄小说/通用 App 闭环：role+name → 唯一节点 → 点中心）
+// 解决根因：书名/书城文字在子 UILabel，可点的是父 cell/button；把子树文本聚合到可点父，并做唯一性匹配。
+// 适配 v7.1.281+ 的节点字段：accessibility_role / accessibility_label / is_accessibility_element / frame。
+
+enum ControlSemantics {
+    /// 可点击角色白名单（小写）。UILabel/static_text 本身通常不可点，可点父多为 cell/button/tab。
+    static let actionableRoles: Set<String> = [
+        "button", "link", "tab", "cell", "collection_view_cell", "table_view_cell",
+        "collectionviewcell", "tableviewcell", "image_button", "switch", "tabbar",
+        "scrollview", "text_view", "slider", "text_field", "image"
+    ]
+
+    /// 提取节点 role（accessibility_role / role / type，小写）
+    static func role(of node: [String: Any]) -> String? {
+        if let r = node["accessibility_role"] as? String { return r.lowercased() }
+        if let r = node["role"] as? String { return r.lowercased() }
+        if let r = node["type"] as? String { return r.lowercased() }
+        return nil
+    }
+
+    /// 节点自身文本（text / label / accessibilityLabel / accessibility_label）
+    static func nodeText(_ node: [String: Any]) -> String {
+        (node["text"] as? String) ?? (node["label"] as? String)
+            ?? (node["accessibilityLabel"] as? String) ?? (node["accessibility_label"] as? String) ?? ""
+    }
+
+    /// 聚合子树全部文本（自身+后代，去空去重保序）——让"书城/书名"落到可点父
+    static func subtreeText(_ node: [String: Any]) -> String {
+        var parts: [String] = []
+        collectText(node, into: &parts)
+        var seen = Set<String>()
+        var out: [String] = []
+        for p in parts where !p.isEmpty {
+            if !seen.contains(p) { seen.insert(p); out.append(p) }
+        }
+        return out.joined(separator: " ")
+    }
+
+    private static func collectText(_ node: [String: Any], into parts: inout [String]) {
+        let t = nodeText(node)
+        if !t.isEmpty { parts.append(t) }
+        if let ch = node["children"] as? [[String: Any]] {
+            for c in ch { collectText(c, into: &parts) }
+        }
+    }
+
+    /// 是否可点击：优先 isHittable / is_accessibility_element；其次可点角色；缺省（leaf+有 frame）保守视为可点
+    static func isActionable(_ node: [String: Any]) -> Bool {
+        if let h = node["isHittable"] as? Bool { return h }
+        if let h = node["hittable"] as? Bool { return h }
+        if let a = node["is_accessibility_element"] as? Bool { return a }
+        if let r = role(of: node), actionableRoles.contains(r) { return true }
+        let hasChildren = (node["children"] as? [[String: Any]])?.isEmpty == false
+        let hasFrame = node["frame"] != nil
+        return !hasChildren && hasFrame
+    }
+
+    /// 提取 frame -> [x, y, width, height]，缺省 [0,0,0,0]
+    static func frame(_ node: [String: Any]) -> [Double] {
+        guard let f = node["frame"] as? [String: Any],
+              let x = f["x"] as? Double, let y = f["y"] as? Double,
+              let w = f["width"] as? Double, let h = f["height"] as? Double else { return [0, 0, 0, 0] }
+        return [x, y, w, h]
+    }
+
+    static func isVisible(_ node: [String: Any]) -> Bool {
+        (node["isVisible"] as? Bool) ?? (node["visible"] as? Bool) ?? true
+    }
+
+    /// 从树里取节点数组（兼容 nodes / elements / tree 三种容器）
+    static func nodeList(_ tree: [String: Any]) -> [[String: Any]] {
+        if let n = tree["nodes"] as? [[String: Any]] { return n }
+        if let e = tree["elements"] as? [[String: Any]] { return e }
+        if let t = tree["tree"] as? [[String: Any]] { return t }
+        return []
+    }
+}
+
 // MARK: - v3.0.72：control.tap_text — 语义化点击 (传文字，自动找元素点）
 
 final class ControlTapTextTool: MCPTool {
@@ -311,7 +389,8 @@ final class ControlTapTextTool: MCPTool {
         summary: "PREREQUISITE: call control.inject first. Tap an element by its visible text label. Use for: tap a button/link by its text (e.g. \"搜索\", \"登录\"). Don't use for: tap by coordinates (use control.tap), swipe gesture (use control.swipe).",
         parameters: [
             "text": "Visible text label of the element to tap (REQUIRED)",
-            "partial": "If true, match partial text (default true) (optional)"
+            "partial": "If true, match partial text (default false; exact match by default) (optional)",
+            "role": "Optional accessibility role filter to disambiguate, e.g. button/cell/tab/link (optional)"
         ],
         verified: true, category: "ui_control")
 
@@ -319,75 +398,80 @@ final class ControlTapTextTool: MCPTool {
         guard let text = params["text"] as? String, !text.isEmpty else {
             throw MCPError.invalidParams("text required")
         }
-        let partial = (params["partial"] as? Bool) ?? true
+        let partial = (params["partial"] as? Bool) ?? false
 
         // 拿 UI 树
+        let role = params["role"] as? String
         let tree = ControlAgentTools.shared.uiTree()
-        if let nodes = tree["nodes"] as? [[String: Any]] {
-            return try findAndTap(nodes: nodes, text: text, partial: partial)
+        let nodes = ControlSemantics.nodeList(tree)
+        guard !nodes.isEmpty else {
+            throw MCPError.failed("cannot parse UI tree")
         }
-        if let nodes = tree["elements"] as? [[String: Any]] {
-            return try findAndTap(nodes: nodes, text: text, partial: partial)
-        }
-        if let nodes = tree["tree"] as? [[String: Any]] {
-            return try findAndTap(nodes: nodes, text: text, partial: partial)
-        }
-        throw MCPError.failed("cannot parse UI tree")
+        return try findAndTap(nodes: nodes, text: text, partial: partial, role: role)
     }
 
-    private func findAndTap(nodes: [[String: Any]], text: String, partial: Bool) throws -> [String: Any] {
-        // 递归遍历 UI 树找匹配的元素
-        var bestNode: [String: Any]?
-        var bestFrame: [Double] = [0, 0, 0, 0]
+    private struct Candidate {
+        let frame: [Double]
+        let area: Double
+        let hittable: Bool
+    }
 
-        func search(_ node: [String: Any]) {
-            // 检查 text/label/accessibilityLabel
-            let nodeText = (node["text"] as? String) ?? (node["label"] as? String) ?? (node["accessibilityLabel"] as? String) ?? ""
-            var match = false
-            if partial {
-                match = nodeText.localizedCaseInsensitiveContains(text)
-            } else {
-                match = nodeText == text
+    private func findAndTap(nodes: [[String: Any]], text: String, partial: Bool, role: String?) throws -> [String: Any] {
+        // 语义闭环：匹配文字 → 向上找最近可点击祖先（书城/书名在子 UILabel，可点父是 button/cell）→ 唯一性排序 → 点中心
+        var candidates: [Candidate] = []
+
+        func walk(_ node: [String: Any], _ ancestors: [[String: Any]]) {
+            let t = ControlSemantics.nodeText(node)
+            var matched = partial ? t.localizedCaseInsensitiveContains(text) : (t == text)
+            if matched, let r = role {
+                matched = (ControlSemantics.role(of: node) == r.lowercased())
             }
-
-            if match {
-                // 优先用 visible/hittable 的
-                let visible = (node["isVisible"] as? Bool) ?? true
-                let hittable = (node["isHittable"] as? Bool) ?? true
-                if visible && hittable {
-                    bestNode = node
-                    if let frame = node["frame"] as? [String: Any],
-                       let x = frame["x"] as? Double,
-                       let y = frame["y"] as? Double,
-                       let w = frame["width"] as? Double,
-                       let h = frame["height"] as? Double {
-                        bestFrame = [x, y, w, h]
+            if matched {
+                var chain = [node] + ancestors   // 近→远：node 在前，ancestors[0] 是最近父
+                var targetFrame = [0.0, 0.0, 0.0, 0.0]
+                var targetHittable = false
+                for n in chain {
+                    if ControlSemantics.isActionable(n) {
+                        targetFrame = ControlSemantics.frame(n)
+                        targetHittable = true
+                        break
                     }
-                    return
                 }
+                if targetFrame == [0.0, 0.0, 0.0, 0.0] {
+                    targetFrame = ControlSemantics.frame(node)
+                }
+                let area = targetFrame[2] * targetFrame[3]
+                candidates.append(Candidate(frame: targetFrame, area: area, hittable: targetHittable))
             }
-
-            // 递归子节点
-            if let children = node["children"] as? [[String: Any]] {
-                for child in children { search(child) }
+            if let ch = node["children"] as? [[String: Any]] {
+                var newAnc = ancestors
+                newAnc.insert(node, at: 0)
+                for c in ch { walk(c, newAnc) }
             }
         }
+        for n in nodes { walk(n, []) }
 
-        for node in nodes { search(node) }
-
-        guard bestNode != nil else {
+        guard !candidates.isEmpty else {
             throw MCPError.failed("no element matching \"\(text)\" found in UI tree")
         }
+        // 排序：可点优先；同可点按可视面积大优先
+        candidates.sort { a, b in
+            if a.hittable != b.hittable { return a.hittable && !b.hittable }
+            return a.area > b.area
+        }
+        let best = candidates[0]
+        let cx = best.frame[0] + best.frame[2] / 2
+        let cy = best.frame[1] + best.frame[3] / 2
 
-        // 算中心点
-        let cx = bestFrame[0] + bestFrame[2] / 2
-        let cy = bestFrame[1] + bestFrame[3] / 2
-
-        AuditLog.shared.log("control.tap_text", detail: "\"\(text)\" at (\(cx),\(cy))")
+        AuditLog.shared.log("control.tap_text", detail: "\"\(text)\" at (\(cx),\(cy)) matches=\(candidates.count)")
         var result = ControlAgentTools.shared.tap(x: cx, y: cy)
         result["matched_text"] = text
+        result["match_count"] = candidates.count
         result["tap_x"] = cx
         result["tap_y"] = cy
+        if candidates.count > 1 {
+            result["hint"] = "\(candidates.count) matches; tapped the largest hittable target. To disambiguate pass exact role, or list first with control.find."
+        }
         return result
     }
 }
@@ -440,6 +524,140 @@ final class ControlTypeTextTool: MCPTool {
     }
 }
 
+// MARK: - v7.1.287：control.find — 查询式精简 UI 树（只回匹配节点，不烧 token）
+
+final class ControlFindTool: MCPTool {
+    let definition = ToolDefinition(
+        name: "control.find",
+        summary: "PREREQUISITE: control.inject first. Query the UI tree and return only matching actionable/visible nodes (role/name/text/frame), NOT the whole tree. Use for: locate a book/tab/button before tapping, or check what's on screen without a huge tree. Don't use for: actual tapping (use control.tap_selector / tap_text).",
+        parameters: [
+            "text": "Optional text to match (exact unless partial=true) (optional)",
+            "role": "Optional role to filter, e.g. button/cell/tab/link (optional)",
+            "partial": "If true match partial text (default false) (optional)",
+            "visible_only": "Only return visible nodes (default true) (optional)",
+            "actionable_only": "Only return actionable (clickable) nodes (default true) (optional)",
+            "limit": "Max results returned (default 20) (optional)"
+        ],
+        verified: false, category: "ui_control")
+
+    func invoke(_ params: [String: Any]) throws -> [String: Any] {
+        let text = params["text"] as? String
+        let role = params["role"] as? String
+        let partial = (params["partial"] as? Bool) ?? false
+        let visibleOnly = (params["visible_only"] as? Bool) ?? true
+        let actionableOnly = (params["actionable_only"] as? Bool) ?? true
+        let limit = (params["limit"] as? Int) ?? 20
+
+        let tree = ControlAgentTools.shared.uiTree()
+        let nodes = ControlSemantics.nodeList(tree)
+        guard !nodes.isEmpty else {
+            throw MCPError.failed("cannot parse UI tree")
+        }
+
+        var out: [[String: Any]] = []
+        func walk(_ node: [String: Any]) {
+            if out.count >= limit { return }
+            let t = ControlSemantics.nodeText(node)
+            var ok = true
+            if let text = text {
+                let direct = partial ? t.localizedCaseInsensitiveContains(text) : (t == text)
+                let agg = ControlSemantics.subtreeText(node)
+                let viaAgg = partial ? agg.localizedCaseInsensitiveContains(text) : (agg == text)
+                ok = direct || viaAgg
+            }
+            if let r = role, ok {
+                ok = (ControlSemantics.role(of: node) == r.lowercased())
+            }
+            if visibleOnly && ok {
+                ok = ControlSemantics.isVisible(node)
+            }
+            if actionableOnly && ok {
+                ok = ControlSemantics.isActionable(node)
+            }
+            if ok {
+                out.append([
+                    "role": ControlSemantics.role(of: node) ?? "",
+                    "name": ControlSemantics.subtreeText(node),
+                    "text": t,
+                    "frame": ControlSemantics.frame(node)
+                ])
+            }
+            if let ch = node["children"] as? [[String: Any]] {
+                for c in ch { walk(c) }
+            }
+        }
+        for n in nodes { walk(n) }
+
+        return ["ok": true, "count": out.count, "results": out,
+                "hint": "use control.tap_selector role:... name:... to tap one, or control.tap_text text:..."]
+    }
+}
+
+// MARK: - v7.1.287：control.tap_selector — 语义直点 (role + name → 唯一节点 → 点中心，不传坐标)
+
+final class ControlTapSelectorTool: MCPTool {
+    let definition = ToolDefinition(
+        name: "control.tap_selector",
+        summary: "PREREQUISITE: control.inject first. Tap the single actionable element matching role+name (subtree text aggregated). e.g. tap_selector role:'button' name:'书城'. No coordinates needed — device-side match. Don't use for: coordinate taps (control.tap), pure text tap (control.tap_text).",
+        parameters: [
+            "name": "Subtree text (name) of the element to tap — REQUIRED. Use aggregated text, e.g. '书城' for the tab button",
+            "role": "Optional role to filter, e.g. button/cell/tab/link (optional)",
+            "partial": "If true match partial name (default false) (optional)"
+        ],
+        verified: false, category: "ui_control")
+
+    func invoke(_ params: [String: Any]) throws -> [String: Any] {
+        guard let name = params["name"] as? String, !name.isEmpty else {
+            throw MCPError.invalidParams("name required. Use aggregated text like '书城'.")
+        }
+        let role = params["role"] as? String
+        let partial = (params["partial"] as? Bool) ?? false
+
+        let tree = ControlAgentTools.shared.uiTree()
+        let nodes = ControlSemantics.nodeList(tree)
+        guard !nodes.isEmpty else {
+            throw MCPError.failed("cannot parse UI tree")
+        }
+
+        var frames: [[Double]] = []
+        func walk(_ node: [String: Any]) {
+            if ControlSemantics.isActionable(node) {
+                let agg = ControlSemantics.subtreeText(node)
+                var ok = partial ? agg.localizedCaseInsensitiveContains(name) : (agg == name)
+                if let r = role, ok {
+                    ok = (ControlSemantics.role(of: node) == r.lowercased())
+                }
+                if ok {
+                    frames.append(ControlSemantics.frame(node))
+                }
+            }
+            if let ch = node["children"] as? [[String: Any]] {
+                for c in ch { walk(c) }
+            }
+        }
+        for n in nodes { walk(n) }
+
+        guard !frames.isEmpty else {
+            throw MCPError.failed("no actionable element matching role:\(role ?? "any") name:\"\(name)\" found")
+        }
+        frames.sort { ($0[2] * $0[3]) > ($1[2] * $1[3]) }
+        let best = frames[0]
+        let cx = best[0] + best[2] / 2
+        let cy = best[1] + best[3] / 2
+
+        AuditLog.shared.log("control.tap_selector", detail: "role:\(role ?? "any") name:\"\(name)\" matches=\(frames.count)")
+        var result = ControlAgentTools.shared.tap(x: cx, y: cy)
+        result["matched_name"] = name
+        result["match_count"] = frames.count
+        result["tap_x"] = cx
+        result["tap_y"] = cy
+        if frames.count > 1 {
+            result["hint"] = "\(frames.count) actionable nodes matched; tapped the largest. Add exact role or use control.find to inspect."
+        }
+        return result
+    }
+}
+
 // MARK: - v7.1.283: control 进度通知
 // AI 控制目标 App 时，把每步结果镜像为系统通知——用户在前台 App 也能看到控制进度
 enum ControlNotifier {
@@ -484,9 +702,9 @@ enum ControlNotifier {
 final class ControlExecTool: MCPTool {
     let definition = ToolDefinition(
         name: "control",
-        summary: "Control target app UI. Subcommands: inject / status / ui_tree / screenshot / tap / swipe / type / key / tap_text / type_text. Params per subcommand: tap→x,y(Number); swipe→x1,y1,x2,y2(Number); type→text; tap_text→text; type_text→placeholder+text; key→key(home/back/enter); inject→bundle_id; others none. Use for: UI automation / app screen control. Semantic UI tree (v7.1.281+): ui_tree nodes carry accessibility_role (button/link/text_field/switch/image/...), accessibility_label (human name), accessibility_value, is_accessibility_element and frame — locate an element by role+label, then tap its frame center; do NOT hardcode coordinates when labels are available. First `inject` to install ControlAgent, then call other subcommands.",
+        summary: "Control target app UI. Subcommands: inject / status / ui_tree / find / screenshot / tap / swipe / type / key / tap_text / tap_selector / type_text. Params per subcommand: tap→x,y(Number); swipe→x1,y1,x2,y2(Number); type→text; tap_text→text,partial?,role?; tap_selector→name,role?,partial?; find→text?,role?,partial?,visible_only?,actionable_only?,limit?; type_text→placeholder+text; key→key(home/back/enter); inject→bundle_id; others none. Use for: UI automation / app screen control. Semantic UI tree (v7.1.281+): ui_tree nodes carry accessibility_role (button/link/text_field/switch/image/...), accessibility_label (human name), accessibility_value, is_accessibility_element and frame — locate an element by role+label, then tap its frame center; do NOT hardcode coordinates when labels are available. PREFER semantic taps: tap_selector(role,name) or tap_text(text) — no coordinates; use find to list matches cheaply. First `inject` to install ControlAgent, then call other subcommands.",
         parameters: [
-            "command": "Subcommand (required): inject / status / ui_tree / screenshot / tap / swipe / type / key / tap_text / type_text",
+            "command": "Subcommand (required): inject / status / ui_tree / find / screenshot / tap / swipe / type / key / tap_text / tap_selector / type_text",
             "bundle_id": "App bundle ID — REQUIRED for inject only",
             "x": "X coordinate Number — REQUIRED for tap",
             "y": "Y coordinate Number — REQUIRED for tap",
@@ -495,6 +713,12 @@ final class ControlExecTool: MCPTool {
             "x2": "End X Number — REQUIRED for swipe",
             "y2": "End Y Number — REQUIRED for swipe",
             "text": "Text string — REQUIRED for type / tap_text",
+            "name": "Aggregated name — REQUIRED for tap_selector",
+            "role": "Role filter — optional for tap_text/tap_selector/find",
+            "partial": "Partial text match (default false) — optional",
+            "visible_only": "Only visible (default true) — for find",
+            "actionable_only": "Only clickable (default true) — for find",
+            "limit": "Max find results (default 20) — for find",
             "key": "Key name: home/back/enter — REQUIRED for key",
             "placeholder": "Field placeholder (for type_text)"
         ],
@@ -577,10 +801,25 @@ final class ControlExecTool: MCPTool {
             guard let text = params["text"] as? String else {
                 throw MCPError.invalidParams("text required. Usage: control tap_text text:'login'")
             }
-            let result = try ControlTapTextTool().invoke(["text": text])
-            let d = ControlNotifier.describe(command: "tap_text", result: result, extra: "已点击文本：\(text.prefix(20))")
-            ControlNotifier.post(command: "tap_text", ok: d.ok, detail: d.detail)
-            return result
+            let tapText = try ControlTapTextTool().invoke(params)
+            let td = ControlNotifier.describe(command: "tap_text", result: tapText, extra: "已点击文本：\(text.prefix(20))")
+            ControlNotifier.post(command: "tap_text", ok: td.ok, detail: td.detail)
+            return tapText
+
+        case "tap_selector":
+            guard let name = params["name"] as? String else {
+                throw MCPError.invalidParams("name required. Usage: control tap_selector name:'书城' role:'button'")
+            }
+            let sel = try ControlTapSelectorTool().invoke(params)
+            let sd = ControlNotifier.describe(command: "tap_selector", result: sel, extra: "已语义点击：\(name.prefix(20))")
+            ControlNotifier.post(command: "tap_selector", ok: sd.ok, detail: sd.detail)
+            return sel
+
+        case "find":
+            let findResult = try ControlFindTool().invoke(params)
+            let fd = ControlNotifier.describe(command: "find", result: findResult)
+            ControlNotifier.post(command: "find", ok: fd.ok, detail: fd.detail)
+            return findResult
 
         case "type_text":
             guard let placeholder = params["placeholder"] as? String,
@@ -593,7 +832,7 @@ final class ControlExecTool: MCPTool {
             return result
 
         default:
-            throw MCPError.invalidParams("Unknown command: \(command). Available: inject/status/ui_tree/screenshot/tap/swipe/type/key/tap_text/type_text")
+            throw MCPError.invalidParams("Unknown command: \(command). Available: inject/status/ui_tree/find/screenshot/tap/swipe/type/key/tap_text/tap_selector/type_text")
         }
     }
 }
