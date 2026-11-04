@@ -247,6 +247,9 @@ jobs:
         # → recordings/aot_*.S（busybox 短命令热路径，AOT 覆盖 80%+；不录 python——实测 AOT 反而慢）。
         # 录制器是 macOS ARM64 原生二进制（同 rcarmo M 系 Mac 流程），targeted-tools.ts 需 bun 编排。
         # 产物 aot_*.S 后续集成：挂进 CISH target sources + constructor 注册（ish_aot_register 在 libish.a）。
+        # 录制器 target 'ish' 仅在 native 构建存在（upstream meson.is_cross_build() 门控），
+        # build-ios 是交叉编译目录故 ninja 报 unknown target——失败时回退纯 JIT，不阻断出包。
+        continue-on-error: true
         run: |
           if [ ! -f ish-stage/ish/build-ios/build.ninja ]; then
             echo "::warning::meson build dir missing (engine cache not restored) — AOT recording skipped"
