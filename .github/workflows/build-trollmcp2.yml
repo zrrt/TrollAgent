@@ -22,7 +22,7 @@ jobs:
     needs: [native-python, native-wheels, native-nmap, native-llvm, native-node]
     # v7.1.293-fix: 免费账号 macos-latest 高峰排队 15 分钟被 GitHub 强制取消（连续两次 build 被砍），
     # 换 macos-13 runner 池（相对空），避开 macos-latest 共享池高峰。
-    runs-on: macos-13
+    runs-on: macos-latest
     steps:
       - uses: actions/checkout@v4
 
@@ -416,7 +416,7 @@ jobs:
   # 独立 job：编译失败不影响主出包（build job 不依赖本 job）；成功后 artifact 供后续集成
   # （Python.framework + stdlib 打进 .app + ShellTool 路由 python3 → 原生 CLI）。
   native-python:
-    runs-on: macos-13
+    runs-on: macos-latest
     timeout-minutes: 120
     steps:
       - uses: actions/checkout@v4
@@ -505,7 +505,7 @@ jobs:
   # _PYTHON_HOST_PLATFORM + _PYTHON_SYSCONFIGDATA_NAME 加载 iOS Python 的交叉 sysconfigdata，
   # sed 把 sysconfigdata 相对路径 hack 成绝对路径(指向解包的 Python.xcframework)。
   native-wheels:
-    runs-on: macos-13
+    runs-on: macos-latest
     needs: native-python
     timeout-minutes: 60
     steps:
@@ -823,7 +823,7 @@ jobs:
   # 诚实降级: 改为内置 Python TCP 端口扫描器 nscan.py(原生 python3 直跑, 功能等效端口扫描),
   # 不再跑失败的源码编译; job 保留 continue-on-error 防意外。
   native-nmap:
-    runs-on: macos-13
+    runs-on: macos-latest
     timeout-minutes: 10
     continue-on-error: true
     steps:
@@ -850,7 +850,7 @@ jobs:
   # v6.6.0 精简: LLVM 工具链已清（统一环境 Alpine binutils objdump/nm/readelf/size/strings 替代）——
   # 只产 jtool2（newosxbook prebuilt universal binary，lipo 提 arm64 切片，Mach-O 解析专长 Alpine 无替代）。
   native-llvm:
-    runs-on: macos-13
+    runs-on: macos-latest
     timeout-minutes: 90
     steps:
       - uses: actions/checkout@v4
@@ -876,7 +876,7 @@ jobs:
   # v6.6.0-fix15: 原生 node（nodejs-mobile iOS 预编译）——显式 node-native 命令
   #（AI 重 node 任务选择：构建/打包工具芯片直跑；轻量 JS 用统一环境 Alpine nodejs）。
   native-node:
-    runs-on: macos-13
+    runs-on: macos-latest
     timeout-minutes: 30
     steps:
       - uses: actions/checkout@v4
