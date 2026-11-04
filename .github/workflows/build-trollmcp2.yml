@@ -19,7 +19,9 @@ jobs:
     # 等它确保 python artifact 就位，build 才能真正集成（此前并行时 download 拿不到→python 被跳过）
     # v4.4.6-fix3u: needs native-nmap（continue-on-error job，失败不阻塞出包）
     # v4.4.8-fix3w: needs native-llvm（LLVM 单工具 + jtool2；下载 continue-on-error，失败不出这些工具但出包）
-    needs: [native-python, native-wheels, native-nmap, native-llvm, native-node]
+    needs: [native-python, native-nmap, native-llvm, native-node]
+    # native-wheels 从 needs 移除——该 job 经常排队被 GitHub 回收；wheels 产物在下方 download-artifact
+    # 步骤里 continue-on-error: true 已容错，没有 wheels 就出无 numpy/pandas 的包，不阻断主流程。
     # v7.1.293-fix: 免费账号 macos-latest 高峰排队 15 分钟被 GitHub 强制取消（连续两次 build 被砍），
     # 换 macos-13 runner 池（相对空），避开 macos-latest 共享池高峰。
     runs-on: macos-latest
