@@ -38,7 +38,10 @@ jobs:
           mkdir -p aot-stage
           cd aot-stage
           git clone --depth 1 -q https://github.com/rcarmo/ios-linuxkit.git ish
-          cd ish && git submodule update --init --recursive --depth 1 && cd ..
+          cd ish && git submodule update --init --recursive --depth 1
+          # 打 jit-fallback.patch——和 iOS app 内核保持一致，否则 AOT 录制的符号对不上
+          git apply ../../scripts/ish-build/jit-fallback.patch
+          cd ..
           cp ../scripts/ish-build/prepare_alpine_rootfs.sh .
           bash prepare_alpine_rootfs.sh
 
@@ -428,13 +431,12 @@ jobs:
           if [ -d aot-images ] && ls aot-images/*.S >/dev/null 2>&1; then
             cp aot-images/*.S ish-stage/recordings/
           fi
-          # AOT 镜像集成：录制器是上游原版内核编的，与 iOS patch 版内核符号(gadget_add_ext等)不匹配。
-          # 暂时不集成——等录制器用同一份 patch 内核重录后再开。
-          if [ "${INCLUDE_AOT:-0}" = "1" ] && ls aot-images/*.S >/dev/null 2>&1; then
+          # AOT 镜像集成：录制器已打 jit-fallback.patch，与 iOS app 内核一致。
+          if ls aot-images/*.S >/dev/null 2>&1; then
             cp aot-images/*.S CISH/
             echo ">>> AOT images integrated: $(ls CISH/aot_*.S | wc -l | tr -d ' ') files"
           else
-            echo "::warning::AOT images downloaded but not integrated (symbol mismatch) — JIT-only build"
+            echo "::warning::no AOT images — JIT-only build"
           fi
           bash scripts/build-ipa.sh
 
