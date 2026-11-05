@@ -45,14 +45,16 @@ jobs:
       - name: Build native recorder
         working-directory: aot-stage/ish
         run: |
-          CC=clang make build-arm64-native NATIVE_BUILD_DIR=build-native -j$(nproc)
-          ls -lh build-native/ish
+          # 必须用独立目录——prepare_alpine_rootfs.sh 已在 build-native/ 配了无 jit 的 fakefsify 构建，
+          # 复用会导致 cpu-offsets.h 不匹配，汇编 _pc/_cpu 宏不展开。
+          CC=clang make build-arm64-native NATIVE_BUILD_DIR=build-recorder -j$(nproc)
+          ls -lh build-recorder/ish
 
       - name: Record AOT images
         working-directory: aot-stage
         run: |
           bun ../tools/jit_aot/targeted-tools.ts \
-            ish/build-native/ish resources/alpine-rootfs recordings macho
+            ish/build-recorder/ish resources/alpine-rootfs recordings macho
           ls -lh recordings/aot_*.S
 
       - uses: actions/upload-artifact@v4
