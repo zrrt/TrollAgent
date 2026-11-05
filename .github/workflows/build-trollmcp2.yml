@@ -268,12 +268,26 @@ jobs:
             export PATH="$HOME/.bun/bin:$PATH"
           fi
           cd ish-stage
-          echo ">>> building recorder CLI (ninja ish)"
-          ninja -C ish/build-ios ish 2>&1 | tail -5
-          ls -la ish/build-ios/ish
+          # 录制器是 macOS 原生 arm64 可执行文件——不能在交叉编译目录 build-ios/ 里编
+          # （upstream meson 用 is_cross_build() 门控了 executable('ish')），
+          # 必须单独建 native build 目录。
+          if [ ! -f ish/build-native/build.ninja ]; then
+            echo ">>> configuring native recorder build"
+            meson setup ish/build-native ish \
+              --buildtype=release \
+              -Db_ndebug=true \
+              -Dlog="" \
+              -Dkernel=ish \
+              -Dengine=asbestos \
+              -Dguest_arch=arm64 \
+              -Djit=true 2>&1 | tail -10
+          fi
+          echo ">>> building recorder CLI (ninja ish, native)"
+          ninja -C ish/build-native ish 2>&1 | tail -10
+          ls -la ish/build-native/ish
           echo ">>> recording musl+busybox (targeted-tools.ts)"
           rm -rf recordings
-          bun ../tools/jit_aot/targeted-tools.ts ish/build-ios/ish resources/alpine-rootfs recordings macho
+          bun ../tools/jit_aot/targeted-tools.ts ish/build-native/ish resources/alpine-rootfs recordings macho
           echo ">>> AOT recordings:"
           ls -lh recordings/
           cat recordings/manifest.json 2>/dev/null | head -20 || true
