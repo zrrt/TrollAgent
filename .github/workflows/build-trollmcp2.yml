@@ -15,11 +15,56 @@ on:
 jobs:
   # v4.4.5: 原生工具链（lua arm64 iOS 交叉编译，产物缓存秒级）。
   # build job needs 本 job，保证每次出包都带上原生工具（首次编译 <10min，之后缓存命中）。
+  # AOT 录制：必须在 Linux ARM64 上跑（rcarmo 官方：Linux recorder executables cannot run directly on macOS）。
+  # 录制器 = native meson build 出的 ish CLI，跑 fakefs 里 busybox 常用命令，录出 aot_*.S。
+  # 产物作为 artifact 上传，build job 下载后拷进 CISH/。失败不阻断出包（continue-on-error）。
+  aot-record:
+    runs-on: ubuntu-24.04-arm
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          submodules: recursive
+
+      - name: Install build deps
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y meson ninja-build libarchive-dev clang
+          curl -fsSL https://bun.sh/install | bash
+          echo "$HOME/.bun/bin" >> $GITHUB_PATH
+
+      - name: Prepare fakefs (Alpine rootfs)
+        run: |
+          bash scripts/ish-build/prepare_alpine_rootfs.sh
+
+      - name: Build native recorder
+        working-directory: scripts/ish-build
+        run: |
+          meson setup build-native ish \
+            --buildtype=release \
+            -Dkernel=ish \
+            -Dengine=asbestos \
+            -Dguest_arch=arm64 \
+            -Djit=true
+          ninja -C build-native ish
+
+      - name: Record AOT images
+        working-directory: scripts/ish-build
+        run: |
+          bun ../tools/jit_aot/targeted-tools.ts \
+            build-native/ish resources/alpine-rootfs recordings macho
+          ls -lh recordings/aot_*.S
+
+      - uses: actions/upload-artifact@v4
+        with:
+          name: aot-images
+          path: scripts/ish-build/recordings/aot_*.S
+          retention-days: 1
+
   build:
     # 等它确保 python artifact 就位，build 才能真正集成（此前并行时 download 拿不到→python 被跳过）
     # v4.4.6-fix3u: needs native-nmap（continue-on-error job，失败不阻塞出包）
     # v4.4.8-fix3w: needs native-llvm（LLVM 单工具 + jtool2；下载 continue-on-error，失败不出这些工具但出包）
-    needs: [native-python, native-nmap, native-llvm, native-node]
+    needs: [native-python, native-nmap, native-llvm, native-node, aot-record]
     # native-wheels 从 needs 移除——该 job 经常排队被 GitHub 回收；wheels 产物在下方 download-artifact
     # 步骤里 continue-on-error: true 已容错，没有 wheels 就出无 numpy/pandas 的包，不阻断主流程。
     # v7.1.293-fix: 免费账号 macos-latest 高峰排队 15 分钟被 GitHub 强制取消（连续两次 build 被砍），
@@ -361,6 +406,13 @@ jobs:
           merge-multiple: true
         continue-on-error: true
 
+      - name: Download AOT images from Linux recorder (if ready)
+        uses: actions/download-artifact@v4
+        with:
+          name: aot-images
+          path: aot-images
+        continue-on-error: true
+
       - name: Build IPA
         run: |
           # fix3cy26c (P1 主线): 诊断期开关已移除——默认走 Xcode app-extension 形态。
@@ -368,6 +420,11 @@ jobs:
           # ldid-procursus 签名 + entitlements 校验后进包）。C 空壳诊断(MINIMAL_C)已结束，
           # 不再强制覆盖；本轮验证点 = NE 能否拉起 Xcode 标准扩展形态的 appex。
           export XCODE_APPEX=1
+          # AOT 镜像从 Linux ARM64 录制 job 下载（rcarmo 官方：录制器只能跑 Linux）
+          mkdir -p ish-stage/recordings
+          if [ -d aot-images ] && ls aot-images/*.S >/dev/null 2>&1; then
+            cp aot-images/*.S ish-stage/recordings/
+          fi
           # AOT 镜像集成（录制成功时）：aot_*.S 拷进 CISH/（TrollRuntime target path 无 sources 参数
           # → 目录内 .S 自动编译链接；constructor 注册进内核，未命中代码走 JIT/解释器 = JIT+AOT 混合）。
           # 录制跳过/失败时无镜像 → 回退纯 JIT 模式，不阻断构建。
