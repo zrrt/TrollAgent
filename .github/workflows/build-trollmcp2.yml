@@ -43,21 +43,16 @@ jobs:
           bash prepare_alpine_rootfs.sh
 
       - name: Build native recorder
-        working-directory: aot-stage
+        working-directory: aot-stage/ish
         run: |
-          meson setup build-native ish \
-            --buildtype=release \
-            -Dkernel=ish \
-            -Dengine=asbestos \
-            -Dguest_arch=arm64 \
-            -Djit=true
-          ninja -C build-native ish
+          CC=clang make build-arm64-native NATIVE_BUILD_DIR=build-native -j$(nproc)
+          ls -lh build-native/ish
 
       - name: Record AOT images
         working-directory: aot-stage
         run: |
           bun ../tools/jit_aot/targeted-tools.ts \
-            build-native/ish resources/alpine-rootfs recordings macho
+            ish/build-native/ish resources/alpine-rootfs recordings macho
           ls -lh recordings/aot_*.S
 
       - uses: actions/upload-artifact@v4
