@@ -28,7 +28,7 @@ jobs:
       - name: Install build deps
         run: |
           sudo apt-get update
-          sudo apt-get install -y meson ninja-build libarchive-dev clang
+          sudo apt-get install -y meson ninja-build libarchive-dev libarchive-tools clang
           curl -fsSL https://bun.sh/install | bash
           echo "$HOME/.bun/bin" >> $GITHUB_PATH
 
