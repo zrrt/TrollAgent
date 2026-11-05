@@ -431,13 +431,9 @@ jobs:
           if [ -d aot-images ] && ls aot-images/*.S >/dev/null 2>&1; then
             cp aot-images/*.S ish-stage/recordings/
           fi
-          # AOT 镜像集成：录制器已打 jit-fallback.patch，与 iOS app 内核一致。
-          if ls aot-images/*.S >/dev/null 2>&1; then
-            cp aot-images/*.S CISH/
-            echo ">>> AOT images integrated: $(ls CISH/aot_*.S | wc -l | tr -d ' ') files"
-          else
-            echo "::warning::no AOT images — JIT-only build"
-          fi
+          # AOT 镜像：录制器跑通了但 gadget_add_ext 符号在 iOS 交叉编译时不导出，暂时不集成。
+          # 录制产物仍上传到 artifact 存档，后续修 iOS 端符号导出后再开。
+          echo "::warning::AOT images skipped (symbol mismatch gadget_add_ext) — JIT-only build"
           bash scripts/build-ipa.sh
 
       # v7.2.3-fix9：回归测试编译验证——纯逻辑单测（Markdown 解析/引用提取/
