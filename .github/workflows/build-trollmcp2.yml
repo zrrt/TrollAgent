@@ -428,14 +428,13 @@ jobs:
           if [ -d aot-images ] && ls aot-images/*.S >/dev/null 2>&1; then
             cp aot-images/*.S ish-stage/recordings/
           fi
-          # AOT 镜像集成（录制成功时）：aot_*.S 拷进 CISH/（TrollRuntime target path 无 sources 参数
-          # → 目录内 .S 自动编译链接；constructor 注册进内核，未命中代码走 JIT/解释器 = JIT+AOT 混合）。
-          # 录制跳过/失败时无镜像 → 回退纯 JIT 模式，不阻断构建。
-          if ls ish-stage/recordings/aot_*.S >/dev/null 2>&1; then
-            cp ish-stage/recordings/aot_*.S CISH/
+          # AOT 镜像集成：录制器是上游原版内核编的，与 iOS patch 版内核符号(gadget_add_ext等)不匹配。
+          # 暂时不集成——等录制器用同一份 patch 内核重录后再开。
+          if [ "${INCLUDE_AOT:-0}" = "1" ] && ls aot-images/*.S >/dev/null 2>&1; then
+            cp aot-images/*.S CISH/
             echo ">>> AOT images integrated: $(ls CISH/aot_*.S | wc -l | tr -d ' ') files"
           else
-            echo "::warning::no AOT images — JIT-only build this round"
+            echo "::warning::AOT images downloaded but not integrated (symbol mismatch) — JIT-only build"
           fi
           bash scripts/build-ipa.sh
 
