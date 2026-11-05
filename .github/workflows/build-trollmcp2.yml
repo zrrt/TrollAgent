@@ -29,6 +29,8 @@ jobs:
         run: |
           sudo apt-get update
           sudo apt-get install -y meson ninja-build libarchive-dev libarchive-tools clang
+          # prepare_alpine_rootfs.sh 硬编码查 /usr/lib/libarchive.so，Ubuntu 在 /usr/lib/aarch64-linux-gnu/
+          sudo ln -sf /usr/lib/aarch64-linux-gnu/libarchive.so /usr/lib/libarchive.so
           curl -fsSL https://bun.sh/install | bash
           echo "$HOME/.bun/bin" >> $GITHUB_PATH
 
