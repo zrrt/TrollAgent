@@ -271,6 +271,11 @@ jobs:
           # 录制器是 macOS 原生 arm64 可执行文件——不能在交叉编译目录 build-ios/ 里编
           # （upstream meson 用 is_cross_build() 门控了 executable('ish')），
           # 必须单独建 native build 目录。
+          # meson 只在 cache miss 时装，这里 cache hit 时要补装一次。
+          if ! command -v meson >/dev/null 2>&1; then
+            echo ">>> installing meson+ninja for native recorder"
+            brew install meson ninja >/dev/null 2>&1 || pip3 install meson
+          fi
           if [ ! -f ish/build-native/build.ninja ]; then
             echo ">>> configuring native recorder build"
             meson setup ish/build-native ish \
