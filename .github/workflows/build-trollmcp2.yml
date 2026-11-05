@@ -290,6 +290,13 @@ jobs:
           echo ">>> building recorder CLI (ninja ish, native)"
           ninja -C ish/build-native ish 2>&1 | tail -10
           ls -la ish/build-native/ish
+          echo ">>> debug: does recorder run at all?"
+          ./ish/build-native/ish --help 2>&1 | head -20 || echo "EXIT: $?"
+          echo ">>> debug: fakefs contents"
+          ls -la resources/alpine-rootfs/ | head -10
+          ls -la resources/alpine-rootfs/data/ 2>/dev/null | head -10
+          echo ">>> debug: try direct run"
+          ./ish/build-native/ish -f resources/alpine-rootfs /bin/echo hello 2>&1 | head -20 || echo "EXIT: $?"
           echo ">>> recording musl+busybox (targeted-tools.ts)"
           rm -rf recordings
           bun ../tools/jit_aot/targeted-tools.ts ish/build-native/ish resources/alpine-rootfs recordings macho
